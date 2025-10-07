@@ -1,0 +1,14 @@
+# OCaml build artifacts and so on
+_opam
+_build
+.merlin
+*.install
+
+# Mac OS
+.DS_Store
+
+# Nix
+result
+
+.envrc.local
+.direnv
