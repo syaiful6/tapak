@@ -13,8 +13,9 @@ let
     doCheck = doCheck;
     duneVersion = "3";
     nativeBuildInputs = [ pkgs.pkg-config ];
-    buildInputs = [ pkgs.openssl pkgs.postgresql ];
-    PKG_CONFIG_PATH = pkgs.lib.makeSearchPath "lib/pkgconfig" [ pkgs.openssl pkgs.postgresql ];
+    buildInputs = [ pkgs.openssl ];
+    checkInputs = [ alcotest ];
+    PKG_CONFIG_PATH = pkgs.lib.makeSearchPath "lib/pkgconfig" [ pkgs.openssl ];
   } // args);
 in
 
@@ -22,7 +23,7 @@ in
   tapak = buildTapak {
     pname = "tapak";
     src = genSrc {
-      dirs = [ "src" ];
+      dirs = [ "src" "pkg/kernel" ];
       files = [ "tapak.opam" ];
     };
     propagatedBuildInputs = [
@@ -30,6 +31,8 @@ in
       hmap
       logs
       piaf
+      uri
+      ptime
     ];
   };
 }

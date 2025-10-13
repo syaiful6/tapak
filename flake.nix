@@ -4,7 +4,7 @@
   inputs = {
     nix-filter.url = "github:numtide/nix-filter";
     flake-utils.url = "github:numtide/flake-utils";
-    nixpkgs.url = "github:anmonteiro/nix-overlays";
+    nixpkgs.url = "github:nix-ocaml/nix-overlays";
   };
 
   outputs = { self, nixpkgs, flake-utils, nix-filter }:

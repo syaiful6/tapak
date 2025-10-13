@@ -1,0 +1,362 @@
+{0 Router Guide}
+
+{1 Introduction}
+
+The Tapak router provides flexible pattern-based routing for HTTP requests. It supports path parameters, splat matching, and scoped routes with middleware isolation.
+
+{1 Basic Routing}
+
+{2 Simple Routes}
+
+Define routes using HTTP method helpers:
+
+{[
+open Tapak_kernel
+
+let routes =
+  Router.router
+    [ Router.get "/" home_handler
+    ; Router.post "/users" create_user
+    ; Router.put "/users/:id" update_user
+    ; Router.delete "/users/:id" delete_user
+    ]
+]}
+
+Available methods:
+- [Router.get]
+- [Router.post]
+- [Router.put]
+- [Router.delete]
+- [Router.head]
+
+{2 Path Parameters}
+
+Extract dynamic segments from paths using the [:param] syntax:
+
+{[
+let user_handler request =
+  match Router.route_params request with
+  | Some params ->
+    let id = List.assoc "id" params in
+    (* Process user with id *)
+    Response.create ~body:(Piaf.Body.of_string ("User: " ^ id)) `OK
+  | None -> Response.create `Not_found
+
+let routes =
+  Router.router
+    [ Router.get "/users/:id" user_handler
+    ; Router.get "/posts/:post_id/comments/:comment_id" comment_handler
+    ]
+]}
+
+Multiple parameters can be used in a single route.
+
+{1 Splat Matching}
+
+Splat operators allow matching multiple path segments, useful for serving SPAs or static files.
+
+{2 Single Splat ([*])}
+
+Matches exactly one path segment:
+
+{[
+(* Route: /files/* *)
+(* Matches: /files/readme.txt *)
+(* Doesn't match: /files/docs/guide.txt *)
+
+let file_handler request =
+  match Router.route_splat request with
+  | Some [filename] ->
+    (* Serve single file *)
+    serve_file filename
+  | _ -> Response.create `Not_found
+
+let routes = Router.router [Router.get "/files/*" file_handler]
+]}
+
+{2 Full Splat ([**])}
+
+Matches any number of path segments:
+
+{[
+(* Route: /admin/** *)
+(* Matches: /admin/settings *)
+(* Matches: /admin/users/123 *)
+(* Matches: /admin/posts/edit/5 *)
+
+let admin_spa_handler request =
+  match Router.route_splat request with
+  | Some segments ->
+    let path = String.concat "/" segments in
+    (* Serve SPA with client-side routing *)
+    serve_spa ~path
+  | None ->
+    (* Serve SPA index *)
+    serve_spa ~path:""
+
+let routes = Router.router [Router.get "/admin/**" admin_spa_handler]
+]}
+
+{2 Mixed Splat and Parameters}
+
+Combine splat with named parameters:
+
+{[
+(* Route: /api/*/:resource_id *)
+(* Matches: /api/v1/users *)
+(* Result: params = ["resource_id", "users"], splat = ["v1"] *)
+
+let api_handler request =
+  match Router.route_params request, Router.route_splat request with
+  | Some params, Some [version] ->
+    let resource = List.assoc "resource_id" params in
+    (* Handle versioned API: version, resource *)
+    handle_api ~version ~resource
+  | _ -> Response.create `Not_found
+]}
+
+{1 Scoped Routes}
+
+Group related routes under a common prefix:
+
+{[
+let routes =
+  Router.router
+    [ Router.scope "/api"
+        [ Router.get "/users" list_users
+        ; Router.get "/users/:id" get_user
+        ; Router.post "/users" create_user
+        ]
+    ; Router.scope "/admin"
+        [ Router.get "/dashboard" admin_dashboard
+        ; Router.get "/settings" admin_settings
+        ]
+    ]
+]}
+
+Scopes can be nested:
+
+{[
+let routes =
+  Router.router
+    [ Router.scope "/api"
+        [ Router.scope "/v1"
+            [ Router.get "/users" v1_list_users ]
+        ; Router.scope "/v2"
+            [ Router.get "/users" v2_list_users ]
+        ]
+    ]
+]}
+
+{1 Scoped Middleware}
+
+Apply middlewares to specific route scopes:
+
+{[
+let api_routes =
+  Router.scope
+    ~middlewares:[auth_middleware; rate_limiter]
+    "/api"
+    [ Router.get "/protected" protected_handler ]
+
+let public_routes =
+  Router.scope
+    "/"
+    [ Router.get "/public" public_handler ]
+
+let routes = Router.router [api_routes; public_routes]
+]}
+
+Middlewares execute from outermost to innermost scope:
+
+{[
+let routes =
+  Router.scope
+    ~middlewares:[logger]
+    "/"
+    [ Router.scope
+        ~middlewares:[auth]
+        "/admin"
+        [ Router.get "/dashboard" dashboard ]
+    ]
+(* Execution order: logger -> auth -> dashboard *)
+]}
+
+{1 RESTful Resources}
+
+Generate standard CRUD routes automatically:
+
+{[
+module Users : Router.Resource = struct
+  let index _req = (* GET /users *) ...
+  let new_ _req = (* GET /users/new *) ...
+  let create _req = (* POST /users *) ...
+  let get _req = (* GET /users/:id *) ...
+  let edit _req = (* GET /users/:id/edit *) ...
+  let update _req = (* PUT /users/:id *) ...
+  let delete _req = (* DELETE /users/:id *) ...
+end
+
+let routes =
+  Router.router
+    [ Router.resource ~middlewares:[auth] "/users" (module Users) ]
+]}
+
+This generates:
+- [GET /users] → [index]
+- [GET /users/new] → [new_]
+- [POST /users] → [create]
+- [GET /users/:id] → [get]
+- [GET /users/:id/edit] → [edit]
+- [PUT /users/:id] → [update]
+- [DELETE /users/:id] → [delete]
+
+{1 Route Data Access}
+
+{2 Parameters}
+
+{[
+val route_params : Request.t -> (string * string) list option
+]}
+
+Returns captured path parameters:
+
+{[
+let handler request =
+  match Router.route_params request with
+  | Some params ->
+    let id = List.assoc "id" params in
+    (* ... *)
+  | None -> Response.create `Not_found
+]}
+
+{2 Splat Segments}
+
+{[
+val route_splat : Request.t -> string list option
+]}
+
+Returns captured splat segments:
+
+{[
+let handler request =
+  match Router.route_splat request with
+  | Some segments ->
+    let path = String.concat "/" segments in
+    (* ... *)
+  | None -> Response.create `Not_found
+]}
+
+{1 Common Patterns}
+
+{2 Serving a SPA}
+
+{[
+let serve_spa request =
+  match Router.route_splat request with
+  | Some segments ->
+    let path = String.concat "/" segments in
+    (* Try to serve the file, fallback to index.html *)
+    serve_spa_file ~path ~fallback:"index.html"
+  | None ->
+    serve_file "index.html"
+
+let routes =
+  Router.router
+    [ (* API routes *)
+      Router.scope "/api" api_routes
+      (* SPA catches all other routes *)
+    ; Router.get "/**" serve_spa
+    ]
+]}
+
+{2 Static File Server}
+
+{[
+let serve_static request =
+  match Router.route_splat request with
+  | Some segments ->
+    let path = String.concat "/" segments in
+    serve_file_from_directory ~root:"./public" ~path
+  | None -> Response.create `Not_found
+
+let routes =
+  Router.router
+    [ Router.get "/static/**" serve_static ]
+]}
+
+{2 API Versioning}
+
+{[
+let api_handler request =
+  match Router.route_params request, Router.route_splat request with
+  | Some params, Some [version] ->
+    let resource = List.assoc "resource" params in
+    begin match version with
+    | "v1" -> handle_v1 resource request
+    | "v2" -> handle_v2 resource request
+    | _ -> Response.create `Not_found
+    end
+  | _ -> Response.create `Not_found
+
+let routes =
+  Router.router
+    [ Router.get "/api/*/:resource" api_handler ]
+]}
+
+{1 Best Practices}
+
+{2 Route Ordering}
+
+More specific routes should come before generic ones:
+
+{[
+(* Good *)
+let routes =
+  Router.router
+    [ Router.get "/users/admin" admin_users  (* Specific *)
+    ; Router.get "/users/:id" get_user      (* Generic *)
+    ]
+
+(* Bad - /users/admin will never match *)
+let routes =
+  Router.router
+    [ Router.get "/users/:id" get_user      (* Too generic *)
+    ; Router.get "/users/admin" admin_users (* Unreachable *)
+    ]
+]}
+
+{2 Middleware Placement}
+
+Apply middlewares at the appropriate scope level:
+
+{[
+let routes =
+  Router.router
+    [ (* Public routes - no auth *)
+      Router.scope "/public" public_routes
+      (* Protected routes - with auth *)
+    ; Router.scope ~middlewares:[auth] "/protected" protected_routes
+    ]
+]}
+
+{2 Error Handling}
+
+Always handle the [None] case when accessing route data:
+
+{[
+let handler request =
+  match Router.route_params request with
+  | Some params ->
+    begin match List.assoc_opt "id" params with
+    | Some id -> (* process id *)
+    | None -> Response.create `Bad_request
+    end
+  | None -> Response.create `Not_found
+]}
+
+{1 See Also}
+
+- {!module:Tapak_kernel.Router} - Router API documentation
+- {!page-middleware} - Middleware guide
+- {!page-kernel} - Kernel overview
