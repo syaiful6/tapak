@@ -20,6 +20,16 @@ let
 in
 
 {
+  simdutf = buildTapak {
+    pname = "simdutf";
+    src = genSrc {
+      dirs = [ "pkg/simdutf" ];
+      files = [ "simdutf.opam" ];
+    };
+    checkInputs = [ alcotest bos ];
+    propagatedBuildInputs = [ ctypes dune dune-configurator ];
+  };
+
   tapak = buildTapak {
     pname = "tapak";
     src = genSrc {

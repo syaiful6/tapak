@@ -3,13 +3,14 @@
 with ocamlPackages;
 
 pkgs.mkShell {
-  inputsFrom = with packages; [ tapak ];
+  inputsFrom = with packages; [ simdutf tapak ];
   buildInputs = [
     ocaml
     dune
     ocaml-lsp
     ocamlformat
     alcotest
+    bos
     utop
     odoc
     pkgs.openssl

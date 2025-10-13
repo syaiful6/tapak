@@ -1,0 +1,45 @@
+(executable
+ (name simdutf_types_stubgen)
+ (package simdutf)
+ (modules simdutf_types_stubgen)
+ (public_name simdutf_types_subgen.exe)
+ (libraries simdutf.bindings.types ctypes.stubs ctypes))
+
+(executable
+ (name simdutf_stubgen)
+ (package simdutf)
+ (modules simdutf_stubgen)
+ (public_name simdutf_subgen.exe)
+ (libraries simdutf.bindings ctypes.stubs ctypes))
+
+(rule
+ (targets ffi_ml_simdutf_types_stubgen.c)
+ (deps ./simdutf_types_stubgen.exe)
+ (action
+  (with-stdout-to
+   %{targets}
+   (run %{deps}))))
+
+(rule
+ (targets ctypes_path.txt)
+ (action
+  (with-stdout-to
+   %{targets}
+   (run ocamlfind query ctypes))))
+
+(rule
+ (targets ffi_ml_simdutf_types_stubgen.exe)
+ (deps
+  (:c ./ffi_ml_simdutf_types_stubgen.c)
+  (:c_flags ../config/c_flags.txt)
+  (:ctypes_path ctypes_path.txt))
+ (action
+  (run
+   %{cc}
+   %{c}
+   %{read-lines:../config/c_flags.txt}
+   -I%{read-lines:ctypes_path.txt}
+   -I%{ocaml_where}
+   -I../c
+   -o
+   %{targets})))
