@@ -22,7 +22,7 @@ in
   tapak = buildTapak {
     pname = "tapak";
     src = genSrc {
-      dirs = [ "src" ];
+      dirs = [ "src" "pkg/kernel" ];
       files = [ "tapak.opam" ];
     };
     propagatedBuildInputs = [
@@ -30,6 +30,7 @@ in
       hmap
       logs
       piaf
+      ptime
     ];
   };
 }
