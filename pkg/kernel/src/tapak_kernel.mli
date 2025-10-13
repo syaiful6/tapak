@@ -18,6 +18,7 @@ end
 
 module Context = Context
 module Filter = Filter
+module Form = Form
 module Handler = Handler
 module Middleware = Middleware
 module Request = Request
@@ -25,3 +26,4 @@ module Request_info = Request_info
 module Response = Response
 module Router = Router
 module Service = Service
+module Body = Body

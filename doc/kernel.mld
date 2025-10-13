@@ -1,0 +1,253 @@
+{0 Tapak Kernel}
+
+{1 Introduction}
+
+The [tapak.kernel] module provides the core request-response processing infrastructure for Tapak. Inspired by {{:https://twitter.github.io/finagle/} Twitter's Finagle}, it implements a composable architecture based on services and filters (middlewares).
+
+{1 Architecture}
+
+Tapak Kernel is built around several key abstractions:
+
+{2 Request and Response}
+
+The {!module:Tapak_kernel.Request} and {!module:Tapak_kernel.Response} modules provide thin wrappers around Piaf's HTTP types, extended with a context system for passing data through the request pipeline.
+
+{[
+open Tapak_kernel
+
+(* Create a request *)
+let request =
+  Request.create
+    ~scheme:`HTTP
+    ~version:Piaf.Versions.HTTP.HTTP_1_1
+    ~meth:`GET
+    "/hello"
+
+(* Create a response *)
+let response =
+  Response.create
+    ~body:(Piaf.Body.of_string "Hello!")
+    `OK
+]}
+
+{2 Context}
+
+The {!module:Tapak_kernel.Context} module provides a type-safe heterogeneous map for storing request-scoped data. This is similar to Finagle's Context or Ring's request map.
+
+{[
+(* Define a key *)
+let user_key : User.t Context.key =
+  Context.Key.create
+    { name = Some "user"
+    ; show = Some (fun u -> u.User.username)
+    }
+
+(* Store and retrieve data *)
+let request = Request.create ~meth:`GET "/" in
+let request' = Request.with_context
+  (Context.add user_key current_user (Request.context request))
+  request
+in
+match Context.find user_key (Request.context request') with
+| Some user -> (* ... *)
+| None -> (* ... *)
+]}
+
+{2 Handlers}
+
+A handler is a function that processes a request and returns a response:
+
+{[
+type Handler.t = Request.t -> Response.t
+]}
+
+Handlers are the basic building blocks of your application. They represent the actual business logic that processes requests.
+
+{[
+let hello_handler request =
+  Response.create
+    ~body:(Piaf.Body.of_string "Hello, World!")
+    `OK
+]}
+
+{2 Middleware (Filters)}
+
+The {!module:Tapak_kernel.Middleware} module implements the filter pattern from Finagle. A middleware wraps a handler to add cross-cutting functionality.
+
+Tapak supports two ways to create middleware:
+
+{3 Function-based Middleware (Recommended for Simple Cases)}
+
+For simple middleware, create it directly from a filter function:
+
+{[
+(* A filter is: Handler.t -> Handler.t *)
+let logger_filter next request =
+  let path = Request.target request in
+  Printf.printf "REQUEST: %s\n" path;
+  next request
+
+let logger_middleware = Middleware.create ~filter:logger_filter ~name:"logger"
+]}
+
+{3 Module-based Middleware (For Complex State)}
+
+For middleware that needs initialization or state management, use the module interface:
+
+{[
+module type Intf = sig
+  type args
+  type state
+
+  val init : args -> state
+  val call : state -> (Request.t, Response.t) Filter.simple
+end
+]}
+
+Example:
+
+{[
+module Logger = struct
+  type args = { prefix : string }
+  type state = { prefix : string }
+
+  let init args = args
+
+  let call state next request =
+    let path = Request.target request in
+    Printf.printf "%s: %s\n" state.prefix path;
+    next request
+end
+
+let logger = Middleware.use ~name:"logger" (module Logger) { prefix = "REQUEST" }
+]}
+
+Middlewares can:
+- Add request/response logging
+- Implement authentication and authorization
+- Handle errors and exceptions
+- Add caching
+- Compress responses
+- And much more...
+
+{2 Apps}
+
+The {!module:Tapak_kernel.App} module combines handlers with middlewares to create complete applications:
+
+{[
+let app =
+  App.create
+    ~middlewares:[logger; auth_middleware]
+    ~handler:my_handler
+    ()
+
+(* Execute the app *)
+let response = App.call app request
+]}
+
+{2 Router}
+
+The {!module:Tapak_kernel.Router} module provides pattern-based routing with:
+
+- Path parameter extraction: [/users/:id]
+- Single splat matching: [/users/*] (matches one segment)
+- Full splat matching: [/admin/**] (matches all sub-paths)
+- Scoped routes with middleware isolation
+- RESTful resource routing
+
+{[
+let routes =
+  Router.router
+    [ Router.scope "/api"
+        [ Router.get "/users" list_users
+        ; Router.get "/users/:id" get_user
+        ; Router.post "/users" create_user
+        ]
+    ; Router.scope "/admin"
+        [ Router.get "/**" serve_admin_spa ]
+    ]
+]}
+
+See {!page-router} for detailed routing documentation.
+
+{1 Modules}
+
+The kernel package exports the following modules:
+
+- {!module:Tapak_kernel.Context} - Type-safe heterogeneous maps
+- {!module:Tapak_kernel.Request} - HTTP request handling
+- {!module:Tapak_kernel.Response} - HTTP response creation
+- {!module:Tapak_kernel.Handler} - Request handler abstraction
+- {!module:Tapak_kernel.Middleware} - Middleware/filter system
+- {!module:Tapak_kernel.App} - Application composition
+- {!module:Tapak_kernel.Router} - Pattern-based routing
+- {!module:Tapak_kernel.Server} - HTTP server (coming soon)
+
+{1 Design Philosophy}
+
+{2 Composability}
+
+Every component in Tapak is designed to be composable. Small, focused functions and modules can be combined to build complex functionality.
+
+{2 Type Safety}
+
+Tapak leverages OCaml's type system to catch errors at compile time. The Context module provides type-safe storage, and the middleware system ensures proper composition.
+
+{2 Simplicity}
+
+While powerful, Tapak strives to remain simple. The core abstractions are easy to understand and use, while still providing the flexibility needed for complex applications.
+
+{2 Performance}
+
+Built on EIO (OCaml 5's effect-based I/O), Tapak delivers excellent performance without sacrificing safety or composability.
+
+{1 Comparison to Finagle}
+
+For those familiar with Finagle, here's how Tapak's concepts map:
+
+- [Service[Req, Rep\]] → [Handler.t] (specialized to HTTP)
+- [Filter] → {!module:Tapak_kernel.Middleware}
+- [Context] → {!module:Tapak_kernel.Context}
+- [Stack] → {!module:Tapak_kernel.App}
+
+{1 Examples}
+
+{2 Complete Application}
+
+{[
+open Tapak_kernel
+
+(* Define middleware *)
+let logger_filter next request =
+  Logs.info (fun m -> m "Request: %s" (Request.target request));
+  next request
+
+let logger = Middleware.create ~filter:logger_filter ~name:"logger"
+
+(* Define handlers *)
+let home_handler _request =
+  Response.create ~body:(Piaf.Body.of_string "Home") `OK
+
+let user_handler request =
+  match Router.route_params request with
+  | Some params ->
+    let id = List.assoc "id" params in
+    let body = Printf.sprintf "User %s" id in
+    Response.create ~body:(Piaf.Body.of_string body) `OK
+  | None -> Response.create `Not_found
+
+(* Combine into application *)
+let app =
+  Router.router
+    [ Router.scope ~middlewares:[logger] "/"
+        [ Router.get "/" home_handler
+        ; Router.get "/users/:id" user_handler
+        ]
+    ]
+]}
+
+{1 Next Steps}
+
+- Read the {!page-router} guide for detailed routing documentation
+- Learn about {!page-middleware} to add cross-cutting concerns
+- See module documentation: {!module:Tapak_kernel}

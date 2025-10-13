@@ -9,7 +9,9 @@ pkgs.mkShell {
     dune
     ocaml-lsp
     ocamlformat
+    alcotest
     utop
+    odoc
     pkgs.openssl
     pkgs.postgresql
     pkgs.pkg-config

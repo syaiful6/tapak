@@ -6,8 +6,10 @@ end
 
 module Context = Context
 module Filter = Filter
+module Form = Form
 module Handler = Handler
 module Middleware = Middleware
+module Body = Body
 module Request = Request
 module Request_info = Request_info
 module Response = Response

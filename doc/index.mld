@@ -1,0 +1,68 @@
+{0 Tapak}
+
+Tapak is a composable framework for building web applications in OCaml. Inspired by {{:https://twitter.github.io/finagle/} Finagle}, it provides a modular and extensible architecture for building scalable web services.
+
+{1 Overview}
+
+Tapak is built around a simple yet powerful abstraction: services and filters (middlewares). This design allows you to compose complex request-response processing pipelines from small, reusable components.
+
+The framework is split into multiple packages:
+
+- {!module:Tapak_kernel} - Core request-response processing module
+- More modules coming soon...
+
+{1 Key Features}
+
+- {b Composable Architecture}: Build applications from small, reusable components
+- {b Type-Safe Routing}: Pattern matching based router with parameter extraction and splat matching
+- {b Middleware Pipeline}: Chain middlewares to handle cross-cutting concerns
+- {b Built on EIO}: Uses OCaml 5's effect-based I/O for excellent performance
+- {b Finagle-Inspired}: Adopts proven patterns from Twitter's battle-tested framework
+
+{1 Installation}
+
+Add tapak to your [dune-project]:
+
+{[
+(package
+  (name your-app)
+  (depends
+    (tapak (>= 0.1.0))))
+]}
+
+{1 Quick Start}
+
+Here's a simple example to get you started:
+
+{[
+open Tapak_kernel
+
+let hello_handler _request =
+  Response.create
+    ~body:(Piaf.Body.of_string "Hello, World!")
+    `OK
+
+let routes =
+  Router.router
+    [ Router.get "/" hello_handler
+    ; Router.get "/hello/:name" (fun request ->
+        match Router.route_params request with
+        | Some params ->
+          let name = List.assoc "name" params in
+          Response.create
+            ~body:(Piaf.Body.of_string ("Hello, " ^ name ^ "!"))
+            `OK
+        | None -> Response.create `Not_found)
+    ]
+]}
+
+{1 Documentation}
+
+- {!page-kernel} - Tapak Kernel module documentation
+- {!page-router} - Router and pattern matching
+- {!page-middleware} - Middleware system
+
+{1 Project Links}
+
+- {{:https://github.com/syaiful6/tapak} GitHub Repository}
+- {{:https://github.com/syaiful6/tapak/issues} Issue Tracker}
