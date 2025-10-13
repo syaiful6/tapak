@@ -26,6 +26,7 @@
   (ctypes
    (>= 0.14.0))
   dune
+  dune-configurator
   (alcotest :with-test)
   (odoc :with-doc)))
 

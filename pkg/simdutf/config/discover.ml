@@ -50,7 +50,7 @@ let cflags = function
   | Mac ->
     let sdk = find_xcode_sysroot "macosx" in
     [ "-isysroot"; sdk ]
-  | Linux -> [ "fPIC" ]
+  | Linux -> [ "-fPIC" ]
   | Windows -> []
 
 let cxxflags = function
