@@ -13,6 +13,7 @@ depends: [
   "ocaml" {>= "5.2.0"}
   "ctypes" {>= "0.14.0"}
   "dune" {>= "3.19"}
+  "dune-configurator"
   "alcotest" {with-test}
   "odoc" {with-doc}
 ]
