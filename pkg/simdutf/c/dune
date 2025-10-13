@@ -1,0 +1,12 @@
+(library
+ (name simdutf_c)
+ (public_name simdutf.c)
+ (preprocess no_preprocessing)
+ (foreign_archives simdutf))
+
+(foreign_library
+ (archive_name simdutf)
+ (language cxx)
+ (flags
+  (:standard -fPIC))
+ (names simdutf simdutf_capi))

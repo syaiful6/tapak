@@ -1,0 +1,31 @@
+(rule
+ (targets g.ml)
+ (deps ../stubgen/simdutf_stubgen.exe)
+ (action
+  (with-stdout-to
+   %{targets}
+   (run %{deps} -ml))))
+
+(rule
+ (targets simdutf_stubs.c)
+ (deps ../stubgen/simdutf_stubgen.exe)
+ (action
+  (with-stdout-to
+   %{targets}
+   (run %{deps} -c))))
+
+(library
+ (name simdutf_ffi)
+ (public_name simdutf.ffi)
+ (flags
+  (:standard -w -9-27-32-34))
+ (libraries simdutf.c simdutf.bindings simdutf.types ctypes.stubs)
+ (foreign_stubs
+  (language c)
+  (names simdutf_stubs)
+  (flags
+   (:include ../config/c_flags.sexp)))
+ (library_flags
+  (:include ../config/flags.sexp))
+ (c_library_flags
+  (:include ../config/c_library_flags.sexp)))

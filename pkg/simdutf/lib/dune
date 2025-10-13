@@ -1,0 +1,4 @@
+(library
+ (name simdutf)
+ (public_name simdutf)
+ (libraries ctypes simdutf.ffi simdutf.types))
