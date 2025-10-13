@@ -61,7 +61,7 @@ let cxxflags = function
   | Windows -> [ "-std=c++17" ]
 
 let c_library_flags = function
-  | Mac -> [ "-lc++"; "-lc++abi" ]
+  | Mac -> [ "-lstdc++" ]
   | Linux -> [ "-lstdc++" ]
   | Windows -> []
 
