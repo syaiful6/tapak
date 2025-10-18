@@ -1,4 +1,4 @@
 (test
  (name test)
  (modules :standard)
- (libraries alcotest simdutf bos))
+ (libraries alcotest simdutf))

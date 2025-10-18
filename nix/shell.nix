@@ -10,7 +10,6 @@ pkgs.mkShell {
     ocaml-lsp
     ocamlformat
     alcotest
-    bos
     utop
     odoc
     pkgs.openssl
