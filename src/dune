@@ -1,4 +1,12 @@
 (library
  (name tapak)
  (public_name tapak)
- (libraries piaf eio logs ptime tapak.kernel))
+ (libraries
+  piaf
+  eio
+  logs
+  ptime
+  mirage-crypto
+  mirage-crypto-rng
+  mirage-crypto-rng.unix
+  tapak.kernel))

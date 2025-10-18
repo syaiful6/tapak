@@ -47,6 +47,9 @@
    (>= 0.2.0))
   (uri
    (>= 4.4.0))
+  mirage-crypto
+  mirage-crypto-rng
+  mirage-crypto-rng-unix
   (alcotest :with-test)
   (odoc :with-doc))
  (tags

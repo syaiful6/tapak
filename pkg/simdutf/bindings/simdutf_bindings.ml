@@ -19,24 +19,24 @@ module M (F : Cstubs.FOREIGN) = struct
     let validate =
       foreign
         "tapak_simdutf_validate_utf8"
-        C.(ocaml_string @-> size_t @-> returning bool)
+        C.(string @-> size_t @-> returning bool)
 
     let validate_with_errors =
       foreign
         "tapak_simdutf_validate_utf8_with_errors"
-        C.(ocaml_string @-> size_t @-> returning Simdutf_types.Result.t)
+        C.(string @-> size_t @-> returning Simdutf_types.Result.t)
   end
 
   module Ascii = struct
     let validate =
       foreign
         "tapak_simdutf_validate_ascii"
-        C.(ocaml_string @-> size_t @-> returning bool)
+        C.(string @-> size_t @-> returning bool)
 
     let validate_with_errors =
       foreign
         "tapak_simdutf_validate_ascii_with_errors"
-        C.(ocaml_string @-> size_t @-> returning Simdutf_types.Result.t)
+        C.(string @-> size_t @-> returning Simdutf_types.Result.t)
   end
 
   module Base64 = struct
@@ -49,7 +49,7 @@ module M (F : Cstubs.FOREIGN) = struct
       foreign
         "tapak_simdutf_binary_to_base64"
         C.(
-          ocaml_string
+          ptr char
           @-> size_t
           @-> ptr char
           @-> Simdutf_types.Base64.option
@@ -58,13 +58,13 @@ module M (F : Cstubs.FOREIGN) = struct
     let max_binary_length =
       foreign
         "tapak_simdutf_maximal_binary_length_from_base64"
-        C.(ocaml_string @-> size_t @-> returning size_t)
+        C.(ptr char @-> size_t @-> returning size_t)
 
     let base64_to_binary =
       foreign
         "tapak_simdutf_base64_to_binary"
         C.(
-          ocaml_string
+          ptr char
           @-> size_t
           @-> ptr char
           @-> Simdutf_types.Base64.option

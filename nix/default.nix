@@ -26,7 +26,6 @@ in
       dirs = [ "pkg/simdutf" ];
       files = [ "simdutf.opam" ];
     };
-    checkInputs = [ alcotest bos ];
     propagatedBuildInputs = [ ctypes dune dune-configurator ];
   };
 
@@ -43,6 +42,8 @@ in
       piaf
       uri
       ptime
+      mirage-crypto
+      mirage-crypto-rng
     ];
   };
 }
