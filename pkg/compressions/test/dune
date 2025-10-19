@@ -1,0 +1,5 @@
+(test
+ (name test)
+ (package tapak-compressions)
+ (modules test test_zstd test_brotli)
+ (libraries alcotest tapak-compressions))

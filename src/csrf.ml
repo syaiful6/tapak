@@ -65,19 +65,18 @@ let is_token_match ~token ~secret =
     constant_time_equal unmasked_token secret
 
 let get_secret_from_request ~cookie_name request =
-  let open Tapak_kernel in
   let headers = Request.headers request in
-  let cookies = Piaf.Cookies.Cookie.parse headers in
+  let cookies = Cookies.Cookie.parse headers in
   List.assoc_opt cookie_name cookies
 
 type t =
   { cookie_name : string option
-  ; expiration : Piaf.Cookies.expiration option
+  ; expiration : Cookies.expiration option
   ; domain : string option
   ; path : string option
   ; secure : bool
   ; http_only : bool
-  ; same_site : Piaf.Cookies.same_site option
+  ; same_site : Cookies.same_site option
   }
 
 let verify_csrf_token ?(cookie_name = cookie_name) ~token request =
@@ -95,7 +94,7 @@ let csrf_input ?(cookie_name = cookie_name) request =
   token, secret
 
 let with_csrf_cookie ?settings secret response =
-  let open Piaf.Cookies in
+  let open Cookies in
   let settings =
     match settings with
     | Some settings -> settings
@@ -121,7 +120,4 @@ let with_csrf_cookie ?settings secret response =
       (cookie_name, secret)
     |> Set_cookie.serialize
   in
-  let headers =
-    Piaf.Headers.add (Piaf.Response.headers response) header_name header_value
-  in
-  Piaf.Response.with_ ~headers response
+  Response.add_header (header_name, header_value) response

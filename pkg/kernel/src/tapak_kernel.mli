@@ -27,3 +27,4 @@ module Response = Response
 module Router = Router
 module Service = Service
 module Body = Body
+module Server_connection = Server_connection

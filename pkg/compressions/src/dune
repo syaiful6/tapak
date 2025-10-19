@@ -1,0 +1,20 @@
+(library
+ (name tapak_compressions)
+ (public_name tapak-compressions)
+ (modules
+  tapak_compressions
+  brotli
+  zstd
+  gzip
+  brotli_decompressor
+  zstd_decompressor)
+ (libraries piaf camlzip)
+ (foreign_stubs
+  (language c)
+  (names brotli_stubs zstd_stubs)
+  (flags
+   (:standard
+    (:include ./config/c_flags.sexp))))
+ (c_library_flags
+  (:standard
+   (:include ./config/c_library_flags.sexp))))

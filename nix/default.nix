@@ -13,13 +13,17 @@ let
     doCheck = doCheck;
     duneVersion = "3";
     nativeBuildInputs = [ pkgs.pkg-config ];
-    buildInputs = [ pkgs.openssl ];
+    buildInputs = [ pkgs.openssl pkgs.brotli pkgs.zstd ];
     checkInputs = [ alcotest ];
-    PKG_CONFIG_PATH = pkgs.lib.makeSearchPath "lib/pkgconfig" [ pkgs.openssl ];
+    PKG_CONFIG_PATH = pkgs.lib.makeSearchPath "lib/pkgconfig" [
+      pkgs.openssl
+      pkgs.brotli
+      pkgs.zstd
+    ];
   } // args);
 in
 
-{
+ {
   simdutf = buildTapak {
     pname = "simdutf";
     src = genSrc {
@@ -37,13 +41,28 @@ in
     };
     propagatedBuildInputs = [
       eio
+      angstrom
       hmap
       logs
       piaf
       uri
       ptime
+      yojson
       mirage-crypto
       mirage-crypto-rng
+    ];
+  };
+
+  tapak-compressions = buildTapak {
+    pname = "tapak-compressions";
+    src = genSrc {
+      dirs = [ "pkg/compressions" ];
+      files = [ "tapak-compressions.opam" ];
+    };
+    propagatedBuildInputs = [
+      piaf
+      camlzip
+      dune-configurator
     ];
   };
 }
