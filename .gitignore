@@ -12,3 +12,7 @@ result
 
 .envrc.local
 .direnv
+
+# Downloaded simdutf single-header files (auto-downloaded during build)
+pkg/simdutf/c/simdutf.h
+pkg/simdutf/c/simdutf.cpp
