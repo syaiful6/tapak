@@ -39,6 +39,7 @@
   (ocaml
    (>= 5.2.0))
   dune
+  angstrom
   hmap
   logs
   (eio
@@ -47,9 +48,31 @@
    (>= 0.2.0))
   (uri
    (>= 4.4.0))
+  yojson
   mirage-crypto
   mirage-crypto-rng
   (alcotest :with-test)
   (odoc :with-doc))
  (tags
   ("web" "framework" "ocaml" "eio" "http" "modular")))
+
+(package
+ (name tapak-compressions)
+ (synopsis "Compression support for Tapak web framework")
+ (description
+  "Provides compression and decompression support for the Tapak web framework. Includes implementations for gzip, deflate, brotli, and zstd compression algorithms.")
+ (depends
+  (ocaml
+   (>= 5.2.0))
+  dune
+  dune-configurator
+  (piaf
+   (>= 0.2.0))
+  (camlzip
+   (>= 1.11))
+  conf-brotli
+  conf-zstd
+  (alcotest :with-test)
+  (odoc :with-doc))
+ (tags
+  ("web" "compression" "brotli" "zstd" "gzip" "deflate")))

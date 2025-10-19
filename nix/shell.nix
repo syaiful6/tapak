@@ -3,7 +3,7 @@
 with ocamlPackages;
 
 pkgs.mkShell {
-  inputsFrom = with packages; [ simdutf tapak ];
+  inputsFrom = with packages; [ simdutf tapak tapak-compressions ];
   buildInputs = [
     ocaml
     dune
@@ -15,5 +15,7 @@ pkgs.mkShell {
     pkgs.openssl
     pkgs.postgresql
     pkgs.pkg-config
+    pkgs.systemfd
+    pkgs.watchexec
   ];
 }
