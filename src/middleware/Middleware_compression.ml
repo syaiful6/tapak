@@ -59,8 +59,15 @@ let call { encoder; predicate; preferred_encodings } next request =
         | Error _ -> response
         | Ok compressed_stream ->
           let encoding_name = encoding_to_string encoding in
+          let headers =
+            Headers.add_to_list_header
+              (Response.headers response)
+              "Vary"
+              "Accept-Encoding"
+          in
           response
-          |> Response.with_ ~body:(Body.of_string_stream compressed_stream)
-          |> Response.add_header_or_replace ("Content-Encoding", encoding_name)
+          |> Response.with_
+               ~body:(Body.of_string_stream compressed_stream)
+               ~headers
           |> Response.remove_header "Content-Length"
-          |> Response.add_header ("Vary", "Accept-Encoding")))
+          |> Response.add_header_or_replace ("Content-Encoding", encoding_name)))

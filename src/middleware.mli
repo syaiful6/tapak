@@ -3,6 +3,13 @@ include module type of Tapak_kernel.Middleware
 (** {1 Request Decompression Middleware} *)
 
 module Decompression : sig
+  (** Module type for decompression implementations *)
+  module type Decoder = sig
+    val decompress :
+       Bigstringaf.t Piaf.IOVec.t Piaf.Stream.t
+      -> (string Piaf.Stream.t, [> Piaf.Error.t ]) result
+  end
+
   type decoder = Middleware_decompression.decoder
   (** Decoder function that maps content encodings to decompressor modules.
 
@@ -32,6 +39,13 @@ end
 (** {1 Response Compression Middleware} *)
 
 module Compression : sig
+  (** Module type for compression implementations *)
+  module type Encoder = sig
+    val compress :
+       string Piaf.Stream.t
+      -> (string Piaf.Stream.t, [> Piaf.Error.t ]) result
+  end
+
   type encoder = Middleware_compression.encoder
   (** Encoder function that maps content encodings to compressor modules.
 
