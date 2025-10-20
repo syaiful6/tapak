@@ -1,6 +1,17 @@
 open Tapak
 module Log = (val Logs.src_log Logs.default : Logs.LOG)
 
+let trusted_proxies =
+  [ "127.0.0.1"
+  ; (* Localhost IPv4 *)
+    "::1"
+    (* Localhost IPv6 *)
+    (* Add actual load balancer/CDN IPs/ranges here, e.g.: *)
+    (* "10.0.0.0/8"; *)
+    (* "172.16.0.0/12"; *)
+    (* "192.168.0.0/16"; *)
+  ]
+
 let home_handler _req =
   Response.of_html
     ~status:`OK
@@ -95,7 +106,10 @@ let not_found _req =
     ~status:`Not_found
     "<h1>404 Not Found</h1><p>The page you requested could not be found.</p>"
 
-let app =
+let setup_app env =
+  let open Middleware in
+  let now () = Eio.Time.now (Eio.Stdenv.clock env) in
+
   App.(
     routes
       ~not_found
@@ -107,7 +121,14 @@ let app =
       ; Router.put "/echo" echo_handler
       ]
       ()
-    <+> Middleware.Decompression.middleware Tapak_compressions.decoder)
+    <+> use
+          ~name:"Request Logger"
+          (module Request_logger)
+          (Request_logger.args ~now ~trusted_proxies ())
+    <+> use
+          ~name:"Decompression"
+          (module Decompression)
+          Tapak_compressions.decoder)
 
 let setup_log ?style_renderer level =
   Fmt_tty.setup_std_outputs ?style_renderer ();
@@ -138,8 +159,8 @@ let () =
       log
         "Starting with systemd socket activation support (domains: %d)"
         domains);
-    ignore (Server.run_with_systemd_socket ~config ~env app))
+    ignore (Server.run_with_systemd_socket ~config ~env (setup_app env)))
   else (
     Log.warn (fun log ->
       log "Starting Tapak Showcase WITHOUT systemd support on port %d" port);
-    ignore (Server.run_with ~config ~env app))
+    ignore (Server.run_with ~config ~env (setup_app env)))

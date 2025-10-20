@@ -7,37 +7,17 @@ module Decompression = struct
       -> (string Piaf.Stream.t, [> Piaf.Error.t ]) result
   end
 
-  type decoder = Middleware_decompression.decoder
-
-  let middleware decoder =
-    use ~name:"Decompression" (module Middleware_decompression) decoder
+  include Middleware_decompression
 end
 
 module Compression = struct
-  open Header_parser
-
   module type Encoder = sig
     val compress :
        string Piaf.Stream.t
       -> (string Piaf.Stream.t, [> Piaf.Error.t ]) result
   end
 
-  type encoder = Middleware_compression.encoder
-  type predicate = Middleware_compression.predicate
-
-  type args =
-    { encoder : encoder
-    ; predicate : predicate
-    ; preferred_encodings : Accept.encoding list
-    }
-
-  let middleware
-        ?(predicate = fun _ _ -> true)
-        ?(preferred_encodings = [])
-        encoder
-    =
-    use
-      ~name:"Compression"
-      (module Middleware_compression)
-      { encoder; predicate; preferred_encodings }
+  include Middleware_compression
 end
+
+module Request_logger = Middleware_logger

@@ -18,6 +18,18 @@ module String = struct
     len >= prefix_len && check_prefix s ~prefix prefix_len 0
 end
 
+module Option = struct
+  include Option
+
+  module Syntax = struct
+    let ( let+ ) result f = map f result
+    let ( let* ) = bind
+
+    let ( and* ) o1 o2 =
+      match o1, o2 with Some v1, Some v2 -> Some (v1, v2) | _ -> None
+  end
+end
+
 module Result = struct
   include Result
 
