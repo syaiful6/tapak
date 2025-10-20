@@ -62,12 +62,14 @@ let test_no_accept_encoding () =
   let request = make_request () in
   let original_response = make_response "test body" in
 
-  let compression_middleware =
-    Middleware.Compression.middleware
-      ~predicate:always_compress
-      ~preferred_encodings:[ `Gzip ]
-      (make_mock_encoder `Gzip)
+  let args =
+    { Middleware.Compression.predicate = always_compress
+    ; preferred_encodings = [ `Gzip ]
+    ; encoder = make_mock_encoder `Gzip
+    }
   in
+
+  let compression_middleware = Middleware.(use (module Compression) args) in
 
   let handler _req = original_response in
   let response = Middleware.apply compression_middleware handler request in
@@ -86,12 +88,14 @@ let test_compression_with_gzip () =
   let request = make_request ~accept_encoding:"gzip, deflate" () in
   let original_response = make_response ~content_length:9 "test body" in
 
-  let compression_middleware =
-    Middleware.Compression.middleware
-      ~predicate:always_compress
-      ~preferred_encodings:[ `Gzip ]
-      (make_mock_encoder `Gzip)
+  let args =
+    { Middleware.Compression.predicate = always_compress
+    ; preferred_encodings = [ `Gzip ]
+    ; encoder = make_mock_encoder `Gzip
+    }
   in
+
+  let compression_middleware = Middleware.(use (module Compression) args) in
 
   let handler _req = original_response in
   let response = Middleware.apply compression_middleware handler request in
@@ -117,12 +121,14 @@ let test_vary_header_merge () =
     make_response ~vary:"Cookie, User-Agent" "test body"
   in
 
-  let compression_middleware =
-    Middleware.Compression.middleware
-      ~predicate:always_compress
-      ~preferred_encodings:[ `Gzip ]
-      (make_mock_encoder `Gzip)
+  let args =
+    { Middleware.Compression.predicate = always_compress
+    ; preferred_encodings = [ `Gzip ]
+    ; encoder = make_mock_encoder `Gzip
+    }
   in
+
+  let compression_middleware = Middleware.(use (module Compression) args) in
 
   let handler _req = original_response in
   let response = Middleware.apply compression_middleware handler request in
@@ -138,12 +144,14 @@ let test_vary_header_no_duplicate () =
     make_response ~vary:"Accept-Encoding, Cookie" "test body"
   in
 
-  let compression_middleware =
-    Middleware.Compression.middleware
-      ~predicate:always_compress
-      ~preferred_encodings:[ `Gzip ]
-      (make_mock_encoder `Gzip)
+  let args =
+    { Middleware.Compression.predicate = always_compress
+    ; preferred_encodings = [ `Gzip ]
+    ; encoder = make_mock_encoder `Gzip
+    }
   in
+
+  let compression_middleware = Middleware.(use (module Compression) args) in
 
   let handler _req = original_response in
   let response = Middleware.apply compression_middleware handler request in
@@ -157,12 +165,13 @@ let test_identity_encoding () =
   let request = make_request ~accept_encoding:"identity" () in
   let original_response = make_response "test body" in
 
-  let compression_middleware =
-    Middleware.Compression.middleware
-      ~predicate:always_compress
-      ~preferred_encodings:[ `Gzip ]
-      (make_mock_encoder `Gzip)
+  let args =
+    { Middleware.Compression.predicate = always_compress
+    ; preferred_encodings = [ `Gzip ]
+    ; encoder = make_mock_encoder `Gzip
+    }
   in
+  let compression_middleware = Middleware.(use (module Compression) args) in
 
   let handler _req = original_response in
   let response = Middleware.apply compression_middleware handler request in
@@ -176,11 +185,15 @@ let test_predicate_blocks_compression () =
   let request = make_request ~accept_encoding:"gzip" () in
   let original_response = make_response "test body" in
 
+  let args =
+    { Middleware.Compression.predicate = never_compress
+    ; encoder = make_mock_encoder `Gzip
+    ; preferred_encodings = [ `Gzip ]
+    }
+  in
+
   let compression_middleware =
-    Middleware.Compression.middleware
-      ~predicate:never_compress
-      ~preferred_encodings:[ `Gzip ]
-      (make_mock_encoder `Gzip)
+    Middleware.use (module Middleware.Compression) args
   in
 
   let handler _req = original_response in
@@ -195,11 +208,15 @@ let test_no_encoder_available () =
   let request = make_request ~accept_encoding:"br" () in
   let original_response = make_response "test body" in
 
+  let args =
+    { Middleware.Compression.predicate = always_compress
+    ; preferred_encodings = [ `Gzip; `Br ]
+    ; encoder = make_mock_encoder `Gzip
+    }
+  in
+
   let compression_middleware =
-    Middleware.Compression.middleware
-      ~predicate:always_compress
-      ~preferred_encodings:[ `Gzip; `Br ]
-      (make_mock_encoder `Gzip)
+    Middleware.use (module Middleware.Compression) args
   in
 
   let handler _req = original_response in
@@ -214,11 +231,14 @@ let test_compression_failure () =
   let request = make_request ~accept_encoding:"gzip" () in
   let original_response = make_response ~content_length:9 "test body" in
 
+  let args =
+    { Middleware.Compression.predicate = always_compress
+    ; preferred_encodings = [ `Gzip ]
+    ; encoder = make_failing_encoder `Gzip
+    }
+  in
   let compression_middleware =
-    Middleware.Compression.middleware
-      ~predicate:always_compress
-      ~preferred_encodings:[ `Gzip ]
-      (make_failing_encoder `Gzip)
+    Middleware.use (module Middleware.Compression) args
   in
 
   let handler _req = original_response in
@@ -238,12 +258,14 @@ let test_encoding_preference () =
   let request = make_request ~accept_encoding:"gzip, deflate, br" () in
   let original_response = make_response "test body" in
 
-  let compression_middleware =
-    Middleware.Compression.middleware
-      ~predicate:always_compress
-      ~preferred_encodings:[ `Gzip; `Deflate; `Br ]
-      (make_mock_encoder `Gzip)
+  let args =
+    { Middleware.Compression.predicate = always_compress
+    ; preferred_encodings = [ `Gzip; `Deflate; `Br ]
+    ; encoder = make_mock_encoder `Gzip
+    }
   in
+
+  let compression_middleware = Middleware.(use (module Compression) args) in
 
   let handler _req = original_response in
   let response = Middleware.apply compression_middleware handler request in
@@ -259,12 +281,13 @@ let test_replace_content_encoding () =
     make_response ~content_encoding:"deflate" "test body"
   in
 
-  let compression_middleware =
-    Middleware.Compression.middleware
-      ~predicate:always_compress
-      ~preferred_encodings:[ `Gzip ]
-      (make_mock_encoder `Gzip)
+  let args =
+    { Middleware.Compression.predicate = always_compress
+    ; preferred_encodings = [ `Gzip ]
+    ; encoder = make_mock_encoder `Gzip
+    }
   in
+  let compression_middleware = Middleware.(use (module Compression) args) in
 
   let handler _req = original_response in
   let response = Middleware.apply compression_middleware handler request in
