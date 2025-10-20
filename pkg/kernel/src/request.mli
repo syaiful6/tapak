@@ -11,6 +11,7 @@ val scheme : t -> Piaf.Scheme.t
 val body : t -> Piaf.Body.t
 val uri : t -> Uri.t
 val info : t -> Request_info.t
+val to_piaf : t -> Piaf.Request.t
 val context : t -> Context.t
 
 val create :

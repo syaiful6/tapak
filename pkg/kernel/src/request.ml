@@ -11,6 +11,7 @@ let scheme { request; _ } = Piaf.Request.scheme request
 let body { request; _ } = Piaf.Request.body request
 let uri { request; _ } = Piaf.Request.uri request
 let info { ctx; _ } = ctx
+let to_piaf { request; _ } = request
 let context t = t |> info |> fun ctx -> ctx.env
 
 let create

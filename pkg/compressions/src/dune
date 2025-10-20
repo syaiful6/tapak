@@ -1,14 +1,7 @@
 (library
  (name tapak_compressions)
  (public_name tapak-compressions)
- (modules
-  tapak_compressions
-  brotli
-  zstd
-  gzip
-  brotli_decompressor
-  zstd_decompressor)
- (libraries piaf camlzip)
+ (libraries tapak.kernel piaf camlzip)
  (foreign_stubs
   (language c)
   (names brotli_stubs zstd_stubs)

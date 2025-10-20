@@ -159,9 +159,7 @@ module Matcher = struct
     if equal matcher matcher' then matcher' else compress matcher'
 
   let of_router r = List.map compress (of_router r [])
-
-  let of_path p m =
-    compress (of_path_internal p m Piaf.Server.Handler.not_found)
+  let of_path p m = compress (of_path_internal p m Handler.not_found)
 
   let rec try_match a b captures splat =
     match a, b with

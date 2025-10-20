@@ -97,6 +97,24 @@ CAMLprim value tapak_zstd_set_compression_level(value cctx_val,
     caml_failwith("Failed to set compression level");
   }
 
+  /* See https://issues.chromium.org/issues/41493659
+   * For memory usage reasons, Chromium limits the window size to 8MB
+   * See https://datatracker.ietf.org/doc/html/rfc8878#name-window-descriptor
+   * For improved interoperability, it's recommended for decoders to support values
+   * of Window_Size up to 8 MB and for encoders not to generate frames requiring a
+   * Window_Size larger than 8 MB.
+   *
+   * Level 17 in zstd (as of v1.5.6) is the first level with a window size of 8 MB (2^23)
+   * Set the parameter for all levels >= 17. This will either have no effect (but reduce
+   * the risk of future changes in zstd) or limit the window log to 8MB.
+   */
+  if (level >= 17) {
+    ret = ZSTD_CCtx_setParameter(cctx, ZSTD_c_windowLog, 23);
+    if (ZSTD_isError(ret)) {
+      caml_failwith("Failed to set window log parameter");
+    }
+  }
+
   CAMLreturn(Val_unit);
 }
 
