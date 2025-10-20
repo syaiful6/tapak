@@ -26,8 +26,6 @@ module type Compressor = sig
     -> (string Piaf.Stream.t, [> Piaf.Error.t ]) result
 end
 
-(** Decoder function for use with decompression middleware.
-    Returns None for unsupported encodings. *)
 let decoder :
    [< `Gzip | `Deflate | `Br | `Zstd | `Identity | `Star | `Other of string ]
   -> (module Decompressor) option
@@ -54,8 +52,6 @@ let decoder :
       end : Decompressor)
   | `Star | `Other _ -> None
 
-(** Encoder function for use with compression middleware.
-    Returns None for unsupported encodings. *)
 let encoder :
    [< `Gzip | `Deflate | `Br | `Zstd | `Identity | `Star | `Other of string ]
   -> (module Compressor) option

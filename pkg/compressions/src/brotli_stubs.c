@@ -1,24 +1,59 @@
 #include <brotli/decode.h>
 #include <brotli/encode.h>
 #include <caml/alloc.h>
+#include <caml/custom.h>
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
 #include <string.h>
 
+static void tapak_finalize_brotli_decoder(value v) {
+  BrotliDecoderState *state = *((BrotliDecoderState **)Data_custom_val(v));
+  if (state != NULL) {
+    BrotliDecoderDestroyInstance(state);
+  }
+}
+
+static struct custom_operations tapak_brotli_decoder_ops = {
+    "tapak_brotli_decoder",    tapak_finalize_brotli_decoder,
+    custom_compare_default,    custom_hash_default,
+    custom_serialize_default,  custom_deserialize_default,
+    custom_compare_ext_default};
+
+static void tapak_finalize_brotli_encoder(value v) {
+  BrotliEncoderState *state = *((BrotliEncoderState **)Data_custom_val(v));
+  if (state != NULL) {
+    BrotliEncoderDestroyInstance(state);
+  }
+}
+
+static struct custom_operations tapak_brotli_encoder_ops = {
+    "tapak_brotli_encoder",    tapak_finalize_brotli_encoder,
+    custom_compare_default,    custom_hash_default,
+    custom_serialize_default,  custom_deserialize_default,
+    custom_compare_ext_default};
+
 CAMLprim value tapak_brotli_decoder_create_instance(value unit) {
   CAMLparam1(unit);
+  CAMLlocal1(v);
   BrotliDecoderState *state = BrotliDecoderCreateInstance(NULL, NULL, NULL);
   if (state == NULL) {
     caml_failwith("Failed to create Brotli decoder instance");
   }
-  CAMLreturn((value)state);
+  v = caml_alloc_custom(&tapak_brotli_decoder_ops, sizeof(BrotliDecoderState *),
+                        0, 1);
+  *((BrotliDecoderState **)Data_custom_val(v)) = state;
+  CAMLreturn(v);
 }
 
 CAMLprim value tapak_brotli_decoder_destroy_instance(value state_val) {
   CAMLparam1(state_val);
-  BrotliDecoderState *state = (BrotliDecoderState *)state_val;
-  BrotliDecoderDestroyInstance(state);
+  BrotliDecoderState *state =
+      *((BrotliDecoderState **)Data_custom_val(state_val));
+  if (state != NULL) {
+    BrotliDecoderDestroyInstance(state);
+    *((BrotliDecoderState **)Data_custom_val(state_val)) = NULL;
+  }
   CAMLreturn(Val_unit);
 }
 
@@ -27,7 +62,8 @@ CAMLprim value tapak_brotli_decompress_stream(value state_val, value input_val,
   CAMLparam3(state_val, input_val, output_size_val);
   CAMLlocal2(result, output_val);
 
-  BrotliDecoderState *state = (BrotliDecoderState *)state_val;
+  BrotliDecoderState *state =
+      *((BrotliDecoderState **)Data_custom_val(state_val));
   const uint8_t *input = (const uint8_t *)String_val(input_val);
   size_t input_size = caml_string_length(input_val);
   size_t available_in = input_size;
@@ -81,6 +117,7 @@ CAMLprim value tapak_brotli_decompress_stream(value state_val, value input_val,
 
 CAMLprim value tapak_brotli_encoder_create_instance(value quality_val) {
   CAMLparam1(quality_val);
+  CAMLlocal1(v);
   BrotliEncoderState *state = BrotliEncoderCreateInstance(NULL, NULL, NULL);
   if (state == NULL) {
     caml_failwith("Failed to create Brotli encoder instance");
@@ -89,13 +126,20 @@ CAMLprim value tapak_brotli_encoder_create_instance(value quality_val) {
   int quality = Int_val(quality_val);
   BrotliEncoderSetParameter(state, BROTLI_PARAM_QUALITY, quality);
 
-  CAMLreturn((value)state);
+  v = caml_alloc_custom(&tapak_brotli_encoder_ops, sizeof(BrotliEncoderState *),
+                        0, 1);
+  *((BrotliEncoderState **)Data_custom_val(v)) = state;
+  CAMLreturn(v);
 }
 
 CAMLprim value tapak_brotli_encoder_destroy_instance(value state_val) {
   CAMLparam1(state_val);
-  BrotliEncoderState *state = (BrotliEncoderState *)state_val;
-  BrotliEncoderDestroyInstance(state);
+  BrotliEncoderState *state =
+      *((BrotliEncoderState **)Data_custom_val(state_val));
+  if (state != NULL) {
+    BrotliEncoderDestroyInstance(state);
+    *((BrotliEncoderState **)Data_custom_val(state_val)) = NULL;
+  }
   CAMLreturn(Val_unit);
 }
 
@@ -105,7 +149,8 @@ CAMLprim value tapak_brotli_compress_stream(value state_val, value input_val,
   CAMLparam4(state_val, input_val, output_size_val, op_val);
   CAMLlocal2(result, output_val);
 
-  BrotliEncoderState *state = (BrotliEncoderState *)state_val;
+  BrotliEncoderState *state =
+      *((BrotliEncoderState **)Data_custom_val(state_val));
   const uint8_t *input = (const uint8_t *)String_val(input_val);
   size_t input_size = caml_string_length(input_val);
   size_t available_in = input_size;
