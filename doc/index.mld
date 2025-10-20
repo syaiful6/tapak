@@ -8,14 +8,15 @@ Tapak is built around a simple yet powerful abstraction: services and filters (m
 
 The framework is split into multiple packages:
 
-- {!module:Tapak_kernel} - Core request-response processing module
-- More modules coming soon...
+- {!module:Tapak} - Main web framework module
+- {!module:Tapak_compressions} - Request/response compression support (gzip, deflate, brotli, zstd)
 
 {1 Key Features}
 
 - {b Composable Architecture}: Build applications from small, reusable components
 - {b Type-Safe Routing}: Pattern matching based router with parameter extraction and splat matching
 - {b Middleware Pipeline}: Chain middlewares to handle cross-cutting concerns
+- {b Request/Response Compression}: Built-in support for gzip, deflate, brotli, and zstd
 - {b Built on EIO}: Uses OCaml 5's effect-based I/O for excellent performance
 - {b Finagle-Inspired}: Adopts proven patterns from Twitter's battle-tested framework
 
@@ -27,7 +28,8 @@ Add tapak to your [dune-project]:
 (package
   (name your-app)
   (depends
-    (tapak (>= 0.1.0))))
+    (tapak (>= 0.1.0))
+    (tapak-compressions (>= 0.1.0))))
 ]}
 
 {1 Quick Start}
@@ -35,11 +37,11 @@ Add tapak to your [dune-project]:
 Here's a simple example to get you started:
 
 {[
-open Tapak_kernel
+open Tapak
 
 let hello_handler _request =
   Response.create
-    ~body:(Piaf.Body.of_string "Hello, World!")
+    ~body:(Body.of_string "Hello, World!")
     `OK
 
 let routes =
@@ -50,10 +52,18 @@ let routes =
         | Some params ->
           let name = List.assoc "name" params in
           Response.create
-            ~body:(Piaf.Body.of_string ("Hello, " ^ name ^ "!"))
+            ~body:(Body.of_string ("Hello, " ^ name ^ "!"))
             `OK
         | None -> Response.create `Not_found)
     ]
+
+(* Create an app with compression middleware *)
+let app =
+  App.create routes
+  |> App.(<+>) (Middleware.Compression.middleware
+                  ~predicate:Tapak_compressions.Predicate.default_predicate
+                  ~preferred_encodings:[`Br; `Zstd; `Gzip]
+                  Tapak_compressions.encoder)
 ]}
 
 {1 Documentation}

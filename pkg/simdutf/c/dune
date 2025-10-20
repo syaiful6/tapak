@@ -5,7 +5,8 @@
   (progn
    (chdir
     %{project_root}/pkg/simdutf/c
-    (ignore-outputs (run bash download_simdutf.sh))))))
+    (ignore-outputs
+     (run bash download_simdutf.sh))))))
 
 (library
  (name simdutf_c)

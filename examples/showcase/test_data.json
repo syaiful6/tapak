@@ -1,0 +1,7 @@
+{
+  "message": "Hello from gzipped request!",
+  "data": {
+    "items": [1, 2, 3, 4, 5],
+    "total": 5
+  }
+}

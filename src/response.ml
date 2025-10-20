@@ -6,7 +6,7 @@ let redirect
       ?(headers = Piaf.Headers.empty)
       location
   =
-  let headers = Piaf.Headers.add_unless_exists headers "Location" location in
+  let headers = Headers.add_unless_exists headers "Location" location in
   create ?version ~headers ~body:Body.empty (status :> Piaf.Status.t)
 
 let header key t = Headers.get (headers t) key

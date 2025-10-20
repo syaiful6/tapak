@@ -1,13 +1,3 @@
-(** Tapak - A composable web framework for OCaml.
-
-    Tapak provides a modular and extensible architecture based on Services and
-    Filters (middlewares) built on OCaml 5's effect-based I/O (EIO). *)
-
-(** {1 Core Types} *)
-
-module Service = Service
-module Handler = Handler
-module Filter = Filter
 module Context = Context
 module Request = Request
 module Response = Response
@@ -20,33 +10,51 @@ module App = App
 module Form = Form
 
 module Server : sig
+  module Systemd : sig
+    type shutdown_resolver = unit -> unit
+
+    type t =
+      { sockets :
+          Eio_unix.Net.listening_socket_ty Eio_unix.Net.listening_socket list
+      ; shutdown_resolvers : shutdown_resolver array
+      ; client_sockets :
+          ( int
+            , Eio_unix.Net.stream_socket_ty Eio_unix.Net.stream_socket )
+            Hashtbl.t
+            array
+      ; clock : float Eio.Time.clock_ty Eio.Resource.t
+      ; shutdown_timeout : float
+      }
+
+    val shutdown : t -> unit
+
+    val listen_with_socket :
+       sw:Eio.Switch.t
+      -> listening_socket:
+           Eio_unix.Net.listening_socket_ty Eio_unix.Net.listening_socket
+      -> domains:int
+      -> shutdown_timeout:float
+      -> Eio_unix.Stdenv.base
+      -> (sw:Eio.Switch.t
+          -> Eio_unix.Net.stream_socket_ty Eio_unix.Net.stream_socket
+          -> Eio.Net.Sockaddr.stream
+          -> unit)
+      -> t
+  end
+
   val run_with :
      ?error_handler:Piaf.Server.error_handler
     -> config:Piaf.Server.Config.t
     -> env:Eio_unix.Stdenv.base
     -> App.t
-    -> unit
-  (** [run_with ?error_handler ~config ~env app] starts a production server.
+    -> Piaf.Server.Command.t
 
-      @param error_handler Optional custom error handler for server errors.
-
-      This function blocks until the server is shut down. *)
-
-  val run_dev :
+  val run_with_systemd_socket :
      ?error_handler:Piaf.Server.error_handler
     -> config:Piaf.Server.Config.t
     -> env:Eio_unix.Stdenv.base
     -> App.t
-    -> unit
-  (** [run_dev ?error_handler ~config ~env app] starts a development server with
-      hot reload support via socket activation.
-
-      @param error_handler Optional custom error handler for server errors.
-
-      For hot reload, run with:
-      {v systemfd --no-pid -s http::<port> -- watchexec -r -e ml,mli --ignore _build -- dune exec <exe> v}
-
-      See {!DEV.md} for detailed documentation. *)
+    -> [> `Piaf of Piaf.Server.Command.t | `Systemd of Systemd.t ]
 end
 
 module Header_parser = Header_parser

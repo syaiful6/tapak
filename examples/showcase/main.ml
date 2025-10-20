@@ -96,19 +96,18 @@ let not_found _req =
     "<h1>404 Not Found</h1><p>The page you requested could not be found.</p>"
 
 let app =
-  let routes =
-    [ Router.get "/" home_handler
-    ; Router.get "/users/:id" user_handler
-    ; Router.get "/api/hello" api_hello_handler
-    ; Router.get "/files/**" files_handler
-    ; Router.post "/echo" echo_handler
-    ; Router.put "/echo" echo_handler
-    ]
-  in
-
-  let handler = Router.route ~not_found routes in
-
-  App.create ~handler ()
+  App.(
+    routes
+      ~not_found
+      [ Router.get "/" home_handler
+      ; Router.get "/users/:id" user_handler
+      ; Router.get "/api/hello" api_hello_handler
+      ; Router.get "/files/**" files_handler
+      ; Router.post "/echo" echo_handler
+      ; Router.put "/echo" echo_handler
+      ]
+      ()
+    <+> Middleware.Decompression.middleware Tapak_compressions.decoder)
 
 let setup_log ?style_renderer level =
   Fmt_tty.setup_std_outputs ?style_renderer ();
@@ -119,20 +118,28 @@ let setup_log ?style_renderer level =
 let () =
   setup_log (Some Logs.Debug);
   Eio_main.run @@ fun env ->
-  let is_dev =
-    match Sys.getenv_opt "TAPAK_ENV" with
-    | Some "production" -> false
+  let use_systemd =
+    match Sys.getenv_opt "TAPAK_SYSTEMD" with
+    | Some "false" | Some "0" -> false
     | _ -> true
   in
   let port =
     match Sys.getenv_opt "PORT" with Some p -> int_of_string p | None -> 3000
   in
+  let domains =
+    match Sys.getenv_opt "DOMAINS" with Some d -> int_of_string d | None -> 1
+  in
   let address = `Tcp (Eio.Net.Ipaddr.V4.loopback, port) in
-  let config = Piaf.Server.Config.create address in
+  let config = Piaf.Server.Config.create ~domains address in
 
-  if is_dev
-  then Server.run_dev ~config ~env app
+  if use_systemd
+  then (
+    Log.info (fun log ->
+      log
+        "Starting with systemd socket activation support (domains: %d)"
+        domains);
+    ignore (Server.run_with_systemd_socket ~config ~env app))
   else (
     Log.warn (fun log ->
-      log "Starting Tapak Showcase in PRODUCTION mode on port %d" port);
-    Server.run_with ~config ~env app)
+      log "Starting Tapak Showcase WITHOUT systemd support on port %d" port);
+    ignore (Server.run_with ~config ~env app))
