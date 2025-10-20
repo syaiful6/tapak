@@ -2,7 +2,7 @@ open Tapak
 module Log = (val Logs.src_log Logs.default : Logs.LOG)
 
 let home_handler _req =
-  Response.of_string'
+  Response.of_html
     ~status:`OK
     {|<h1>Tapak Showcases</h1>
 <ul>
@@ -129,7 +129,7 @@ let () =
   let domains =
     match Sys.getenv_opt "DOMAINS" with Some d -> int_of_string d | None -> 1
   in
-  let address = `Tcp (Eio.Net.Ipaddr.V4.loopback, port) in
+  let address = `Tcp (Eio.Net.Ipaddr.V4.any, port) in
   let config = Piaf.Server.Config.create ~domains address in
 
   if use_systemd

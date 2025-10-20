@@ -5,17 +5,20 @@ This example demonstrates all the major features of the Tapak web framework.
 ## Features Demonstrated
 
 ### 1. **Routing**
+
 - Simple routes (`/`)
 - Named parameters (`/users/:id`)
 - Wildcard matching (`/files/**`)
 - HTTP method routing (GET, POST, PUT)
 
 ### 2. **Request Body Decompression**
+
 - Automatic decompression of compressed request bodies
 - Support for gzip, deflate, brotli, zstd (with tapak-compressions)
 - Proper HTTP status codes (415 for unsupported, 400 for errors)
 
 ### 3. **Systemd Socket Activation** (Development & Production)
+
 - Zero-downtime rebuilds using systemd socket activation
 - Hot-reload in development with `systemfd` and `watchexec`
 - Production deployment with systemd for zero-downtime updates
@@ -23,10 +26,12 @@ This example demonstrates all the major features of the Tapak web framework.
 - No dropped connections during reload
 
 ### 4. **Content Negotiation**
+
 - Responds with JSON or HTML based on `Accept` header
 - Demonstrates `Header_parser.Content_negotiation`
 
 ### 5. **Responses**
+
 - Plain text responses
 - HTML responses
 - JSON responses
@@ -55,6 +60,7 @@ curl -X POST -d "Hello Tapak!" http://localhost:3000/echo
 For production deployment, you can use systemd socket activation for zero-downtime updates:
 
 **1. Create systemd socket file** (`/etc/systemd/system/tapak-showcase.socket`):
+
 ```ini
 [Unit]
 Description=Tapak Showcase Socket
@@ -67,6 +73,7 @@ WantedBy=sockets.target
 ```
 
 **2. Create systemd service file** (`/etc/systemd/system/tapak-showcase.service`):
+
 ```ini
 [Unit]
 Description=Tapak Showcase Server
@@ -83,6 +90,7 @@ WantedBy=multi-user.target
 ```
 
 **3. Enable and start:**
+
 ```bash
 sudo systemctl enable tapak-showcase.socket
 sudo systemctl start tapak-showcase.socket
@@ -90,6 +98,7 @@ sudo systemctl start tapak-showcase.service
 ```
 
 **4. Zero-downtime updates:**
+
 ```bash
 # Build new version
 dune build
@@ -119,25 +128,31 @@ DOMAINS=4 systemfd --no-pid -s http::3000 -- dune exec tapak-showcase
 ## Endpoints
 
 ### `GET /`
+
 Homepage with links to other endpoints.
 
 **Example:**
+
 ```bash
 curl http://localhost:3000/
 ```
 
 ### `GET /users/:id`
+
 User profile page demonstrating named route parameters.
 
 **Example:**
+
 ```bash
 curl http://localhost:3000/users/123
 ```
 
 ### `GET /api/hello`
+
 JSON API endpoint with content negotiation.
 
 **Examples:**
+
 ```bash
 # Request JSON
 curl -H "Accept: application/json" http://localhost:3000/api/hello
@@ -147,20 +162,25 @@ curl -H "Accept: text/html" http://localhost:3000/api/hello
 ```
 
 ### `GET /files/**`
+
 File browser demonstrating wildcard/splat routing.
 
 **Example:**
+
 ```bash
 curl http://localhost:3000/files/docs/readme.md
 curl http://localhost:3000/files/images/logo.png
 ```
 
 ### `POST /echo` and `PUT /echo`
+
 Echo endpoint that returns the request body. Demonstrates:
+
 - Body decompression (if Content-Encoding header is present)
 - Multiple HTTP methods on one route
 
 **Examples:**
+
 ```bash
 # Simple POST
 curl -X POST -d "Hello Tapak!" http://localhost:3000/echo
@@ -238,6 +258,7 @@ cat COMPRESSION_QUICK_REF.md
 ### Quick Examples
 
 **Gzip:**
+
 ```bash
 echo '{"test": "gzip"}' | gzip | \
   curl -X POST -H "Content-Encoding: gzip" \
@@ -245,6 +266,7 @@ echo '{"test": "gzip"}' | gzip | \
 ```
 
 **Brotli:**
+
 ```bash
 echo '{"test": "brotli"}' | brotli -c | \
   curl -X POST -H "Content-Encoding: br" \
@@ -252,6 +274,7 @@ echo '{"test": "brotli"}' | brotli -c | \
 ```
 
 **Zstd:**
+
 ```bash
 echo '{"test": "zstd"}' | zstd -c | \
   curl -X POST -H "Content-Encoding: zstd" \
@@ -292,11 +315,13 @@ let app =
 ## Hot Reload Tips
 
 1. **Install systemfd and watchexec once:**
+
    ```bash
    cargo install systemfd watchexec-cli
    ```
 
 2. **Create a dev script** (`bin/dev`):
+
    ```bash
    #!/usr/bin/env bash
    exec systemfd --no-pid -s http::3000 -- \
@@ -304,6 +329,7 @@ let app =
    ```
 
 3. **Run it:**
+
    ```bash
    chmod +x bin/dev
    ./bin/dev
@@ -314,13 +340,17 @@ let app =
 ## Troubleshooting
 
 ### "Address already in use"
+
 Another process is using port 3000. Either kill it or use a different port:
+
 ```bash
 PORT=3001 dune exec -- tapak-showcase
 ```
 
 ### Hot reload not working
+
 Make sure you're using `systemfd`, `watchexec -r`, and `Server.run_with_systemd_socket`:
+
 ```bash
 systemfd --no-pid -s http::3000 -- watchexec -r -e ml,mli --ignore _build -- dune exec tapak-showcase
 ```
@@ -328,7 +358,9 @@ systemfd --no-pid -s http::3000 -- watchexec -r -e ml,mli --ignore _build -- dun
 Also ensure `TAPAK_SYSTEMD` is not set to `false`.
 
 ### Module not found errors
+
 Make sure you've built the project:
+
 ```bash
 dune build
 ```
