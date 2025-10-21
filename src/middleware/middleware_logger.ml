@@ -57,7 +57,7 @@ let get_remote_ip request =
   let request_info = Request.info request in
   let* address = request_info.client_address in
   match address with
-  | `Tcp (ip_v4v6, _) -> Some (Fmt.str "%a" Eio.Net.Ipaddr.pp ip_v4v6)
+  | `Tcp (ip_v4v6, _) -> Some (Format.asprintf "%a" Eio.Net.Ipaddr.pp ip_v4v6)
   | `Unix _ -> None
 
 let get_forwarded_ip ~trusted_proxies request =
