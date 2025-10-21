@@ -1,6 +1,5 @@
 open Tapak_kernel
 
-(* Test helpers *)
 let urlencoded_testable =
   Alcotest.testable
     (fun ppf lst ->
@@ -21,7 +20,6 @@ let urlencoded_testable =
             a
             b)
 
-(* of_string tests *)
 let test_of_string_empty () =
   let result = Form.Urlencoded.of_string "" in
   Alcotest.(check urlencoded_testable)
@@ -97,9 +95,7 @@ let test_of_string_complex () =
     ]
     result
 
-(* of_body tests - using EIO for async operations *)
 let test_of_body_success () =
-  Eio_main.run @@ fun _env ->
   let body_content = "name=value&foo=bar" in
   let body = Piaf.Body.of_string body_content in
   let result = Form.Urlencoded.of_body body in
@@ -113,7 +109,6 @@ let test_of_body_success () =
     result
 
 let test_of_body_empty () =
-  Eio_main.run @@ fun _env ->
   let body = Piaf.Body.empty in
   let result = Form.Urlencoded.of_body body in
   Alcotest.(
@@ -125,7 +120,6 @@ let test_of_body_empty () =
     (Ok [])
     result
 
-(* of_query tests *)
 let make_test_request_with_query query =
   let uri = Uri.of_string ("http://example.com/test" ^ query) in
   Request.create
@@ -177,7 +171,6 @@ let test_of_query_encoded_chars () =
     [ "message", [ "hello world" ]; "email", [ "test@example.com" ] ]
     result
 
-(* normalize tests *)
 let test_normalize_empty () =
   let result = Form.Urlencoded.normalize [] in
   Alcotest.(check urlencoded_testable) "Normalize empty list" [] result
@@ -187,7 +180,7 @@ let test_normalize_single_key () =
   let result = Form.Urlencoded.normalize params in
   Alcotest.(check urlencoded_testable)
     "Normalize with no duplicates"
-    [ "foo", [ "bar" ]; "name", [ "value" ] ] (* sorted by key *)
+    [ "foo", [ "bar" ]; "name", [ "value" ] ]
     result
 
 let test_normalize_duplicate_keys () =
@@ -214,7 +207,6 @@ let test_normalize_preserves_order_within_key () =
     [ "tag", [ "first"; "second"; "third" ] ]
     result
 
-(* get tests *)
 let test_get_existing_key () =
   let params = [ "name", [ "John" ]; "age", [ "30" ] ] in
   let result = Form.Urlencoded.get "name" params in
@@ -238,7 +230,6 @@ let test_get_first_of_multiple () =
     (Some "red")
     result
 
-(* get_list tests *)
 let test_get_list_single_value () =
   let params = [ "name", [ "John" ]; "age", [ "30" ] ] in
   let result = Form.Urlencoded.get_list "name" params in
@@ -273,7 +264,6 @@ let test_get_list_normalized () =
     [ "red"; "blue" ]
     result
 
-(* Integration test: Django-style workflow *)
 let test_django_style_workflow () =
   (* Simulate receiving ?color=red&color=blue&name=John&tags=ocaml&tags=web *)
   let raw_params =

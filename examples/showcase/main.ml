@@ -131,14 +131,18 @@ let setup_app env =
              Tapak_compressions.decoder
          ])
 
-let setup_log ?style_renderer level =
+let setup_log ?(threaded = false) ?style_renderer level =
+  let () = if threaded then Logs_threaded.enable () else () in
   Fmt_tty.setup_std_outputs ?style_renderer ();
   Logs.set_level level;
   Logs.set_reporter (Logs_fmt.reporter ());
   ()
 
 let () =
-  setup_log (Some Logs.Debug);
+  let domains =
+    match Sys.getenv_opt "DOMAINS" with Some d -> int_of_string d | None -> 1
+  in
+  setup_log ~threaded:(domains > 1) (Some Logs.Debug);
   Eio_main.run @@ fun env ->
   let use_systemd =
     match Sys.getenv_opt "TAPAK_SYSTEMD" with
@@ -147,9 +151,6 @@ let () =
   in
   let port =
     match Sys.getenv_opt "PORT" with Some p -> int_of_string p | None -> 3000
-  in
-  let domains =
-    match Sys.getenv_opt "DOMAINS" with Some d -> int_of_string d | None -> 1
   in
   let address = `Tcp (Eio.Net.Ipaddr.V4.any, port) in
   let config = Piaf.Server.Config.create ~domains address in

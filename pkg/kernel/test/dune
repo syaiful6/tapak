@@ -1,4 +1,4 @@
 (test
  (name test)
  (modules :standard)
- (libraries alcotest eio_main fmt tapak.kernel))
+ (libraries alcotest fmt tapak.kernel))
