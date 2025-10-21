@@ -16,6 +16,12 @@ module String = struct
     let len = length s in
     let prefix_len = length prefix in
     len >= prefix_len && check_prefix s ~prefix prefix_len 0
+
+  let strip_prefix ~prefix s =
+    let prefix_len = length prefix in
+    if is_prefix s ~prefix
+    then Some (sub s ~pos:prefix_len ~len:(length s - prefix_len))
+    else None
 end
 
 module Option = struct

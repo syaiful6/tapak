@@ -31,25 +31,25 @@ let test_content_negotiation () =
   let format =
     preferred_format
       (Some "text/html, application/json;q=0.9")
-      [ Json; Html; Xml ]
+      [ `Json; `Html; `Xml ]
   in
-  Alcotest.(check bool) "should prefer HTML" true (format = Html)
+  Alcotest.(check bool) "should prefer HTML" true (format = `Html)
 
 let test_content_negotiation_json () =
   let open Tapak.Header_parser.Content_negotiation in
   let format =
     preferred_format
       (Some "application/json, text/html;q=0.8")
-      [ Json; Html; Xml ]
+      [ `Json; `Html; `Xml ]
   in
-  Alcotest.(check bool) "should prefer JSON" true (format = Json)
+  Alcotest.(check bool) "should prefer JSON" true (format = `Json)
 
 let test_accepts_helper () =
   let open Tapak.Header_parser.Content_negotiation in
   let accept_header = Some "application/json, text/html" in
-  Alcotest.(check bool) "accepts JSON" true (accepts Json accept_header);
-  Alcotest.(check bool) "accepts HTML" true (accepts Html accept_header);
-  Alcotest.(check bool) "doesn't accept XML" false (accepts Xml accept_header)
+  Alcotest.(check bool) "accepts JSON" true (accepts `Json accept_header);
+  Alcotest.(check bool) "accepts HTML" true (accepts `Html accept_header);
+  Alcotest.(check bool) "doesn't accept XML" false (accepts `Xml accept_header)
 
 let test_encoding_negotiation () =
   let open Tapak.Header_parser.Content_negotiation in
@@ -68,6 +68,59 @@ let test_encoding_negotiation_zstd () =
       [ `Zstd; `Gzip; `Deflate; `Identity ]
   in
   Alcotest.(check bool) "should prefer zstd" true (encoding = `Zstd)
+
+let test_range_from () =
+  let open Tapak.Header_parser.Range in
+  let result = parse (Some "bytes=100-") in
+  match result with
+  | Ok [ From 100L ] -> ()
+  | Ok _ -> Alcotest.fail "Expected From 100"
+  | Error msg -> Alcotest.fail msg
+
+let test_range_from_to () =
+  let open Tapak.Header_parser.Range in
+  let result = parse (Some "bytes=100-200") in
+  match result with
+  | Ok [ From_to (100L, 200L) ] -> ()
+  | Ok _ -> Alcotest.fail "Expected From_to (100, 200)"
+  | Error msg -> Alcotest.fail msg
+
+let test_range_suffix () =
+  let open Tapak.Header_parser.Range in
+  let result = parse (Some "bytes=-500") in
+  match result with
+  | Ok [ Suffix 500L ] -> ()
+  | Ok _ -> Alcotest.fail "Expected Suffix 500"
+  | Error msg -> Alcotest.fail msg
+
+let test_range_multiple () =
+  let open Tapak.Header_parser.Range in
+  let result = parse (Some "bytes=0-499, 1000-1499, -500") in
+  match result with
+  | Ok [ From_to (0L, 499L); From_to (1000L, 1499L); Suffix 500L ] -> ()
+  | Ok _ -> Alcotest.fail "Expected multiple ranges"
+  | Error msg -> Alcotest.fail msg
+
+let test_range_with_spaces () =
+  let open Tapak.Header_parser.Range in
+  let result = parse (Some "bytes=100-200 , 300-400") in
+  match result with
+  | Ok [ From_to (100L, 200L); From_to (300L, 400L) ] -> ()
+  | Ok _ -> Alcotest.fail "Expected ranges with spaces"
+  | Error msg -> Alcotest.fail msg
+
+let test_range_none () =
+  let open Tapak.Header_parser.Range in
+  let result = parse None in
+  match result with
+  | Ok [] -> ()
+  | Ok _ -> Alcotest.fail "Expected empty list"
+  | Error msg -> Alcotest.fail msg
+
+let test_range_render () =
+  let open Tapak.Header_parser.Range in
+  let rendered = render [ From_to (0L, 499L); From 1000L; Suffix 500L ] in
+  Alcotest.(check string) "rendered range" "bytes=0-499,1000-,-500" rendered
 
 let tests =
   [ ( "Header Parser"
@@ -97,5 +150,15 @@ let tests =
           "Encoding negotiation with zstd"
           `Quick
           test_encoding_negotiation_zstd
+      ; Alcotest.test_case "Range header: from" `Quick test_range_from
+      ; Alcotest.test_case "Range header: from-to" `Quick test_range_from_to
+      ; Alcotest.test_case "Range header: suffix" `Quick test_range_suffix
+      ; Alcotest.test_case "Range header: multiple" `Quick test_range_multiple
+      ; Alcotest.test_case
+          "Range header: with spaces"
+          `Quick
+          test_range_with_spaces
+      ; Alcotest.test_case "Range header: none" `Quick test_range_none
+      ; Alcotest.test_case "Range header: render" `Quick test_range_render
       ] )
   ]

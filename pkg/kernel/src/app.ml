@@ -4,6 +4,7 @@ type t =
   }
 
 let ( <+> ) t m = { t with middlewares = t.middlewares @ [ m ] }
+let ( <++> ) t ms = { t with middlewares = t.middlewares @ ms }
 let create ?(middlewares = []) ~handler () = { middlewares; handler }
 
 let call t request =

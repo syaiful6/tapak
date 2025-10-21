@@ -39,16 +39,16 @@ let api_hello_handler req =
   let format =
     Header_parser.Content_negotiation.preferred_format
       accept_header
-      Header_parser.Content_negotiation.[ Json; Html ]
+      [ `Json; `Html ]
   in
 
   match format with
-  | Json ->
+  | `Json ->
     Response.of_string'
       ~content_type:"application/json"
       ~status:`OK
       {|{"message": "Hello from Tapak!", "version": "1.0"}|}
-  | Html ->
+  | `Html ->
     Response.of_string'
       ~content_type:"text/html"
       ~status:`OK
@@ -121,14 +121,15 @@ let setup_app env =
       ; Router.put "/echo" echo_handler
       ]
       ()
-    <+> use
-          ~name:"Request Logger"
-          (module Request_logger)
-          (Request_logger.args ~now ~trusted_proxies ())
-    <+> use
-          ~name:"Decompression"
-          (module Decompression)
-          Tapak_compressions.decoder)
+    <++> [ use
+             ~name:"Request Logger"
+             (module Request_logger)
+             (Request_logger.args ~now ~trusted_proxies ())
+         ; use
+             ~name:"Decompression"
+             (module Decompression)
+             Tapak_compressions.decoder
+         ])
 
 let setup_log ?style_renderer level =
   Fmt_tty.setup_std_outputs ?style_renderer ();

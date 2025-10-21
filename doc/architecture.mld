@@ -1,0 +1,423 @@
+{0 Architecture}
+
+{1 Philosophy: Your Server as a Function}
+
+Tapak is built on the "Your Server as a Function" paradigm pioneered by {{:https://monkey.org/~marius/funsrv.pdf} Marius Eriksen at Twitter} and implemented in {{:https://twitter.github.io/finagle/} Finagle}. This approach treats server components as composable, type-safe functions that transform requests into responses.
+
+The key insight: if your server is just a function, you can use standard functional programming techniques—composition, transformation, and abstraction—to build complex systems from simple building blocks.
+
+{1 Core Abstractions}
+
+{2 Service}
+
+A [Service] is the fundamental abstraction: a function that transforms requests into responses.
+
+{[
+type ('req, 'res) Service.t = 'req -> 'res
+]}
+
+In Tapak, services are specialized for HTTP:
+
+{[
+type Handler.t = (Request.t, Response.t) Service.t
+              = Request.t -> Response.t
+]}
+
+Services are:
+- {b Pure functions}: No hidden state or side effects (beyond I/O)
+- {b Composable}: Can be transformed and combined
+- {b Type-safe}: The type system ensures correctness
+
+{2 Filter}
+
+A [Filter] transforms one service into another. It wraps a service to add functionality without modifying the service itself.
+
+{[
+type ('req, 'res, 'req2, 'res2) Filter.t =
+  ('req, 'res) Service.t -> ('req2, 'res2) Service.t
+]}
+
+For HTTP services where request and response types don't change:
+
+{[
+type ('req, 'res) Filter.simple =
+  ('req, 'res, 'req, 'res) Filter.t
+  = ('req, 'res) Service.t -> ('req, 'res) Service.t
+]}
+
+Filters enable:
+- {b Middleware pattern}: Add cross-cutting concerns (logging, auth, compression)
+- {b Composability}: Chain filters with the [>>>] operator
+- {b Separation of concerns}: Keep business logic separate from infrastructure
+
+{2 Middleware}
+
+{!module:Tapak_kernel.Middleware} wraps filters with metadata and initialization logic:
+
+{[
+type Middleware.t =
+  { filter : (Request.t, Response.t) Filter.simple
+  ; name : string
+  }
+]}
+
+Middleware can be created in two ways:
+
+{b Simple filters:}
+{[
+let logger next request =
+  log_request request;
+  next request
+
+let logger_mw = Middleware.create ~filter:logger ~name:"logger"
+]}
+
+{b Module-based (with state):}
+{[
+module Logger = struct
+  type args = { prefix : string }
+  type state = { prefix : string }
+
+  let init args = args
+
+  let call state next request =
+    Printf.printf "%s: %s\n" state.prefix (Request.target request);
+    next request
+end
+
+let logger = Middleware.use ~name:"logger" (module Logger) { prefix = "REQ" }
+]}
+
+{2 App}
+
+{!module:Tapak_kernel.App} combines a handler with a middleware stack:
+
+{[
+type App.t =
+  { middlewares : Middleware.t list
+  ; handler : (Request.t, Response.t) Service.t
+  }
+]}
+
+Apps provide operators for adding middleware:
+
+{[
+(* Add a single middleware *)
+let app = App.create ~handler () <+> logger_middleware
+
+(* Add multiple middlewares *)
+let app = App.create ~handler ()
+          <++> [ logger_middleware
+               ; compression_middleware
+               ; auth_middleware
+               ]
+]}
+
+{1 Request Processing Flow}
+
+Middleware execution follows the "onion" model:
+
+{v
+┌─────────────────────────────────────────────┐
+│  Middleware 1 (outermost)                   │
+│  ┌───────────────────────────────────────┐  │
+│  │  Middleware 2                         │  │
+│  │  ┌─────────────────────────────────┐  │  │
+│  │  │  Middleware 3 (innermost)       │  │  │
+│  │  │  ┌───────────────────────────┐  │  │  │
+│  │  │  │  Handler                  │  │  │  │
+│  │  │  │  (business logic)         │  │  │  │
+│  │  │  └───────────────────────────┘  │  │  │
+│  │  └─────────────────────────────────┘  │  │
+│  └───────────────────────────────────────┘  │
+└─────────────────────────────────────────────┘
+
+Request  ────────────────────────────────────→
+           ←────────────────────────────────── Response
+v}
+
+Given [app = handler <++> \[mw1; mw2; mw3\]]:
+
+{b Request flow:}
+1. [mw1] receives request (outermost)
+2. [mw2] receives request
+3. [mw3] receives request (innermost)
+4. [handler] processes request
+
+{b Response flow:}
+1. [handler] returns response
+2. [mw3] processes response
+3. [mw2] processes response
+4. [mw1] processes response (outermost)
+
+This is implemented using [List.fold_right]:
+
+{[
+let apply_all middlewares handler =
+  List.fold_right (fun mw acc -> mw.filter acc) middlewares handler
+]}
+
+The first middleware in the list becomes the outermost wrapper.
+
+{1 Why This Works: No Monads Needed}
+
+Finagle uses Scala Futures (monadic) because the JVM doesn't have native effect handlers. Every asynchronous operation must be wrapped in a [Future].
+
+{b Tapak uses EIO}, which provides direct-style concurrency through OCaml 5 effect handlers:
+
+{[
+(* Finagle-style (monadic) *)
+def handler(req: Request): Future[Response] =
+  for {
+    user <- database.getUser(req.userId)  // Future[User]
+    posts <- database.getPosts(user.id)   // Future[List[Post]]
+  } yield Response.ok(posts)
+
+(* Tapak-style (direct) *)
+let handler request =
+  let user = Database.get_user request.user_id in     (* blocks fiber *)
+  let posts = Database.get_posts user.id in           (* blocks fiber *)
+  Response.ok posts
+]}
+
+With EIO:
+- {b No Future/Promise types}: Functions return values directly
+- {b No async/await keywords}: Code looks synchronous but runs concurrently
+- {b No monad transformers}: No [ReaderT], [ExceptT], [StateT] stack
+- {b Natural composition}: Services are just functions: [(a -> b)]
+
+{2 Concurrency Without Monads}
+
+EIO provides structured concurrency:
+
+{[
+(* Run operations concurrently *)
+let handler request =
+  Eio.Fiber.both
+    (fun () -> fetch_user request.user_id)
+    (fun () -> fetch_posts request.user_id)
+  |> fun (user, posts) -> Response.ok (user, posts)
+
+(* Use switches for cancellation *)
+Eio.Switch.run @@ fun sw ->
+  let fiber1 = Eio.Fiber.fork ~sw operation1 in
+  let fiber2 = Eio.Fiber.fork ~sw operation2 in
+  (* Cancellation handled automatically *)
+]}
+
+Effect handlers provide:
+- {b Lightweight fibers}: Millions of concurrent operations
+- {b Automatic cancellation}: Cleanup on scope exit
+- {b Zero allocation}: No Future objects on the heap
+- {b Backpressure}: Natural flow control through blocking
+
+{1 Context: Type-Safe Request State}
+
+Unlike Finagle's [com.twitter.finagle.Context] (fiber-local storage), Tapak uses explicit context passing through {!module:Tapak_kernel.Context}:
+
+{[
+(* Define typed keys *)
+let user_key : User.t Context.key =
+  Context.Key.create { name = Some "user"; show = None }
+
+(* Store in request *)
+let request' =
+  Request.with_context
+    (Context.add user_key current_user (Request.context request))
+    request
+
+(* Retrieve anywhere in pipeline *)
+match Context.find user_key (Request.context request') with
+| Some user -> (* authenticated *)
+| None -> (* anonymous *)
+]}
+
+Benefits:
+- {b Type-safe}: Can't retrieve wrong type
+- {b Explicit}: No hidden global state
+- {b Composable}: Passes through middleware naturally
+- {b Fast}: Based on heterogeneous maps (Hmap)
+
+{1 Comparison to Other Frameworks}
+
+{2 vs Finagle (Scala)}
+
+{table
+  {tr {th Aspect} {th Finagle} {th Tapak}}
+  {tr {td Concurrency} {td Scala Futures (monadic)} {td EIO effects (direct-style)}}
+  {tr {td Service} {td [Service\[Req, Rep\]]} {td [(req, res) Service.t]}}
+  {tr {td Filter} {td [Filter\[ReqIn, RepOut, ReqOut, RepIn\]]} {td [(req, res, req2, res2) Filter.t]}}
+  {tr {td Composition} {td [andThen], [before]} {td [>>>], [fold_right]}}
+  {tr {td Context} {td Fiber-local} {td Explicit in Request}}
+  {tr {td Type System} {td JVM, runtime reflection} {td OCaml, compile-time}}
+}
+
+{2 vs Express.js (Node.js)}
+
+{table
+  {tr {th Aspect} {th Express} {th Tapak}}
+  {tr {td Middleware} {td [app.use(fn)]} {td [<+>], [<++>]}}
+  {tr {td Type Safety} {td TypeScript (optional)} {td OCaml (enforced)}}
+  {tr {td Composition} {td Imperative chaining} {td Functional composition}}
+  {tr {td Concurrency} {td Event loop} {td Effect handlers}}
+  {tr {td State} {td Mutable [req] object} {td Immutable Context}}
+}
+
+{2 vs Plug (Elixir)}
+
+{table
+  {tr {th Aspect} {th Plug} {th Tapak}}
+  {tr {td Pipeline} {td [conn |> plug1 |> plug2]} {td [<+>] operator}}
+  {tr {td State} {td [%Plug.Conn\{\}] struct} {td [Request.t] + [Context]}}
+  {tr {td Composition} {td Pipeline operator} {td Filter composition}}
+  {tr {td Concurrency} {td BEAM processes} {td OCaml fibers}}
+}
+
+{1 Design Principles}
+
+{2 Composability First}
+
+Every abstraction composes naturally:
+- Services compose through [>>>]
+- Middlewares compose through [<+>] and [<++>]
+- Routers compose through scopes
+- Contexts compose through [Context.add]
+
+{2 Type Safety Without Ceremony}
+
+OCaml's type system prevents errors:
+- Impossible to apply wrong middleware to wrong service type
+- Context keys are type-safe
+- Router parameters are validated at match time
+- All composition checked at compile time
+
+{2 Simplicity Over Complexity}
+
+Simple types with clear semantics:
+- [Service.t] is just a function type
+- [Filter.t] is a function transformer
+- [Middleware.t] is a named filter
+- [App.t] is a handler plus middleware list
+
+No heavy abstractions or complex type classes.
+
+{2 Performance Through Effects}
+
+EIO's effect handlers provide:
+- Zero-cost concurrency primitives
+- Natural backpressure
+- Automatic resource cleanup
+- Multi-core parallelism (via domains)
+
+{1 Practical Patterns}
+
+{2 Authentication Middleware}
+
+{[
+module Auth = struct
+  type args = { token_key : string }
+  type state = args
+
+  let init args = args
+
+  let call { token_key } next request =
+    match Request.header "Authorization" request with
+    | Some token when verify_token token ->
+      let user = get_user_from_token token in
+      let ctx = Context.add user_key user (Request.context request) in
+      let request' = Request.with_context ctx request in
+      next request'
+    | _ -> Response.create `Unauthorized
+end
+
+let auth = Middleware.use ~name:"auth" (module Auth) { token_key = "secret" }
+]}
+
+{2 Error Handling}
+
+{[
+let error_handler next request =
+  try next request with
+  | Database_error msg ->
+    Response.create ~body:(Body.of_string msg) `Internal_server_error
+  | Not_found ->
+    Response.create `Not_found
+
+let error_mw = Middleware.create ~filter:error_handler ~name:"errors"
+]}
+
+{2 Request Logging}
+
+{[
+module Logger = struct
+  type args = { clock : Eio.Time.clock }
+  type state = args
+
+  let init args = args
+
+  let call { clock } next request =
+    let start = Eio.Time.now clock in
+    let response = next request in
+    let duration = Eio.Time.now clock -. start in
+    Logs.info (fun m ->
+      m "%s %s - %d (%.3fs)"
+        (Request.meth request |> method_to_string)
+        (Request.target request)
+        (Response.status response |> status_to_code)
+        duration);
+    response
+end
+]}
+
+{2 Composition Example}
+
+{[
+let app =
+  Router.router
+    [ Router.scope "/api"
+        ~middlewares:[ rate_limiter; auth ]
+        [ Router.get "/users" list_users
+        ; Router.post "/users" create_user
+        ]
+    ; Router.scope "/public"
+        [ Router.get "/health" health_check ]
+    ]
+  <++> [ logger
+       ; error_handler
+       ; compression
+       ]
+]}
+
+{1 Future Directions}
+
+{2 Rate Limiting with Multi-Domain Support}
+
+EIO's multi-domain parallelism presents challenges for rate limiting. Potential approaches:
+
+- {b Per-domain limits}: Each domain tracks its own rate limits
+- {b Shared atomic counters}: Use [Atomic.t] for cross-domain coordination
+- {b External rate limiter}: Delegate to Redis/Memcached
+- {b Token bucket per domain}: Distribute quota across domains
+
+{2 Streaming Responses}
+
+Enhanced support for streaming:
+- Server-sent events (SSE)
+- WebSocket upgrade protocol
+- Chunked transfer encoding
+- Backpressure-aware streaming
+
+{2 Client as Service}
+
+Implement HTTP client as a service, enabling:
+- Client middleware (retry, circuit breaker)
+- Service mesh patterns
+- Transparent load balancing
+- Same composition as server-side
+
+{1 Related Reading}
+
+- {{:https://monkey.org/~marius/funsrv.pdf} Your Server as a Function} (Marius Eriksen)
+- {{:https://twitter.github.io/finagle/guide/} Finagle User's Guide}
+- {{:https://github.com/ocaml-multicore/eio} EIO Documentation}
+- {{:https://v2.ocaml.org/manual/effects.html} OCaml Effect Handlers}
