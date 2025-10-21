@@ -4,6 +4,7 @@ type t =
   }
 
 val ( <+> ) : t -> Middleware.t -> t
+val ( <++> ) : t -> Middleware.t list -> t
 
 val create :
    ?middlewares:Middleware.t list

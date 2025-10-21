@@ -1,3 +1,4 @@
+open Imports
 open Angstrom
 
 module Accept = struct
@@ -174,7 +175,7 @@ module Media_type = struct
 
   let find_best_match content_type accept_items =
     let typ, subtyp =
-      match String.split_on_char '/' content_type with
+      match String.split_on_char ~sep:'/' content_type with
       | [ t; s ] -> String.lowercase_ascii t, String.lowercase_ascii s
       | [ t ] -> String.lowercase_ascii t, "*"
       | _ -> "*", "*"
@@ -198,28 +199,73 @@ module Media_type = struct
   let multipart = "multipart/form-data"
 end
 
+module Range = struct
+  type t =
+    | From of int64
+    | From_to of int64 * int64
+    | Suffix of int64
+
+  let to_string = function
+    | From start -> Format.sprintf "%Ld-" start
+    | From_to (start, end_) -> Format.sprintf "%Ld-%Ld" start end_
+    | Suffix len -> Format.sprintf "-%Ld" len
+
+  let render xs =
+    Format.sprintf "bytes=%s" (String.concat ~sep:"," (List.map to_string xs))
+
+  let is_space = function ' ' | '\t' -> true | _ -> false
+  let ows = skip is_space <|> return ()
+
+  let int64_parser =
+    take_while1 (function '0' .. '9' -> true | _ -> false) >>| Int64.of_string
+
+  let range_parser =
+    ows
+    *> (lift2
+          (fun start end_opt ->
+             match end_opt with
+             | Some end_ -> From_to (start, end_)
+             | None -> From start)
+          int64_parser
+          (char '-' *> option None (int64_parser >>| Option.some))
+       <|> char '-' *> lift (fun len -> Suffix len) int64_parser)
+
+  let ranges_parser =
+    string "bytes=" *> sep_by1 (ows *> char ',' *> ows) range_parser
+    <* end_of_input
+
+  let parse header_value =
+    match header_value with
+    | None -> Ok []
+    | Some str ->
+      (match parse_string ~consume:All ranges_parser str with
+      | Ok lst -> Ok lst
+      | Error msg -> Error msg)
+end
+
 module Content_negotiation = struct
   type format =
-    | Json
-    | Html
-    | Xml
-    | Text
-    | Other of string
+    [ `Json
+    | `Html
+    | `Xml
+    | `Text
+    | `Other of string
+    ]
 
   let format_to_media_type = function
-    | Json -> Media_type.json
-    | Html -> Media_type.html
-    | Xml -> Media_type.xml
-    | Text -> Media_type.text
-    | Other s -> s
+    | `Json -> Media_type.json
+    | `Html -> Media_type.html
+    | `Xml -> Media_type.xml
+    | `Text -> Media_type.text
+    | `Other s -> s
 
   let media_type_to_format = function
-    | "application/json" -> Json
-    | "text/html" -> Html
-    | "application/xml" -> Xml
-    | "text/xml" -> Xml
-    | "text/plain" -> Text
-    | other -> Other other
+    | "application/json" -> `Json
+    | "text/html" -> `Html
+    | "application/xml" -> `Xml
+    | "text/xml" -> `Xml
+    | "text/plain" -> `Text
+    | other -> `Other other
 
   let negotiate_format accept_header available_formats =
     let accept_items = Media_type.parse_accept accept_header in
@@ -235,7 +281,7 @@ module Content_negotiation = struct
     | [] -> None
     | (_, format) :: _ -> Some format
 
-  let preferred_format ?(default = Html) accept_header available_formats =
+  let preferred_format ?(default = `Html) accept_header available_formats =
     match negotiate_format accept_header available_formats with
     | Some fmt -> fmt
     | None -> default

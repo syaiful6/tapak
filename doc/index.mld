@@ -68,6 +68,7 @@ let app =
 
 {1 Documentation}
 
+- {!page-architecture} - Architecture and design philosophy
 - {!page-kernel} - Tapak Kernel module documentation
 - {!page-router} - Router and pattern matching
 - {!page-middleware} - Middleware system
