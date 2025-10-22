@@ -96,6 +96,7 @@ let rec match_pattern : type a b. (a, b) path -> string list -> a -> b option =
  fun pattern segments k ->
   match pattern, segments with
   | Nil, [] -> Some k
+  | Literal ("", rest), [] -> match_pattern rest [] k
   | Literal (expected, rest), seg :: segs when String.equal expected seg ->
     match_pattern rest segs k
   | Int rest, seg :: segs ->
@@ -169,6 +170,7 @@ let rec sprintf : type a. (a, string) path -> string -> a =
  fun pattern acc ->
   match pattern with
   | Nil -> acc
+  | Literal ("", rest) -> sprintf rest (if acc = "" then "/" else acc)
   | Literal (s, rest) -> sprintf rest (acc ^ "/" ^ s)
   | Int rest -> fun n -> sprintf rest (acc ^ "/" ^ string_of_int n)
   | Int32 rest -> fun n -> sprintf rest (acc ^ "/" ^ Int32.to_string n)

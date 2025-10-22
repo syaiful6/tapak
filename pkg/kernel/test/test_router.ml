@@ -411,6 +411,102 @@ let test_sprintf_custom () =
   let url = sprintf pattern "ff5733" in
   Alcotest.(check string) "url should be /color/FF5733" "/color/FF5733" url
 
+let test_root_route () =
+  let open Router in
+  let route =
+    get (s "") @-> fun _request -> Response.of_string ~body:"home page" `OK
+  in
+  let request = make_request "/" in
+  match match' [ route ] request with
+  | Some response ->
+    Alcotest.(check bool)
+      "root route should match"
+      true
+      (Response.status response = `OK)
+  | None -> Alcotest.fail "root route should have matched"
+
+let test_sprintf_root () =
+  let open Router in
+  let pattern = s "" in
+  let url = sprintf pattern in
+  Alcotest.(check string) "url should be /" "/" url
+
+let test_root_with_method () =
+  let open Router in
+  let route =
+    post (s "") @-> fun _request ->
+    Response.of_string ~body:"posted to root" `Created
+  in
+  let request = make_request ~meth:`POST "/" in
+  match match' [ route ] request with
+  | Some response ->
+    Alcotest.(check bool)
+      "root POST route should match"
+      true
+      (Response.status response = `Created)
+  | None -> Alcotest.fail "root POST route should have matched"
+
+let test_root_doesnt_match_subpaths () =
+  let open Router in
+  let route =
+    get (s "") @-> fun _request -> Response.of_string ~body:"root" `OK
+  in
+  let request = make_request "/users" in
+  match match' [ route ] request with
+  | Some _ -> Alcotest.fail "root should not match /users"
+  | None -> ()
+
+let test_scoped_empty_literal () =
+  let open Router in
+  let routes =
+    scope
+      (s "users")
+      [ (get (s "") @-> fun _req -> Response.of_string ~body:"user list" `OK) ]
+  in
+  let request = make_request "/users" in
+  match match' routes request with
+  | Some response ->
+    Alcotest.(check bool)
+      "scoped empty literal should match /users"
+      true
+      (Response.status response = `OK)
+  | None -> Alcotest.fail "scoped empty literal should have matched /users"
+
+let test_scoped_empty_literal_no_trailing_slash () =
+  let open Router in
+  let routes =
+    scope
+      (s "api" / s "v1")
+      [ (get (s "") @-> fun _req -> Response.of_string ~body:"api index" `OK) ]
+  in
+  let request = make_request "/api/v1" in
+  match match' routes request with
+  | Some response ->
+    Alcotest.(check bool)
+      "nested scoped empty literal should match /api/v1"
+      true
+      (Response.status response = `OK)
+  | None ->
+    Alcotest.fail "nested scoped empty literal should have matched /api/v1"
+
+let test_scoped_with_trailing_route () =
+  let open Router in
+  let routes =
+    scope
+      (s "users")
+      [ (get (s "") @-> fun _req -> Response.of_string ~body:"user list" `OK)
+      ; (get (s "new") @-> fun _req -> Response.of_string ~body:"new user" `OK)
+      ]
+  in
+  let request1 = make_request "/users" in
+  let request2 = make_request "/users/new" in
+  (match match' routes request1 with
+  | Some _ -> ()
+  | None -> Alcotest.fail "/users should match");
+  match match' routes request2 with
+  | Some _ -> ()
+  | None -> Alcotest.fail "/users/new should match"
+
 let tests =
   [ "Simple route", `Quick, test_simple_route
   ; "Int64 parameter", `Quick, test_int64_param
@@ -440,6 +536,15 @@ let tests =
   ; "Custom rejects invalid", `Quick, test_custom_invalid
   ; "sprintf with slug", `Quick, test_sprintf_slug
   ; "sprintf with custom", `Quick, test_sprintf_custom
+  ; "Root route", `Quick, test_root_route
+  ; "sprintf root route", `Quick, test_sprintf_root
+  ; "Root route with POST method", `Quick, test_root_with_method
+  ; "Root route doesn't match subpaths", `Quick, test_root_doesnt_match_subpaths
+  ; "Scoped empty literal", `Quick, test_scoped_empty_literal
+  ; ( "Nested scoped empty literal"
+    , `Quick
+    , test_scoped_empty_literal_no_trailing_slash )
+  ; "Scoped with multiple routes", `Quick, test_scoped_with_trailing_route
   ]
   |> List.map (fun (name, speed, fn) -> Alcotest.test_case name speed fn)
   |> fun tests -> "Router", tests
