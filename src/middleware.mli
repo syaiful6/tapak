@@ -31,6 +31,12 @@ module Compression : sig
     ; preferred_encodings : Header_parser.Accept.encoding list
     }
 
+  val args :
+     encoder:encoder
+    -> predicate:predicate
+    -> preferred_encodings:Header_parser.Accept.encoding list
+    -> args
+
   include
     Tapak_kernel.Middleware.Intf with type args := args and type state = args
 end
