@@ -1,288 +1,445 @@
 open Tapak_kernel
 
-let params_equal =
-  List.equal (fun a b ->
-    String.equal (fst a) (fst b) && String.equal (snd a) (snd b))
-
-let params =
-  Alcotest.testable Router.pp_matches (fun a b ->
-    params_equal a.Router.params b.Router.params)
-
-let route_matches target route =
-  let path = Router.Matcher.of_path target `GET in
-  let matcher = Router.Matcher.of_router route in
-  match Router.Matcher.try_match matcher path with
-  | None -> None
-  | Some (_, params, splat) -> Some { Router.params; splat = List.rev splat }
-
-let simple_app _ = Response.create `OK
-
-let test_simple_route () =
-  let route = Router.get "/test/:id" simple_app in
-  Alcotest.(check (option params))
-    "No match on different path"
-    None
-    (route_matches "/different/123" route);
-  Alcotest.(check (option params))
-    "Simple route match"
-    (Some { Router.params = [ "id", "123" ]; splat = [] })
-    (route_matches "/test/123" route)
-
-let test_with_scoped_route () =
-  let route = Router.scope "/" [ Router.get "/test/:id" simple_app ] in
-  Alcotest.(check (option params))
-    "No match on different path"
-    None
-    (route_matches "/different/123" route);
-  Alcotest.(check (option params))
-    "Simple route match"
-    (Some { Router.params = [ "id", "123" ]; splat = [] })
-    (route_matches "/test/123" route)
-
-let test_simple_route_2 () =
-  let route = Router.get "/test/:format/:name" simple_app in
-  Alcotest.(check (option params))
-    "No match on different path"
-    None
-    (route_matches "/test/bar" route)
-
-(* Middleware tests *)
-let execution_order = ref []
-let reset_execution_order () = execution_order := []
-let get_execution_order () = List.rev !execution_order
-
-let make_test_request path =
+let make_request ?(meth = `GET) target =
   Request.create
     ~scheme:`HTTP
     ~version:Piaf.Versions.HTTP.HTTP_1_1
-    ~meth:`GET
+    ~meth
     ~body:Piaf.Body.empty
-    path
+    target
 
-let test_middleware name =
+let test_simple_route () =
+  let open Router in
+  let route =
+    get (s "users") @-> fun request ->
+    Alcotest.(check string)
+      "method should be GET"
+      "GET"
+      (Piaf.Method.to_string (Request.meth request));
+    Response.of_string ~body:"users list" `OK
+  in
+  let request = make_request "/users" in
+  match match' [ route ] request with
+  | Some response ->
+    Alcotest.(check bool)
+      "route should match"
+      true
+      (Response.status response = `OK)
+  | None -> Alcotest.fail "route should have matched"
+
+let test_int64_param () =
+  let open Router in
+  let route =
+    get (s "users" / int64) @-> fun id _request ->
+    Alcotest.(check int64) "id should be 42" 42L id;
+    Response.of_string ~body:(Printf.sprintf "User %Ld" id) `OK
+  in
+  let request = make_request "/users/42" in
+  match match' [ route ] request with
+  | Some response ->
+    Alcotest.(check bool)
+      "route should match"
+      true
+      (Response.status response = `OK)
+  | None -> Alcotest.fail "route should have matched"
+
+let test_multiple_params () =
+  let open Router in
+  let route =
+    get (s "users" / int64 / s "posts" / str) @-> fun user_id slug _request ->
+    Alcotest.(check int64) "user_id should be 42" 42L user_id;
+    Alcotest.(check string) "slug should be 'hello'" "hello" slug;
+    Response.of_string
+      ~body:(Printf.sprintf "User %Ld post %s" user_id slug)
+      `OK
+  in
+  let request = make_request "/users/42/posts/hello" in
+  match match' [ route ] request with
+  | Some response ->
+    Alcotest.(check bool)
+      "route should match"
+      true
+      (Response.status response = `OK)
+  | None -> Alcotest.fail "route should have matched"
+
+let test_no_match () =
+  let open Router in
+  let route =
+    get (s "users" / int64) @-> fun _id _request ->
+    Response.of_string ~body:"user" `OK
+  in
+  let request = make_request "/posts/42" in
+  match match' [ route ] request with
+  | Some _ -> Alcotest.fail "route should not have matched"
+  | None -> ()
+
+let test_post_method () =
+  let open Router in
+  let route =
+    post (s "users") @-> fun _request ->
+    Response.of_string ~body:"user created" `Created
+  in
+  let request = make_request ~meth:`POST "/users" in
+  match match' [ route ] request with
+  | Some response ->
+    Alcotest.(check bool)
+      "route should match POST"
+      true
+      (Response.status response = `Created)
+  | None -> Alcotest.fail "POST route should have matched"
+
+let test_method_mismatch () =
+  let open Router in
+  let route =
+    post (s "users") @-> fun _request ->
+    Response.of_string ~body:"user created" `Created
+  in
+  let request = make_request ~meth:`GET "/users" in
+  match match' [ route ] request with
+  | Some _ -> Alcotest.fail "GET should not match POST route"
+  | None -> ()
+
+let test_sprintf_simple () =
+  let open Router in
+  let pattern = s "users" in
+  let url = sprintf pattern in
+  Alcotest.(check string) "url should be /users" "/users" url
+
+let test_sprintf_int64 () =
+  let open Router in
+  let pattern = s "users" / int64 in
+  let url = sprintf pattern 42L in
+  Alcotest.(check string) "url should be /users/42" "/users/42" url
+
+let test_sprintf_multiple () =
+  let open Router in
+  let pattern = s "users" / int64 / s "posts" / str in
+  let url = sprintf pattern 42L "hello-world" in
+  Alcotest.(check string)
+    "url should be /users/42/posts/hello-world"
+    "/users/42/posts/hello-world"
+    url
+
+let test_int_param () =
+  let open Router in
+  let route =
+    get (s "page" / int) @-> fun page_num _request ->
+    Alcotest.(check int) "page should be 5" 5 page_num;
+    Response.of_string ~body:(Printf.sprintf "Page %d" page_num) `OK
+  in
+  let request = make_request "/page/5" in
+  match match' [ route ] request with
+  | Some response ->
+    Alcotest.(check bool)
+      "route should match"
+      true
+      (Response.status response = `OK)
+  | None -> Alcotest.fail "route should have matched"
+
+let test_invalid_int () =
+  let open Router in
+  let route =
+    get (s "page" / int) @-> fun _page _request ->
+    Response.of_string ~body:"page" `OK
+  in
+  let request = make_request "/page/not-a-number" in
+  match match' [ route ] request with
+  | Some _ -> Alcotest.fail "route should not match invalid int"
+  | None -> ()
+
+let test_bool_param () =
+  let open Router in
+  let route =
+    get (s "published" / bool) @-> fun is_published _request ->
+    Alcotest.(check bool) "should be true" true is_published;
+    Response.of_string ~body:(string_of_bool is_published) `OK
+  in
+  let request = make_request "/published/true" in
+  match match' [ route ] request with
+  | Some _ -> ()
+  | None -> Alcotest.fail "route should have matched"
+
+let test_scope () =
+  let open Router in
+  let routes =
+    scope
+      (s "api" / s "v1")
+      [ (get (s "users") @-> fun _req -> Response.of_string ~body:"users" `OK) ]
+  in
+  let request = make_request "/api/v1/users" in
+  match match' routes request with
+  | Some _ -> ()
+  | None -> Alcotest.fail "scoped route should have matched"
+
+let test_url_generation () =
+  let open Router in
+  let user_url_pattern = s "users" / int64 in
+  let user_posts_url_pattern = s "users" / int64 / s "posts" / str in
+
+  let url = sprintf user_url_pattern 42L in
+  Alcotest.(check string) "URL should be /users/42" "/users/42" url;
+
+  let url2 = sprintf user_posts_url_pattern 42L "hello-world" in
+  Alcotest.(check string)
+    "URL should be /users/42/posts/hello-world"
+    "/users/42/posts/hello-world"
+    url2
+
+let test_scope_with_middlewares () =
+  let open Router in
   let module M = struct
     type args = unit
     type state = unit
 
     let init () = ()
 
-    let call () next request =
-      execution_order := name :: !execution_order;
-      next request
+    let call () next req =
+      let resp = next req in
+      Response.with_
+        ~headers:(Piaf.Headers.add (Response.headers resp) "X-Test" "true")
+        resp
   end
   in
-  Middleware.use ~name (module M) ()
+  let test_middleware = Middleware.use ~name:"test" (module M) () in
+  let routes =
+    scope
+      ~middlewares:[ test_middleware ]
+      (s "api")
+      [ (get (s "test") @-> fun _req -> Response.of_string ~body:"ok" `OK) ]
+  in
+  let request = make_request "/api/test" in
+  match match' routes request with
+  | Some response ->
+    (match Piaf.Headers.get (Response.headers response) "x-test" with
+    | Some value -> Alcotest.(check string) "middleware should run" "true" value
+    | None -> Alcotest.fail "middleware header not found")
+  | None -> Alcotest.fail "scoped route should have matched"
 
-let test_scoped_middleware_execution () =
-  reset_execution_order ();
-  let middleware1 = test_middleware "middleware1" in
-  let middleware2 = test_middleware "middleware2" in
-  let handler _request =
-    execution_order := "handler" :: !execution_order;
-    Response.create `OK
+let test_splat () =
+  let open Router in
+  let route =
+    get (s "files" / splat) @-> fun segments _request ->
+    let path = String.concat "/" segments in
+    Response.of_string ~body:(Printf.sprintf "Files: %s" path) `OK
+  in
+  let request = make_request "/files/docs/readme.txt" in
+  match match' [ route ] request with
+  | Some response ->
+    Alcotest.(check bool)
+      "splat route should match"
+      true
+      (Response.status response = `OK)
+  | None -> Alcotest.fail "splat route should have matched"
+
+let test_splat_segments () =
+  let open Router in
+  let captured_segments = ref [] in
+  let route =
+    get (s "static" / splat) @-> fun segments _request ->
+    captured_segments := segments;
+    Response.of_string ~body:"ok" `OK
+  in
+  let request = make_request "/static/js/app/bundle.js" in
+  match match' [ route ] request with
+  | Some _ ->
+    Alcotest.(check (list string))
+      "should capture all segments"
+      [ "js"; "app"; "bundle.js" ]
+      !captured_segments
+  | None -> Alcotest.fail "splat route should have matched"
+
+let test_splat_empty () =
+  let open Router in
+  let captured_segments = ref [] in
+  let route =
+    get (s "spa" / splat) @-> fun segments _request ->
+    captured_segments := segments;
+    Response.of_string ~body:"ok" `OK
+  in
+  let request = make_request "/spa" in
+  match match' [ route ] request with
+  | Some _ ->
+    Alcotest.(check (list string))
+      "should capture empty list"
+      []
+      !captured_segments
+  | None -> Alcotest.fail "splat route should have matched"
+
+let test_sprintf_splat () =
+  let open Router in
+  let pattern = s "files" / splat in
+  let url = sprintf pattern [ "docs"; "readme.txt" ] in
+  Alcotest.(check string)
+    "url should be /files/docs/readme.txt"
+    "/files/docs/readme.txt"
+    url
+
+let test_sprintf_splat_empty () =
+  let open Router in
+  let pattern = s "spa" / splat in
+  let url = sprintf pattern [] in
+  Alcotest.(check string) "url should be /spa" "/spa" url
+
+let test_splat_with_prefix () =
+  let open Router in
+  let route =
+    get (s "api" / s "v1" / splat) @-> fun segments _request ->
+    let path = String.concat "/" segments in
+    Response.of_string ~body:(Printf.sprintf "API: %s" path) `OK
+  in
+  let request = make_request "/api/v1/users/42/posts" in
+  match match' [ route ] request with
+  | Some response ->
+    Alcotest.(check bool)
+      "splat with prefix should match"
+      true
+      (Response.status response = `OK)
+  | None -> Alcotest.fail "splat route should have matched"
+
+let test_slug () =
+  let open Router in
+  let route =
+    get (s "posts" / slug) @-> fun slug_str _request ->
+    Response.of_string ~body:(Printf.sprintf "Post: %s" slug_str) `OK
+  in
+  let request = make_request "/posts/my-awesome-post-123" in
+  match match' [ route ] request with
+  | Some response ->
+    Alcotest.(check bool)
+      "slug route should match"
+      true
+      (Response.status response = `OK)
+  | None -> Alcotest.fail "slug route should have matched"
+
+let test_slug_invalid () =
+  let open Router in
+  let route =
+    get (s "posts" / slug) @-> fun _slug _request ->
+    Response.of_string ~body:"ok" `OK
+  in
+  let request = make_request "/posts/My_Post" in
+  match match' [ route ] request with
+  | Some _ -> Alcotest.fail "slug should not match invalid format"
+  | None -> ()
+
+let test_slug_valid () =
+  let open Router in
+  let captured_slug = ref "" in
+  let route =
+    get (s "posts" / slug) @-> fun slug_str _request ->
+    captured_slug := slug_str;
+    Response.of_string ~body:"ok" `OK
+  in
+  let request = make_request "/posts/hello-world-123" in
+  match match' [ route ] request with
+  | Some _ ->
+    Alcotest.(check string)
+      "should capture slug"
+      "hello-world-123"
+      !captured_slug
+  | None -> Alcotest.fail "slug route should have matched"
+
+let test_custom () =
+  let open Router in
+  let is_hex_color s =
+    String.length s = 6
+    && String.for_all
+         (fun c ->
+            (c >= '0' && c <= '9')
+            || (c >= 'a' && c <= 'f')
+            || (c >= 'A' && c <= 'F'))
+         s
+  in
+  let hex_color =
+    custom
+      ~parse:(fun s -> if is_hex_color s then Some s else None)
+      ~format:Fun.id
   in
   let route =
-    Router.scope
-      ~middlewares:[ middleware1; middleware2 ]
-      "/"
-      [ Router.get "/test" handler ]
+    get (s "color" / hex_color) @-> fun color _request ->
+    Response.of_string ~body:(Printf.sprintf "Color: #%s" color) `OK
   in
-  let request = make_test_request "/test" in
-  let _ = Router.make route request in
-  Alcotest.(check (list string))
-    "Middleware executed in order before handler"
-    [ "middleware1"; "middleware2"; "handler" ]
-    (get_execution_order ())
+  let request = make_request "/color/ff5733" in
+  match match' [ route ] request with
+  | Some response ->
+    Alcotest.(check bool)
+      "custom hex color should match"
+      true
+      (Response.status response = `OK)
+  | None -> Alcotest.fail "custom route should have matched"
 
-let test_nested_scoped_middleware () =
-  reset_execution_order ();
-  let parent_mw = test_middleware "parent" in
-  let child_mw = test_middleware "child" in
-  let handler _request =
-    execution_order := "handler" :: !execution_order;
-    Response.create `OK
+let test_custom_invalid () =
+  let open Router in
+  let is_hex_color s =
+    String.length s = 6
+    && String.for_all
+         (fun c ->
+            (c >= '0' && c <= '9')
+            || (c >= 'a' && c <= 'f')
+            || (c >= 'A' && c <= 'F'))
+         s
+  in
+  let hex_color =
+    custom
+      ~parse:(fun s -> if is_hex_color s then Some s else None)
+      ~format:Fun.id
   in
   let route =
-    Router.scope
-      ~middlewares:[ parent_mw ]
-      "/"
-      [ Router.scope
-          ~middlewares:[ child_mw ]
-          "/api"
-          [ Router.get "/test" handler ]
-      ]
+    get (s "color" / hex_color) @-> fun _color _request ->
+    Response.of_string ~body:"ok" `OK
   in
-  let request = make_test_request "/api/test" in
-  let _ = Router.make route request in
-  Alcotest.(check (list string))
-    "Parent middleware executes before child middleware"
-    [ "parent"; "child"; "handler" ]
-    (get_execution_order ())
+  let request = make_request "/color/gggggg" in
+  match match' [ route ] request with
+  | Some _ -> Alcotest.fail "custom should not match invalid"
+  | None -> ()
 
-let test_middleware_isolation () =
-  reset_execution_order ();
-  let mw1 = test_middleware "scope1_mw" in
-  let mw2 = test_middleware "scope2_mw" in
-  let handler1 _request =
-    execution_order := "handler1" :: !execution_order;
-    Response.create `OK
-  in
-  let handler2 _request =
-    execution_order := "handler2" :: !execution_order;
-    Response.create `OK
-  in
-  let route =
-    Router.scope
-      "/"
-      [ Router.scope
-          ~middlewares:[ mw1 ]
-          "/scope1"
-          [ Router.get "/test" handler1 ]
-      ; Router.scope
-          ~middlewares:[ mw2 ]
-          "/scope2"
-          [ Router.get "/test" handler2 ]
-      ]
-  in
-  reset_execution_order ();
-  let request1 = make_test_request "/scope1/test" in
-  let _ = Router.make route request1 in
-  Alcotest.(check (list string))
-    "Scope1 middleware only executes for scope1 routes"
-    [ "scope1_mw"; "handler1" ]
-    (get_execution_order ());
-  reset_execution_order ();
-  let request2 = make_test_request "/scope2/test" in
-  let _ = Router.make route request2 in
-  Alcotest.(check (list string))
-    "Scope2 middleware only executes for scope2 routes"
-    [ "scope2_mw"; "handler2" ]
-    (get_execution_order ())
+let test_sprintf_slug () =
+  let open Router in
+  let pattern = s "posts" / slug in
+  let url = sprintf pattern "my-great-post-2024" in
+  Alcotest.(check string)
+    "url should be /posts/my-great-post-2024"
+    "/posts/my-great-post-2024"
+    url
 
-let test_multiple_middlewares_in_scope () =
-  reset_execution_order ();
-  let mw1 = test_middleware "mw1" in
-  let mw2 = test_middleware "mw2" in
-  let mw3 = test_middleware "mw3" in
-  let handler _request =
-    execution_order := "handler" :: !execution_order;
-    Response.create `OK
+let test_sprintf_custom () =
+  let open Router in
+  let hex_color =
+    custom ~parse:(fun s -> Some s) ~format:(fun s -> String.uppercase_ascii s)
   in
-  let route =
-    Router.scope
-      ~middlewares:[ mw1; mw2; mw3 ]
-      "/"
-      [ Router.get "/test" handler ]
-  in
-  let request = make_test_request "/test" in
-  let _ = Router.make route request in
-  Alcotest.(check (list string))
-    "All middlewares execute in order"
-    [ "mw1"; "mw2"; "mw3"; "handler" ]
-    (get_execution_order ())
-
-let test_deeply_nested_scopes () =
-  reset_execution_order ();
-  let mw_level1 = test_middleware "level1" in
-  let mw_level2 = test_middleware "level2" in
-  let mw_level3 = test_middleware "level3" in
-  let handler _request =
-    execution_order := "handler" :: !execution_order;
-    Response.create `OK
-  in
-  let route =
-    Router.scope
-      ~middlewares:[ mw_level1 ]
-      "/"
-      [ Router.scope
-          ~middlewares:[ mw_level2 ]
-          "/api"
-          [ Router.scope
-              ~middlewares:[ mw_level3 ]
-              "/v1"
-              [ Router.get "/test" handler ]
-          ]
-      ]
-  in
-  let request = make_test_request "/api/v1/test" in
-  let _ = Router.make route request in
-  Alcotest.(check (list string))
-    "Middlewares execute from outermost to innermost scope"
-    [ "level1"; "level2"; "level3"; "handler" ]
-    (get_execution_order ())
-
-(* Splat tests *)
-let test_single_splat () =
-  let route = Router.get "/users/*" simple_app in
-  Alcotest.(check (option params))
-    "Single splat matches /users/123"
-    (Some { Router.params = []; splat = [ "123" ] })
-    (route_matches "/users/123" route);
-  Alcotest.(check (option params))
-    "Single splat doesn't match /users/123/profile"
-    None
-    (route_matches "/users/123/profile" route)
-
-let test_full_splat () =
-  let route = Router.get "/admin/**" simple_app in
-  Alcotest.(check (option params))
-    "Full splat matches /admin/settings"
-    (Some { Router.params = []; splat = [ "settings" ] })
-    (route_matches "/admin/settings" route);
-  Alcotest.(check (option params))
-    "Full splat matches /admin/posts/1"
-    (Some { Router.params = []; splat = [ "posts"; "1" ] })
-    (route_matches "/admin/posts/1" route);
-  Alcotest.(check (option params))
-    "Full splat matches /admin/posts/1/edit"
-    (Some { Router.params = []; splat = [ "posts"; "1"; "edit" ] })
-    (route_matches "/admin/posts/1/edit" route)
-
-let test_mixed_splat_and_params () =
-  let route = Router.get "/admin/*/:object_id" simple_app in
-  Alcotest.(check (option params))
-    "Mixed splat+param matches /admin/12/posts"
-    (Some { Router.params = [ "object_id", "posts" ]; splat = [ "12" ] })
-    (route_matches "/admin/12/posts" route)
+  let pattern = s "color" / hex_color in
+  let url = sprintf pattern "ff5733" in
+  Alcotest.(check string) "url should be /color/FF5733" "/color/FF5733" url
 
 let tests =
-  List.map
-    (fun (name, cases) -> Format.asprintf "Router: %s" name, cases)
-    [ ( "test match 1"
-      , [ Alcotest.test_case "Simple route match" `Quick test_simple_route ] )
-    ; ( "test match 2"
-      , [ Alcotest.test_case "Scoped route match" `Quick test_with_scoped_route
-        ] )
-    ; ( "test match 3"
-      , [ Alcotest.test_case "No match" `Quick test_simple_route_2 ] )
-    ; ( "middleware tests"
-      , [ Alcotest.test_case
-            "Scoped middleware execution"
-            `Quick
-            test_scoped_middleware_execution
-        ; Alcotest.test_case
-            "Nested scoped middleware"
-            `Quick
-            test_nested_scoped_middleware
-        ; Alcotest.test_case
-            "Middleware isolation between scopes"
-            `Quick
-            test_middleware_isolation
-        ; Alcotest.test_case
-            "Multiple middlewares in scope"
-            `Quick
-            test_multiple_middlewares_in_scope
-        ; Alcotest.test_case
-            "Deeply nested scopes"
-            `Quick
-            test_deeply_nested_scopes
-        ] )
-    ; ( "splat tests"
-      , [ Alcotest.test_case "Single splat" `Quick test_single_splat
-        ; Alcotest.test_case "Full splat" `Quick test_full_splat
-        ; Alcotest.test_case
-            "Mixed splat and params"
-            `Quick
-            test_mixed_splat_and_params
-        ] )
-    ]
+  [ "Simple route", `Quick, test_simple_route
+  ; "Int64 parameter", `Quick, test_int64_param
+  ; "Multiple parameters", `Quick, test_multiple_params
+  ; "No match", `Quick, test_no_match
+  ; "POST method", `Quick, test_post_method
+  ; "Method mismatch", `Quick, test_method_mismatch
+  ; "sprintf simple", `Quick, test_sprintf_simple
+  ; "sprintf int64", `Quick, test_sprintf_int64
+  ; "sprintf multiple", `Quick, test_sprintf_multiple
+  ; "Int parameter", `Quick, test_int_param
+  ; "Invalid int", `Quick, test_invalid_int
+  ; "Bool parameter", `Quick, test_bool_param
+  ; "Scope prefix", `Quick, test_scope
+  ; "URL generation", `Quick, test_url_generation
+  ; "Scope with middlewares", `Quick, test_scope_with_middlewares
+  ; "Splat matching", `Quick, test_splat
+  ; "Splat captures segments", `Quick, test_splat_segments
+  ; "Splat with empty path", `Quick, test_splat_empty
+  ; "sprintf with splat", `Quick, test_sprintf_splat
+  ; "sprintf with empty splat", `Quick, test_sprintf_splat_empty
+  ; "Splat with prefix", `Quick, test_splat_with_prefix
+  ; "Slug parameter", `Quick, test_slug
+  ; "Slug rejects invalid", `Quick, test_slug_invalid
+  ; "Slug valid characters", `Quick, test_slug_valid
+  ; "Custom parameter", `Quick, test_custom
+  ; "Custom rejects invalid", `Quick, test_custom_invalid
+  ; "sprintf with slug", `Quick, test_sprintf_slug
+  ; "sprintf with custom", `Quick, test_sprintf_custom
+  ]
+  |> List.map (fun (name, speed, fn) -> Alcotest.test_case name speed fn)
+  |> fun tests -> "Router", tests

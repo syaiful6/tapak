@@ -1,4 +1,4 @@
 let () =
   Alcotest.run
     "Kernel Tests"
-    (List.flatten [ Test_router.tests; Test_form.tests ])
+    (List.flatten [ Test_form.tests; [ Test_router.tests ] ])

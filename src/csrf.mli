@@ -30,8 +30,6 @@
         | _ ->
           Response.of_html ~status:`Forbidden "Invalid CSRF token"
     ]}
-
-    See {!page-examples.showcase.main} for a complete working example.
 *)
 
 type t =

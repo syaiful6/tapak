@@ -4,12 +4,12 @@ module App = struct
   let to_piaf t request = Server_connection.to_piaf_request_handler t request
 end
 
+module Body = Body
 module Context = Context
 module Filter = Filter
 module Form = Form
 module Handler = Handler
 module Middleware = Middleware
-module Body = Body
 module Request = Request
 module Request_info = Request_info
 module Response = Response

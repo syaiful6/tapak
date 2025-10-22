@@ -17,6 +17,7 @@ module App : sig
   val to_piaf : App.t -> Piaf.Request_info.t Piaf.Server.Handler.t
 end
 
+module Body = Body
 module Context = Context
 module Filter = Filter
 module Form = Form
@@ -27,5 +28,4 @@ module Request_info = Request_info
 module Response = Response
 module Router = Router
 module Service = Service
-module Body = Body
 module Server_connection = Server_connection

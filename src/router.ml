@@ -5,6 +5,6 @@ include Tapak_kernel.Router
 let routes
       ?(not_found =
         fun _req -> Response.of_string' ~status:`Not_found "Not Found")
-      routes
+      route_list
   =
- fun req -> try router routes req with Not_found -> not_found req
+ fun req -> try router route_list req with Not_found -> not_found req
