@@ -26,6 +26,9 @@ let encoding_to_string = function
   | `Star -> "*"
   | `Other s -> s
 
+let args ~encoder ~predicate ~preferred_encodings =
+  { encoder; predicate; preferred_encodings }
+
 external init : args -> state = "%identity"
 
 let call { encoder; predicate; preferred_encodings } next request =
