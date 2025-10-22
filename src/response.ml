@@ -76,3 +76,42 @@ let of_json
     ~headers
     ~context
     (body |> Yojson.Safe.to_string)
+
+let negotiate
+      ?version
+      ?(status = `OK)
+      ?(headers = Headers.empty)
+      ?(context = Context.empty)
+      request
+      handlers
+  =
+  let accept_header = Request.header "Accept" request in
+  let available_formats = List.map fst handlers in
+  match
+    Header_parser.Content_negotiation.negotiate_format
+      accept_header
+      available_formats
+  with
+  | Some format ->
+    (match List.assoc_opt format handlers with
+    | Some handler ->
+      let body_content = handler () in
+      let content_type =
+        Header_parser.Content_negotiation.format_to_media_type format
+      in
+      of_string' ?version ~status ~content_type ~headers ~context body_content
+    | None ->
+      (* This shouldn't happen if handlers are constructed correctly *)
+      of_string'
+        ?version
+        ~status:`Not_acceptable
+        ~headers
+        ~context
+        "Not Acceptable")
+  | None ->
+    of_string'
+      ?version
+      ~status:`Not_acceptable
+      ~headers
+      ~context
+      "Not Acceptable"
