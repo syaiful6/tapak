@@ -2,358 +2,983 @@
 
 {1 Introduction}
 
-The Tapak router provides flexible pattern-based routing for HTTP requests. It supports path parameters, splat matching, and scoped routes with middleware isolation.
+The Tapak router provides type-safe, composable routing for HTTP requests using GADTs (Generalized Algebraic Data Types). Unlike traditional string-based routers, Tapak's router ensures that route parameters are properly typed and extracted at compile time.
+
+Key features:
+- Type-safe parameter extraction (int, int32, int64, string, bool)
+- Compile-time route validation
+- Clean, composable syntax
+- Scoped routes with middleware isolation
+- Type-safe URL generation
 
 {1 Basic Routing}
 
 {2 Simple Routes}
 
-Define routes using HTTP method helpers:
+Define routes using HTTP method helpers and path combinators:
 
 {[
 open Tapak_kernel
 
-let routes =
-  Router.router
-    [ Router.get "/" home_handler
-    ; Router.post "/users" create_user
-    ; Router.put "/users/:id" update_user
-    ; Router.delete "/users/:id" delete_user
-    ]
-]}
-
-Available methods:
-- [Router.get]
-- [Router.post]
-- [Router.put]
-- [Router.delete]
-- [Router.head]
-
-{2 Path Parameters}
-
-Extract dynamic segments from paths using the [:param] syntax:
-
-{[
-let user_handler request =
-  match Router.route_params request with
-  | Some params ->
-    let id = List.assoc "id" params in
-    (* Process user with id *)
-    Response.create ~body:(Piaf.Body.of_string ("User: " ^ id)) `OK
-  | None -> Response.create `Not_found
+let home_handler _request =
+  Response.of_html ~status:`OK "<h1>Welcome</h1>"
 
 let routes =
   Router.router
-    [ Router.get "/users/:id" user_handler
-    ; Router.get "/posts/:post_id/comments/:comment_id" comment_handler
+    [ Router.get (Router.s "") @-> home_handler ]
+]}
+
+The [s] combinator creates a literal path segment. Use [@->] to attach a handler.
+
+{2 Available HTTP Methods}
+
+- [Router.get pattern @-> handler] - GET requests
+- [Router.post pattern @-> handler] - POST requests
+- [Router.put pattern @-> handler] - PUT requests
+- [Router.delete pattern @-> handler] - DELETE requests
+- [Router.head pattern @-> handler] - HEAD requests
+
+{1 Type-Safe Path Parameters}
+
+{2 Integer Parameters}
+
+Extract integer values directly as typed parameters:
+
+{[
+open Router
+
+(* Handler receives typed int parameter *)
+let page_handler page_num _request =
+  let html = Printf.sprintf "<h1>Page %d</h1>" page_num in
+  Response.of_html ~status:`OK html
+
+let routes =
+  router [ get (s "page" / int) @-> page_handler ]
+
+(* Route: /page/5 -> page_num = 5 (int) *)
+]}
+
+{2 Int64 Parameters}
+
+For larger integers or IDs:
+
+{[
+let user_handler user_id _request =
+  let html = Printf.sprintf "<h1>User %Ld</h1>" user_id in
+  Response.of_html ~status:`OK html
+
+let routes =
+  router [ get (s "users" / int64) @-> user_handler ]
+
+(* Route: /users/42 -> user_id = 42L (int64) *)
+]}
+
+{2 String Parameters}
+
+Extract arbitrary string segments:
+
+{[
+let file_handler filename _request =
+  serve_file filename
+
+let routes =
+  router [ get (s "files" / str) @-> file_handler ]
+
+(* Route: /files/readme.txt -> filename = "readme.txt" (string) *)
+]}
+
+{2 Boolean Parameters}
+
+Match "true" or "false" segments:
+
+{[
+let filter_handler is_published _request =
+  let items = if is_published then published_items else draft_items in
+  Response.of_json ~status:`OK (items_to_json items)
+
+let routes =
+  router [ get (s "posts" / bool) @-> filter_handler ]
+
+(* Route: /posts/true -> is_published = true (bool) *)
+(* Route: /posts/false -> is_published = false (bool) *)
+]}
+
+{2 Multiple Parameters}
+
+Chain multiple parameters together:
+
+{[
+let post_handler user_id post_slug _request =
+  let html =
+    Printf.sprintf
+      "<h1>User %Ld - Post: %s</h1>"
+      user_id
+      post_slug
+  in
+  Response.of_html ~status:`OK html
+
+let routes =
+  router [ get (s "users" / int64 / s "posts" / str) @-> post_handler ]
+
+(* Route: /users/42/posts/hello-world
+   -> user_id = 42L (int64), post_slug = "hello-world" (string) *)
+]}
+
+{2 Available Parameter Types}
+
+- [int] - Matches valid integer strings, extracts as [int]
+- [int32] - Matches 32-bit integers, extracts as [int32]
+- [int64] - Matches 64-bit integers, extracts as [int64]
+- [str] - Matches any path segment, extracts as [string]
+- [bool] - Matches "true" or "false", extracts as [bool]
+- [splat] - Matches all remaining path segments, extracts as [string list]
+
+Invalid parameter values result in non-matching routes (404).
+
+{2 Splat Matching}
+
+The [splat] combinator captures all remaining path segments as a [string list]. This is perfect for:
+- Catch-all routes for SPAs
+- File browsers and static file servers
+- Nested resource routing
+
+{[
+(* Serve files from any nested path *)
+let file_handler segments _request =
+  let path = String.concat "/" segments in
+  serve_file ~path
+
+let routes =
+  router [ get (s "files" / splat) @-> file_handler ]
+
+(* Matches: /files/docs/readme.txt -> segments = ["docs"; "readme.txt"] *)
+(* Matches: /files/images/logo.png -> segments = ["images"; "logo.png"] *)
+(* Matches: /files -> segments = [] *)
+]}
+
+Splat can be combined with other parameters:
+
+{[
+(* API versioning with catch-all *)
+let api_handler version segments _request =
+  let path = String.concat "/" segments in
+  match version with
+  | "v1" -> handle_v1_api path
+  | "v2" -> handle_v2_api path
+  | _ -> Response.of_string ~status:`Not_found "Unknown API version"
+
+let routes =
+  router [ get (s "api" / str / splat) @-> api_handler ]
+
+(* Matches: /api/v1/users/42/posts -> version="v1", segments=["users"; "42"; "posts"] *)
+]}
+
+{2 Slug Parameters}
+
+The [slug] combinator validates URL-friendly slugs (lowercase letters, numbers, and hyphens):
+
+{[
+(* Blog post with slug *)
+let post_handler slug _request =
+  let post = load_post_by_slug slug in
+  Response.of_html ~status:`OK (render_post post)
+
+let routes =
+  router [ get (s "posts" / slug) @-> post_handler ]
+
+(* Matches: /posts/my-awesome-post-2024 -> slug = "my-awesome-post-2024" *)
+(* Rejects: /posts/My_Post (uppercase and underscore not allowed) *)
+]}
+
+Slugs are perfect for:
+- Blog post URLs
+- Product pages
+- Category names
+- SEO-friendly routes
+
+{2 Custom Parameters}
+
+Create your own parameter validators with [custom]:
+
+{[
+let is_uuid s =
+  String.length s = 36 &&
+  (* Add your UUID validation logic here *)
+  true
+
+let uuid =
+  custom
+    ~parse:(fun s -> if is_uuid s then Some s else None)
+    ~format:Fun.id
+
+let is_hex_color s =
+  String.length s = 6 &&
+  String.for_all (fun c ->
+    (c >= '0' && c <= '9') ||
+    (c >= 'a' && c <= 'f') ||
+    (c >= 'A' && c <= 'F')) s
+
+let hex_color =
+  custom
+    ~parse:(fun s -> if is_hex_color s then Some s else None)
+    ~format:String.lowercase_ascii
+
+(* Use in routes *)
+let routes =
+  router
+    [ get (s "users" / uuid) @-> user_handler
+    ; get (s "theme" / hex_color) @-> theme_handler
     ]
+
+(* Matches: /users/550e8400-e29b-41d4-a716-446655440000 *)
+(* Matches: /theme/ff5733 *)
+(* Rejects invalid formats with 404 *)
 ]}
 
-Multiple parameters can be used in a single route.
-
-{1 Splat Matching}
-
-Splat operators allow matching multiple path segments, useful for serving SPAs or static files.
-
-{2 Single Splat ([*])}
-
-Matches exactly one path segment:
+Custom parameters work with sprintf for URL generation:
 
 {[
-(* Route: /files/* *)
-(* Matches: /files/readme.txt *)
-(* Doesn't match: /files/docs/guide.txt *)
+let user_url = sprintf (s "users" / uuid) "550e8400-e29b-41d4-a716-446655440000"
+(* Result: "/users/550e8400-e29b-41d4-a716-446655440000" *)
 
-let file_handler request =
-  match Router.route_splat request with
-  | Some [filename] ->
-    (* Serve single file *)
-    serve_file filename
-  | _ -> Response.create `Not_found
-
-let routes = Router.router [Router.get "/files/*" file_handler]
+let color_url = sprintf (s "theme" / hex_color) "ff5733"
+(* Result: "/theme/ff5733" (formatted via format function) *)
 ]}
 
-{2 Full Splat ([**])}
+{1 Path Combinators}
 
-Matches any number of path segments:
+{2 Literal Segments}
+
+Use [s] to match literal path segments:
 
 {[
-(* Route: /admin/** *)
-(* Matches: /admin/settings *)
-(* Matches: /admin/users/123 *)
-(* Matches: /admin/posts/edit/5 *)
-
-let admin_spa_handler request =
-  match Router.route_splat request with
-  | Some segments ->
-    let path = String.concat "/" segments in
-    (* Serve SPA with client-side routing *)
-    serve_spa ~path
-  | None ->
-    (* Serve SPA index *)
-    serve_spa ~path:""
-
-let routes = Router.router [Router.get "/admin/**" admin_spa_handler]
+(* Match exactly: /api/v1/users *)
+get (s "api" / s "v1" / s "users") @-> handler
 ]}
 
-{2 Mixed Splat and Parameters}
+{2 Combining Segments}
 
-Combine splat with named parameters:
+Use [/] operator to chain path segments:
 
 {[
-(* Route: /api/*/:resource_id *)
-(* Matches: /api/v1/users *)
-(* Result: params = ["resource_id", "users"], splat = ["v1"] *)
+(* Literal / Literal *)
+s "users" / s "profile"
 
-let api_handler request =
-  match Router.route_params request, Router.route_splat request with
-  | Some params, Some [version] ->
-    let resource = List.assoc "resource_id" params in
-    (* Handle versioned API: version, resource *)
-    handle_api ~version ~resource
-  | _ -> Response.create `Not_found
+(* Literal / Parameter *)
+s "users" / int64
+
+(* Parameter / Literal *)
+int64 / s "edit"
+
+(* Multiple parameters *)
+int64 / s "posts" / str / s "comments" / int
 ]}
 
 {1 Scoped Routes}
 
+{2 Basic Scoping}
+
 Group related routes under a common prefix:
 
 {[
-let routes =
-  Router.router
-    [ Router.scope "/api"
-        [ Router.get "/users" list_users
-        ; Router.get "/users/:id" get_user
-        ; Router.post "/users" create_user
-        ]
-    ; Router.scope "/admin"
-        [ Router.get "/dashboard" admin_dashboard
-        ; Router.get "/settings" admin_settings
-        ]
-    ]
-]}
+open Router
 
-Scopes can be nested:
-
-{[
-let routes =
-  Router.router
-    [ Router.scope "/api"
-        [ Router.scope "/v1"
-            [ Router.get "/users" v1_list_users ]
-        ; Router.scope "/v2"
-            [ Router.get "/users" v2_list_users ]
-        ]
-    ]
-]}
-
-{1 Scoped Middleware}
-
-Apply middlewares to specific route scopes:
-
-{[
 let api_routes =
-  Router.scope
+  scope (s "api" / s "v1")
+    [ get (s "users") @-> list_users
+    ; get (s "users" / int64) @-> get_user
+    ; post (s "users") @-> create_user
+    ; delete (s "users" / int64) @-> delete_user
+    ]
+
+let routes = router api_routes
+
+(* Generated routes:
+   GET    /api/v1/users
+   GET    /api/v1/users/:id
+   POST   /api/v1/users
+   DELETE /api/v1/users/:id
+*)
+]}
+
+{2 Nested Scopes}
+
+Scopes can be nested for deeper hierarchies:
+
+{[
+let routes =
+  router
+    [ scope (s "api")
+        [ scope (s "v1")
+            [ get (s "users") @-> v1_users ]
+        ; scope (s "v2")
+            [ get (s "users") @-> v2_users ]
+        ]
+    ]
+
+(* Routes: /api/v1/users, /api/v2/users *)
+]}
+
+{2 Scope Middleware}
+
+Apply middlewares to all routes within a scope:
+
+{[
+let protected_routes =
+  scope
     ~middlewares:[auth_middleware; rate_limiter]
-    "/api"
-    [ Router.get "/protected" protected_handler ]
+    (s "admin")
+    [ get (s "dashboard") @-> dashboard
+    ; get (s "settings") @-> settings
+    ; post (s "users" / int64 / s "ban") @-> ban_user
+    ]
 
 let public_routes =
-  Router.scope
-    "/"
-    [ Router.get "/public" public_handler ]
+  scope (s "public")
+    [ get (s "about") @-> about
+    ; get (s "contact") @-> contact
+    ]
 
-let routes = Router.router [api_routes; public_routes]
+let routes = router (protected_routes @ public_routes)
 ]}
 
 Middlewares execute from outermost to innermost scope:
 
 {[
 let routes =
-  Router.scope
+  scope
     ~middlewares:[logger]
-    "/"
-    [ Router.scope
+    (s "")
+    [ scope
         ~middlewares:[auth]
-        "/admin"
-        [ Router.get "/dashboard" dashboard ]
+        (s "admin")
+        [ get (s "dashboard") @-> dashboard ]
     ]
+
 (* Execution order: logger -> auth -> dashboard *)
 ]}
 
+{1 URL Generation}
+
+{2 Type-Safe URL Building}
+
+Generate URLs from the same patterns used for routing:
+
+{[
+open Router
+
+(* Define reusable patterns *)
+let user_path = s "users" / int64
+let user_post_path = s "users" / int64 / s "posts" / str
+
+(* Use for routing *)
+let routes =
+  router
+    [ get user_path @-> user_handler
+    ; get user_post_path @-> post_handler
+    ]
+
+(* Use for URL generation *)
+let user_url = sprintf user_path 42L
+(* Result: "/users/42" *)
+
+let post_url = sprintf user_post_path 42L "hello-world"
+(* Result: "/users/42/posts/hello-world" *)
+]}
+
+{2 Sprintf for All Parameter Types}
+
+{[
+(* With integers *)
+sprintf (s "page" / int) 5
+(* Result: "/page/5" *)
+
+(* With multiple parameters *)
+sprintf (s "users" / int64 / s "edit") 42L
+(* Result: "/users/42/edit" *)
+
+(* With booleans *)
+sprintf (s "posts" / bool) true
+(* Result: "/posts/true" *)
+
+(* With splat *)
+sprintf (s "files" / splat) ["docs"; "guide"; "intro.md"]
+(* Result: "/files/docs/guide/intro.md" *)
+
+sprintf (s "spa" / splat) []
+(* Result: "/spa" *)
+]}
+
+The [sprintf] function is type-safe: it requires the exact parameter types that the pattern expects, enforced at compile time.
+
+{2 URL Generation with Scopes}
+
+When routes are registered under a scope, the scope prefix is {e not automatically included} in URL generation. This design maintains the composability principle - you explicitly compose the full path when generating URLs.
+
+{b Important:} To generate URLs for scoped routes, you must include the scope prefix when calling [sprintf].
+
+{[
+open Router
+
+(* Define patterns *)
+let user_path = s "users" / int64
+let api_prefix = s "api" / s "v1"
+
+(* Register routes with scope *)
+let routes =
+  scope api_prefix
+    [ get user_path @-> user_handler
+    ; get (user_path / s "posts") @-> user_posts_handler
+    ]
+
+(* Routes match: /api/v1/users/:id and /api/v1/users/:id/posts *)
+
+(* URL generation: Include the scope prefix manually *)
+let user_url = sprintf (api_prefix / user_path) 42L
+(* Result: "/api/v1/users/42" *)
+
+let user_posts_url = sprintf (api_prefix / user_path / s "posts") 42L
+(* Result: "/api/v1/users/42/posts" *)
+]}
+
+{b Best Practice:} Define both the prefix and full paths as reusable values:
+
+{[
+(* Define base patterns *)
+let user_path = s "users" / int64
+let post_path = s "users" / int64 / s "posts" / str
+
+(* Define scope prefix *)
+let api_v1 = s "api" / s "v1"
+
+(* Define full paths for URL generation *)
+let api_user_path = api_v1 / user_path
+let api_post_path = api_v1 / post_path
+
+(* Register routes *)
+let routes = scope api_v1
+  [ get user_path @-> user_handler
+  ; get post_path @-> post_handler
+  ]
+
+(* Generate URLs using full paths *)
+let user_url = sprintf api_user_path 42L
+let post_url = sprintf api_post_path 42L "hello-world"
+]}
+
+{b Nested Scopes:} Compose all prefixes when generating URLs:
+
+{[
+let api = s "api"
+let v1 = s "v1"
+let admin = s "admin"
+let users = s "users" / int64
+
+(* Register with nested scopes *)
+let routes =
+  scope api
+    [ scope v1
+        [ scope admin
+            [ get users @-> admin_user_handler ]
+        ]
+    ]
+
+(* Full path for URL generation *)
+let admin_user_path = api / v1 / admin / users
+let url = sprintf admin_user_path 42L
+(* Result: "/api/v1/admin/users/42" *)
+]}
+
+This explicit composition ensures you always know the complete path structure and maintains the DRY principle - patterns are defined once and composed as needed.
+
 {1 RESTful Resources}
 
-Generate standard CRUD routes automatically:
+The [resource] function provides a convenient way to create standard RESTful routes for a resource. It eliminates boilerplate while maintaining flexibility for different ID types.
+
+{2 Basic Resource Definition}
+
+Define a resource by implementing the [Router.Resource] module signature:
 
 {[
-module Users : Router.Resource = struct
-  let index _req = (* GET /users *) ...
-  let new_ _req = (* GET /users/new *) ...
-  let create _req = (* POST /users *) ...
-  let get _req = (* GET /users/:id *) ...
-  let edit _req = (* GET /users/:id/edit *) ...
-  let update _req = (* PUT /users/:id *) ...
-  let delete _req = (* DELETE /users/:id *) ...
+open Tapak_kernel
+open Router
+
+(* Resource with int64 IDs *)
+module UserResource : Router.Resource = struct
+  type id = int64
+  let id_path = Router.int64
+
+  let index _req =
+    Response.of_html ~status:`OK "<h1>User List</h1>"
+
+  let new_ _req =
+    Response.of_html ~status:`OK "<h1>New User Form</h1>"
+
+  let create _req =
+    Response.of_html ~status:`OK "<h1>User Created</h1>"
+
+  let get user_id _req =
+    let html = Printf.sprintf "<h1>User %Ld</h1>" user_id in
+    Response.of_html ~status:`OK html
+
+  let edit user_id _req =
+    let html = Printf.sprintf "<h1>Edit User %Ld</h1>" user_id in
+    Response.of_html ~status:`OK html
+
+  let update user_id _req =
+    let html = Printf.sprintf "<h1>Updated User %Ld</h1>" user_id in
+    Response.of_html ~status:`OK html
+
+  let delete user_id _req =
+    let html = Printf.sprintf "<h1>Deleted User %Ld</h1>" user_id in
+    Response.of_html ~status:`OK html
 end
 
+(* Register resource routes *)
+let routes = resource (s "users") (module UserResource)
+]}
+
+This generates 7 standard RESTful routes:
+{v
+GET    /users          -> UserResource.index
+GET    /users/new      -> UserResource.new_
+POST   /users          -> UserResource.create
+GET    /users/:id      -> UserResource.get
+GET    /users/:id/edit -> UserResource.edit
+PUT    /users/:id      -> UserResource.update
+DELETE /users/:id      -> UserResource.delete
+v}
+
+{2 Custom ID Types}
+
+The [Resource] signature is flexible - you specify both the ID type and the path pattern for parsing/formatting:
+
+{b UUID IDs:}
+{[
+module ArticleResource : Router.Resource = struct
+  type id = string
+
+  (* Custom UUID validator *)
+  let id_path = Router.custom
+    ~parse:(fun s ->
+      if String.length s = 36 && (* basic UUID check *)
+         String.contains s '-'
+      then Some s
+      else None)
+    ~format:Fun.id
+
+  let index _req = (* ... *)
+  let get uuid _req =
+    let html = Printf.sprintf "<h1>Article %s</h1>" uuid in
+    Response.of_html ~status:`OK html
+  (* ... other handlers ... *)
+end
+
+let routes = resource (s "articles") (module ArticleResource)
+(* Routes: GET /articles/550e8400-e29b-41d4-a716-446655440000 *)
+]}
+
+{b Slug IDs:}
+{[
+module PostResource : Router.Resource = struct
+  type id = string
+  let id_path = Router.slug  (* Built-in slug validator *)
+
+  let index _req = (* ... *)
+  let get slug _req =
+    let html = Printf.sprintf "<h1>Post: %s</h1>" slug in
+    Response.of_html ~status:`OK html
+  (* ... other handlers ... *)
+end
+
+let routes = resource (s "posts") (module PostResource)
+(* Routes: GET /posts/my-awesome-post-2024 *)
+]}
+
+{b Integer IDs:}
+{[
+module CommentResource : Router.Resource = struct
+  type id = int
+  let id_path = Router.int
+
+  let index _req = (* ... *)
+  let get comment_id _req = (* ... *)
+  (* ... other handlers ... *)
+end
+
+let routes = resource (s "comments") (module CommentResource)
+]}
+
+{2 Resource with Middleware}
+
+Apply middlewares to all resource routes:
+
+{[
 let routes =
-  Router.router
-    [ Router.resource ~middlewares:[auth] "/users" (module Users) ]
+  resource
+    ~middlewares:[auth_middleware; rate_limiter]
+    (s "admin" / s "users")
+    (module UserResource)
+
+(* All routes under /admin/users will have auth and rate limiting *)
 ]}
 
-This generates:
-- [GET /users] → [index]
-- [GET /users/new] → [new_]
-- [POST /users] → [create]
-- [GET /users/:id] → [get]
-- [GET /users/:id/edit] → [edit]
-- [PUT /users/:id] → [update]
-- [DELETE /users/:id] → [delete]
+{2 URL Generation for Resources}
 
-{1 Route Data Access}
-
-{2 Parameters}
+To generate URLs for resource routes, compose the resource prefix with the [id_path]:
 
 {[
-val route_params : Request.t -> (string * string) list option
+(* Define the resource *)
+module UserResource : Router.Resource = struct
+  type id = int64
+  let id_path = Router.int64
+  (* ... handlers ... *)
+end
+
+(* Register routes *)
+let routes = resource (s "users") (module UserResource)
+
+(* URL generation: Compose patterns manually *)
+let user_list_url = sprintf (s "users") ""
+(* Result: "/users" *)
+
+let user_show_path = s "users" / UserResource.id_path
+let user_show_url = sprintf user_show_path 42L
+(* Result: "/users/42" *)
+
+let user_edit_path = s "users" / UserResource.id_path / s "edit"
+let user_edit_url = sprintf user_edit_path 42L
+(* Result: "/users/42/edit" *)
+
+let user_new_url = sprintf (s "users" / s "new") ""
+(* Result: "/users/new" *)
 ]}
 
-Returns captured path parameters:
+{b With Scoped Resources:}
 
 {[
-let handler request =
-  match Router.route_params request with
-  | Some params ->
-    let id = List.assoc "id" params in
-    (* ... *)
-  | None -> Response.create `Not_found
+(* Resource under API scope *)
+let api_v1 = s "api" / s "v1"
+let routes = scope api_v1
+  [ resource (s "users") (module UserResource) ]
+
+(* URL generation: Include the scope prefix *)
+let api_user_show = api_v1 / s "users" / UserResource.id_path
+let url = sprintf api_user_show 42L
+(* Result: "/api/v1/users/42" *)
+
+let api_user_edit = api_v1 / s "users" / UserResource.id_path / s "edit"
+let edit_url = sprintf api_user_edit 42L
+(* Result: "/api/v1/users/42/edit" *)
 ]}
 
-{2 Splat Segments}
+{b Best Practice for Resource URLs:}
+
+Define reusable path helpers alongside your resource:
 
 {[
-val route_splat : Request.t -> string list option
+module Users = struct
+  module Resource : Router.Resource = struct
+    type id = int64
+    let id_path = Router.int64
+    (* ... handlers ... *)
+  end
+
+  (* Path helpers for URL generation *)
+  let base = s "users"
+  let list_path = base
+  let new_path = base / s "new"
+  let show_path = base / Resource.id_path
+  let edit_path = base / Resource.id_path / s "edit"
+
+  (* Routes *)
+  let routes = resource base (module Resource)
+end
+
+(* Use in your application *)
+let user_url = sprintf Users.show_path 42L
+let edit_url = sprintf Users.edit_path 42L
 ]}
 
-Returns captured splat segments:
+This pattern keeps URL generation DRY and type-safe while maintaining the flexibility of manual composition.
+
+{1 Complete Example}
 
 {[
-let handler request =
-  match Router.route_splat request with
-  | Some segments ->
-    let path = String.concat "/" segments in
-    (* ... *)
-  | None -> Response.create `Not_found
-]}
+open Tapak_kernel
+open Router
 
-{1 Common Patterns}
+(* Define handlers *)
+let home_handler _request =
+  Response.of_html ~status:`OK "<h1>Home</h1>"
 
-{2 Serving a SPA}
+let user_handler id _request =
+  let html = Printf.sprintf "<h1>User %Ld</h1>" id in
+  Response.of_html ~status:`OK html
 
-{[
-let serve_spa request =
-  match Router.route_splat request with
-  | Some segments ->
-    let path = String.concat "/" segments in
-    (* Try to serve the file, fallback to index.html *)
-    serve_spa_file ~path ~fallback:"index.html"
-  | None ->
-    serve_file "index.html"
+let user_posts_handler user_id _request =
+  let html = Printf.sprintf "<h1>Posts by User %Ld</h1>" user_id in
+  Response.of_html ~status:`OK html
 
+let post_handler user_id post_slug _request =
+  let html =
+    Printf.sprintf
+      "<h1>User %Ld - Post: %s</h1>"
+      user_id
+      post_slug
+  in
+  Response.of_html ~status:`OK html
+
+(* Define reusable patterns *)
+let user_path = s "users" / int64
+let user_posts_path = s "users" / int64 / s "posts"
+let post_path = s "users" / int64 / s "posts" / str
+
+(* Create routes *)
 let routes =
-  Router.router
-    [ (* API routes *)
-      Router.scope "/api" api_routes
-      (* SPA catches all other routes *)
-    ; Router.get "/**" serve_spa
+  router
+    [ get (s "") @-> home_handler
+    ; get user_path @-> user_handler
+    ; get user_posts_path @-> user_posts_handler
+    ; get post_path @-> post_handler
     ]
+
+(* Generate URLs *)
+let user_url = sprintf user_path 42L
+(* "/users/42" *)
+
+let post_url = sprintf post_path 42L "hello-world"
+(* "/users/42/posts/hello-world" *)
 ]}
 
-{2 Static File Server}
+{1 Integration with Tapak}
+
+{2 Creating an Application}
+
+The recommended way to create an application from routes is using [App.routes], which creates both the handler and the app in one step:
 
 {[
-let serve_static request =
-  match Router.route_splat request with
-  | Some segments ->
-    let path = String.concat "/" segments in
-    serve_file_from_directory ~root:"./public" ~path
-  | None -> Response.create `Not_found
+open Tapak
 
-let routes =
-  Router.router
-    [ Router.get "/static/**" serve_static ]
+(* Define your routes *)
+let my_routes =
+  Router.[ get (s "users") @-> users_handler
+         ; get (s "posts") @-> posts_handler
+         ]
+
+(* Recommended: Use App.routes with custom 404 handler *)
+let not_found _req =
+  Response.of_html
+    ~status:`Not_found
+    "<h1>404 Not Found</h1>"
+
+let app = App.routes ~not_found my_routes
 ]}
 
-{2 API Versioning}
+{b Why use App.routes?}
+- Handles route matching with proper 404 responses
+- Creates an [App.t] ready for middleware composition
+- Cleaner than manually wrapping [Router.router]
+- Allows custom not_found handlers
+
+{b Alternative approaches:}
 
 {[
-let api_handler request =
-  match Router.route_params request, Router.route_splat request with
-  | Some params, Some [version] ->
-    let resource = List.assoc "resource" params in
-    begin match version with
-    | "v1" -> handle_v1 resource request
-    | "v2" -> handle_v2 resource request
-    | _ -> Response.create `Not_found
-    end
-  | _ -> Response.create `Not_found
+(* Using Router.routes (returns a handler, not an App.t) *)
+let handler = Router.routes ~not_found my_routes
+let app = App.create ~handler ()
 
-let routes =
-  Router.router
-    [ Router.get "/api/*/:resource" api_handler ]
+(* Using Router.router (raises Router.Not_found exception) *)
+let handler = Router.router my_routes  (* May raise Router.Not_found *)
+let app = App.create ~handler ()
+]}
+
+{2 With Middlewares}
+
+The [App.routes] function returns an [App.t], so you can easily add application-level middlewares using the [<++>] operator:
+
+{[
+open Tapak
+
+(* Create app with routes, then add middlewares *)
+let app =
+  App.routes ~not_found my_routes
+  <++> [logger; compression; cors]
+
+(* Add a single middleware with <+> *)
+let app =
+  App.routes ~not_found my_routes
+  <+> logger
+  <+> compression
+
+(* Or specify middlewares during creation *)
+let app =
+  App.create
+    ~middlewares:[logger; compression]
+    ~handler:(Router.routes ~not_found my_routes)
+    ()
+]}
+
+{b Middleware Layering:}
+
+Remember that you can apply middlewares at different levels for fine-grained control:
+
+{[
+(* Scope-level middlewares *)
+let admin_routes =
+  Router.scope
+    ~middlewares:[auth_middleware]
+    (Router.s "admin")
+    [ Router.get (Router.s "dashboard") @-> dashboard_handler ]
+
+let public_routes =
+  [ Router.get (Router.s "") @-> home_handler
+  ; Router.get (Router.s "about") @-> about_handler
+  ]
+
+(* Application-level middlewares *)
+let app =
+  App.routes ~not_found (public_routes @ admin_routes)
+  <++> [logger; compression]
+
+(* Execution order for /admin/dashboard:
+   1. logger (app-level)
+   2. compression (app-level)
+   3. auth_middleware (scope-level)
+   4. dashboard_handler
+
+   Execution order for /about:
+   1. logger (app-level)
+   2. compression (app-level)
+   3. about_handler
+*)
 ]}
 
 {1 Best Practices}
 
-{2 Route Ordering}
+{2 Pattern Reuse}
 
-More specific routes should come before generic ones:
+Define patterns once, use them for both routing and URL generation:
 
 {[
-(* Good *)
-let routes =
-  Router.router
-    [ Router.get "/users/admin" admin_users  (* Specific *)
-    ; Router.get "/users/:id" get_user      (* Generic *)
-    ]
+(* Good: DRY principle *)
+let user_path = s "users" / int64
 
-(* Bad - /users/admin will never match *)
-let routes =
-  Router.router
-    [ Router.get "/users/:id" get_user      (* Too generic *)
-    ; Router.get "/users/admin" admin_users (* Unreachable *)
-    ]
+let routes = router [ get user_path @-> handler ]
+let url = sprintf user_path 42L
+
+(* Bad: Duplication *)
+let routes = router [ get (s "users" / int64) @-> handler ]
+let url = "/users/" ^ Int64.to_string 42L (* manual, error-prone *)
 ]}
 
-{2 Middleware Placement}
+{2 Type Safety}
 
-Apply middlewares at the appropriate scope level:
+Let the type system guide you:
 
 {[
+(* Correct: handler signature matches route pattern *)
+let handler (id : int64) (request : Request.t) : Response.t =
+  (* ... *)
+
+get (s "users" / int64) @-> handler
+
+(* Compiler error: parameter types don't match *)
+let wrong_handler (id : int) (request : Request.t) : Response.t =
+  (* ... *)
+
+get (s "users" / int64) @-> wrong_handler
+(* Type error: expected int64 -> Request.t -> Response.t,
+               got int -> Request.t -> Response.t *)
+]}
+
+{2 Organize Routes}
+
+Group related routes in modules:
+
+{[
+module Users = struct
+  let list_handler _req = (* ... *)
+  let get_handler id _req = (* ... *)
+  let create_handler _req = (* ... *)
+  let update_handler id _req = (* ... *)
+  let delete_handler id _req = (* ... *)
+
+  let routes =
+    Router.scope (Router.s "users")
+      [ Router.get (Router.s "") @-> list_handler
+      ; Router.get (Router.int64) @-> get_handler
+      ; Router.post (Router.s "") @-> create_handler
+      ; Router.put (Router.int64) @-> update_handler
+      ; Router.delete (Router.int64) @-> delete_handler
+      ]
+end
+
+let app_routes =
+  Router.router (Users.routes @ Posts.routes @ Comments.routes)
+]}
+
+{2 Middleware Composition}
+
+Apply middlewares at the appropriate scope:
+
+{[
+open Router
+
 let routes =
-  Router.router
+  router
     [ (* Public routes - no auth *)
-      Router.scope "/public" public_routes
+      scope (s "public")
+        [ get (s "about") @-> about
+        ; get (s "contact") @-> contact
+        ]
+
       (* Protected routes - with auth *)
-    ; Router.scope ~middlewares:[auth] "/protected" protected_routes
+    ; scope ~middlewares:[auth] (s "admin")
+        [ get (s "dashboard") @-> dashboard
+        ; get (s "users") @-> admin_users
+        ]
+
+      (* API routes - with rate limiting *)
+    ; scope ~middlewares:[rate_limiter; api_auth] (s "api")
+        [ get (s "data") @-> api_data ]
     ]
 ]}
 
-{2 Error Handling}
+{1 Comparison with String-Based Routers}
 
-Always handle the [None] case when accessing route data:
+{2 Traditional String-Based Router}
 
 {[
-let handler request =
-  match Router.route_params request with
+(* String-based: runtime parsing, no type safety *)
+Router.get "/users/:id" (fun req ->
+  match Router.route_params req with
   | Some params ->
-    begin match List.assoc_opt "id" params with
-    | Some id -> (* process id *)
-    | None -> Response.create `Bad_request
+    let id_str = List.assoc "id" params in
+    begin match int_of_string_opt id_str with
+    | Some id -> (* handle with int id *)
+    | None -> Response.create `Bad_request (* invalid id *)
     end
-  | None -> Response.create `Not_found
+  | None -> Response.create `Not_found)
 ]}
+
+{2 Type-Safe GADT Router}
+
+{[
+(* GADT-based: compile-time types, guaranteed valid *)
+Router.get (Router.s "users" / Router.int64)
+  @-> fun id req ->
+    (* id is already int64, no parsing needed *)
+    (* Invalid ids result in 404, not 400 *)
+    Response.of_html ~status:`OK (render_user id)
+]}
+
+Benefits:
+- No manual parameter parsing
+- No runtime parsing errors
+- Compiler ensures handler signatures match routes
+- Type-safe URL generation
+- Better IDE support (autocomplete, type hints)
 
 {1 See Also}
 

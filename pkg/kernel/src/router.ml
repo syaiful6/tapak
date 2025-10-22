@@ -1,240 +1,233 @@
 exception Not_found
 
-module type Resource = sig
-  val create : Handler.t
-  val delete : Handler.t
-  val edit : Handler.t
-  val get : Handler.t
-  val index : Handler.t
-  val new_ : Handler.t
-  val update : Handler.t
-end
+type (_, _) path =
+  | Nil : ('a, 'a) path
+  | Literal : string * ('a, 'b) path -> ('a, 'b) path
+  | Int : ('a, 'b) path -> (int -> 'a, 'b) path
+  | Int32 : ('a, 'b) path -> (int32 -> 'a, 'b) path
+  | Int64 : ('a, 'b) path -> (int64 -> 'a, 'b) path
+  | String : ('a, 'b) path -> (string -> 'a, 'b) path
+  | Bool : ('a, 'b) path -> (bool -> 'a, 'b) path
+  | Splat : ('a, 'b) path -> (string list -> 'a, 'b) path
+  | Custom :
+      { parse : string -> 'param option
+      ; format : 'param -> string
+      ; rest : ('a, 'b) path
+      }
+      -> ('param -> 'a, 'b) path
+  | Method : Piaf.Method.t * ('a, 'b) path -> ('a, 'b) path
 
-type t =
-  | Scope of
-      { name : string
-      ; routes : t list
+type route =
+  | Route :
+      { method_ : Piaf.Method.t
+      ; pattern : ('a, Request.t -> Response.t) path
+      ; handler : 'a
       ; middlewares : Middleware.t list
       }
-  | Route of
-      { meth : Piaf.Method.t
-      ; path : string
-      ; handler : Handler.t
-      }
+      -> route
 
-let rec pp fmt (t : t) =
-  match t with
-  | Scope { name; routes; middlewares } ->
-    Format.fprintf fmt "scope %s [" name;
-    Format.pp_print_list
-      ~pp_sep:(fun fmt () -> Format.fprintf fmt ";\n")
-      Middleware.pp
-      fmt
-      middlewares;
-    Format.fprintf fmt ";\n";
-    Format.pp_print_list
-      ~pp_sep:(fun fmt () -> Format.fprintf fmt ";\n")
-      pp
-      fmt
-      routes;
-    Format.fprintf fmt "]"
-  | Route { meth; path; _ } ->
-    Format.fprintf fmt "%s %S" (Piaf.Method.to_string meth) path
+let int = Int Nil
+let int32 = Int32 Nil
+let int64 = Int64 Nil
+let str = String Nil
+let bool = Bool Nil
+let splat = Splat Nil
+let s literal = Literal (literal, Nil)
+let custom ~parse ~format = Custom { parse; format; rest = Nil }
 
-let remove_trailing_slash s =
-  let s =
-    if String.starts_with ~prefix:"/" s
-    then String.sub s 1 (String.length s - 1)
-    else s
+let is_slug s =
+  let len = String.length s in
+  if len = 0
+  then false
+  else
+    let rec check i =
+      if i >= len
+      then true
+      else
+        let c = s.[i] in
+        if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c = '-'
+        then check (i + 1)
+        else false
+    in
+    check 0
+
+let slug : (string -> 'a, 'a) path =
+  Custom
+    { parse = (fun s -> if is_slug s then Some s else None)
+    ; format = Fun.id
+    ; rest = Nil
+    }
+
+let rec ( / ) : type a b c. (a, c) path -> (c, b) path -> (a, b) path =
+ fun left right ->
+  match left with
+  | Nil -> right
+  | Literal (lit, rest) -> Literal (lit, rest / right)
+  | Int rest -> Int (rest / right)
+  | Int32 rest -> Int32 (rest / right)
+  | Int64 rest -> Int64 (rest / right)
+  | String rest -> String (rest / right)
+  | Bool rest -> Bool (rest / right)
+  | Splat rest -> Splat (rest / right)
+  | Custom { parse; format; rest } ->
+    Custom { parse; format; rest = rest / right }
+  | Method (m, rest) -> Method (m, rest / right)
+
+let get pattern = Method (`GET, pattern)
+let post pattern = Method (`POST, pattern)
+let put pattern = Method (`PUT, pattern)
+let patch pattern = Method (`Other "PATCH", pattern)
+let delete pattern = Method (`DELETE, pattern)
+let head pattern = Method (`HEAD, pattern)
+let parse_int s = try Some (int_of_string s) with Failure _ -> None
+let parse_int32 s = try Some (Int32.of_string s) with Failure _ -> None
+let parse_int64 s = try Some (Int64.of_string s) with Failure _ -> None
+
+let parse_bool = function
+  | "true" -> Some true
+  | "false" -> Some false
+  | _ -> None
+
+let split_path path =
+  let segments = String.split_on_char '/' path in
+  List.filter (fun s -> s <> "") segments
+
+let rec match_pattern : type a b. (a, b) path -> string list -> a -> b option =
+ fun pattern segments k ->
+  match pattern, segments with
+  | Nil, [] -> Some k
+  | Literal (expected, rest), seg :: segs when String.equal expected seg ->
+    match_pattern rest segs k
+  | Int rest, seg :: segs ->
+    (match parse_int seg with
+    | Some n -> match_pattern rest segs (k n)
+    | None -> None)
+  | Int32 rest, seg :: segs ->
+    (match parse_int32 seg with
+    | Some n -> match_pattern rest segs (k n)
+    | None -> None)
+  | Int64 rest, seg :: segs ->
+    (match parse_int64 seg with
+    | Some n -> match_pattern rest segs (k n)
+    | None -> None)
+  | String rest, seg :: segs -> match_pattern rest segs (k seg)
+  | Bool rest, seg :: segs ->
+    (match parse_bool seg with
+    | Some b -> match_pattern rest segs (k b)
+    | None -> None)
+  | Splat rest, segs -> match_pattern rest [] (k segs)
+  | Custom { parse; rest; _ }, seg :: segs ->
+    (match parse seg with
+    | Some v -> match_pattern rest segs (k v)
+    | None -> None)
+  | Method (_, rest), segs -> match_pattern rest segs k
+  | _ -> None
+
+let rec get_method : type a b. (a, b) path -> Piaf.Method.t option = function
+  | Method (m, _) -> Some m
+  | Literal (_, rest) -> get_method rest
+  | Int rest -> get_method rest
+  | Int32 rest -> get_method rest
+  | Int64 rest -> get_method rest
+  | String rest -> get_method rest
+  | Bool rest -> get_method rest
+  | Splat rest -> get_method rest
+  | Custom { rest; _ } -> get_method rest
+  | Nil -> None
+
+let ( @-> ) : type a. (a, Request.t -> Response.t) path -> a -> route =
+ fun pattern handler_fn ->
+  let method_ = get_method pattern |> Option.value ~default:`GET in
+  Route { method_; pattern; handler = handler_fn; middlewares = [] }
+
+let match_route (Route route) request =
+  let method_matches =
+    Piaf.Method.to_string route.method_
+    = Piaf.Method.to_string (Request.meth request)
   in
-  let s =
-    if String.ends_with ~suffix:"/" s
-    then String.sub s 0 (String.length s - 2)
-    else s
-  in
-  if String.equal s "" then "/" else s
+  if not method_matches
+  then None
+  else
+    let segments = split_path (Request.target request) in
+    match match_pattern route.pattern segments route.handler with
+    | Some handler ->
+      let service =
+        Middleware.apply_all route.middlewares (fun req -> handler req)
+      in
+      Some (service request)
+    | None -> None
 
-let scope ?(middlewares = []) name routes =
-  Scope { name = remove_trailing_slash name; routes; middlewares }
+let match' routes request =
+  List.find_map (fun route -> match_route route request) routes
 
-let route meth path handler =
-  Route { meth; path = remove_trailing_slash path; handler }
+let router routes request =
+  match match' routes request with
+  | Some response -> response
+  | None -> raise Not_found
 
-let delete path handler = route `DELETE path handler
-let get path handler = route `GET path handler
-let head path handler = route `HEAD path handler
-let post path handler = route `POST path handler
-let put path handler = route `PUT path handler
+let rec sprintf : type a. (a, string) path -> string -> a =
+ fun pattern acc ->
+  match pattern with
+  | Nil -> acc
+  | Literal (s, rest) -> sprintf rest (acc ^ "/" ^ s)
+  | Int rest -> fun n -> sprintf rest (acc ^ "/" ^ string_of_int n)
+  | Int32 rest -> fun n -> sprintf rest (acc ^ "/" ^ Int32.to_string n)
+  | Int64 rest -> fun n -> sprintf rest (acc ^ "/" ^ Int64.to_string n)
+  | String rest -> fun s -> sprintf rest (acc ^ "/" ^ s)
+  | Bool rest -> fun b -> sprintf rest (acc ^ "/" ^ string_of_bool b)
+  | Splat rest ->
+    fun segments ->
+      let splat_path = String.concat "/" segments in
+      sprintf rest (if splat_path = "" then acc else acc ^ "/" ^ splat_path)
+  | Custom { format; rest; _ } -> fun v -> sprintf rest (acc ^ "/" ^ format v)
+  | Method (_, rest) -> sprintf rest acc
 
-let resource ?(middlewares = []) name (module R : Resource) =
-  scope
-    ~middlewares
-    name
-    [ get "/" R.index
-    ; get "/new" R.new_
-    ; post "/" R.create
-    ; get "/:id" R.get
-    ; get "/:id/edit" R.edit
-    ; put "/:id" R.update
-    ; delete "/:id" R.delete
-    ]
+let sprintf pattern = sprintf pattern ""
 
-module Matcher = struct
-  module Method = Piaf.Method
+let with_middlewares middlewares (Route route) =
+  Route { route with middlewares = route.middlewares @ middlewares }
 
-  type t =
-    | Root
-    | Part of string
-    | Var of string
-    | Splat
-    | Full_splat
-    | End of Method.t * App.t
+let rec prepend_path : type a b c. (a, a) path -> (b, c) path -> (b, c) path =
+ fun prefix pattern ->
+  match prefix with
+  | Nil -> pattern
+  | Literal (s, rest) -> Literal (s, prepend_path rest pattern)
+  | Method (m, rest) -> Method (m, prepend_path rest pattern)
+  | Int _ | Int32 _ | Int64 _ | String _ | Bool _ | Splat _ | Custom _ ->
+    failwith "Scope prefix cannot contain parameter extractors"
 
-  let pp_one fmt (t : t) =
-    match t with
-    | Root -> Format.fprintf fmt "Root"
-    | Part s -> Format.fprintf fmt "Part %S" s
-    | Var s -> Format.fprintf fmt "Var %S" s
-    | Splat -> Format.fprintf fmt "Splat"
-    | Full_splat -> Format.fprintf fmt "Full_splat"
-    | End (m, _) -> Format.fprintf fmt "End %s" (Method.to_string m)
+let scope ?(middlewares = []) prefix routes =
+  List.map
+    (fun (Route route) ->
+       Route
+         { route with
+           pattern = prepend_path prefix route.pattern
+         ; middlewares = middlewares @ route.middlewares
+         })
+    routes
 
-  let pp fmt (t : t list) =
-    Format.fprintf fmt "[";
-    Format.pp_print_list
-      ~pp_sep:(fun fmt () -> Format.fprintf fmt "; ")
-      pp_one
-      fmt
-      t;
-    Format.fprintf fmt "]"
+module type Resource = sig
+  type id
 
-  let of_path_internal ?(middlewares = []) path meth handler =
-    let parts = String.split_on_char '/' path in
-    let parts = match parts with "" :: _ -> parts | _ -> "" :: parts in
-    (parts
-    |> List.map (fun part ->
-      match part with
-      | "" -> Root
-      | "**" -> Full_splat
-      | "*" -> Splat
-      | part when String.starts_with ~prefix:":" part ->
-        Var (String.sub part 1 (String.length part - 1))
-      | part -> Part part))
-    @ [ End (meth, App.create ~middlewares ~handler ()) ]
-
-  let rec of_router router parent =
-    match router with
-    | Scope { name; routes; middlewares } ->
-      let accumulated = parent @ middlewares in
-      let prefix = [ Root; Part name ] in
-      List.concat_map
-        (fun r -> List.map (fun r -> prefix @ r) (of_router r accumulated))
-        routes
-    | Route { meth; path; handler } ->
-      [ of_path_internal ~middlewares:parent path meth handler ]
-
-  let method_equal s1 s2 = Method.to_string s1 = Method.to_string s2
-
-  let rec equal a b =
-    match a, b with
-    | End (m1, _h1) :: [], End (m2, _) :: [] when method_equal m1 m2 -> true
-    | Root :: t1, Root :: t2 -> equal t1 t2
-    | Part p1 :: t1, Part p2 :: t2 when String.equal p1 p2 -> equal t1 t2
-    | Var v1 :: t1, Var v2 :: t2 when String.equal v1 v2 -> equal t1 t2
-    | Splat :: t1, Splat :: t2 -> equal t1 t2
-    | Full_splat :: t1, Full_splat :: t2 -> equal t1 t2
-    | _ -> false
-
-  let rec compress_once (matcher : t list) =
-    match matcher with
-    | [] -> []
-    | Part "/" :: rest -> Root :: compress_once rest
-    | Root :: Root :: rest -> Root :: compress_once rest
-    | Root :: Part "/" :: rest -> Root :: compress_once rest
-    | Part p :: Root :: rest -> Part p :: compress_once rest
-    | part :: rest -> part :: compress_once rest
-
-  let rec compress matcher =
-    let matcher' = compress_once matcher in
-    if equal matcher matcher' then matcher' else compress matcher'
-
-  let of_router r = List.map compress (of_router r [])
-  let of_path p m = compress (of_path_internal p m Handler.not_found)
-
-  let rec try_match a b captures splat =
-    match a, b with
-    | End (m1, h1) :: [], End (m2, _) :: [] when method_equal m1 m2 ->
-      Some (h1, captures, splat)
-    | Root :: t1, Root :: t2 -> try_match t1 t2 captures splat
-    | Part p1 :: t1, Part p2 :: t2 when String.equal p1 p2 ->
-      try_match t1 t2 captures splat
-    | Var v :: t1, Part p :: t2 ->
-      let captures = (v, p) :: captures in
-      try_match t1 t2 captures splat
-    | Splat :: t1, Part p :: t2 ->
-      let splat = p :: splat in
-      try_match t1 t2 captures splat
-    | [ Full_splat; End (m1, h1) ], End (m2, _) :: _ when method_equal m1 m2 ->
-      Some (h1, captures, splat)
-    | Full_splat :: t1, Part p :: t2 ->
-      let splat = p :: splat in
-      try_match (Full_splat :: t1) t2 captures splat
-    | Full_splat :: t1, Root :: t2 ->
-      try_match (Full_splat :: t1) t2 captures splat
-    | _ -> None
-
-  let try_match (matchers : t list list) (pattern : t list) =
-    List.nth_opt
-      (List.filter_map
-         (fun (matcher : t list) -> try_match matcher pattern [] [])
-         matchers)
-      0
+  val id_path : (id -> 'a, 'a) path
+  val index : Handler.t
+  val new_ : Handler.t
+  val create : Handler.t
+  val get : id -> Handler.t
+  val edit : id -> Handler.t
+  val update : id -> Handler.t
+  val delete : id -> Handler.t
 end
 
-type matches =
-  { params : (string * string) list
-  ; splat : string list
-  }
-
-let pp_matches fmt (m : matches) =
-  Format.fprintf
-    fmt
-    "{ params = [%a]; splat = [%a] }"
-    (Format.pp_print_list
-       ~pp_sep:(fun fmt () -> Format.fprintf fmt "; ")
-       (fun fmt (key, value) -> Format.fprintf fmt "(%s, %s)" key value))
-    m.params
-    (Format.pp_print_list
-       ~pp_sep:(fun fmt () -> Format.fprintf fmt "; ")
-       (fun fmt s -> Format.fprintf fmt "%S" s))
-    m.splat
-
-let show_matches = Format.asprintf "%a" pp_matches
-
-let key : matches Context.key =
-  Context.Key.create
-    { name = Option.some "router.matches"; show = Option.some show_matches }
-
-let route_params request =
-  let env = Request.context request in
-  Context.find key env |> Option.map (fun m -> m.params)
-
-let route_splat request =
-  let env = Request.context request in
-  Context.find key env |> Option.map (fun m -> m.splat)
-
-let make t request =
-  let path = Matcher.of_path (Request.target request) (Request.meth request) in
-  let matcher = Matcher.of_router t in
-  match Matcher.try_match matcher path with
-  | None -> raise Not_found
-  | Some (app, params, splat) ->
-    let matches = { params; splat = List.rev splat } in
-    let request =
-      Request.with_context
-        (Context.add key matches (Request.context request))
-        request
-    in
-    App.call app request
-
-let router t request = make (scope "/" t) request
+let resource ?(middlewares = []) prefix (module R : Resource) =
+  scope
+    ~middlewares
+    prefix
+    [ get (s "") @-> R.index
+    ; get (s "new") @-> R.new_
+    ; post (s "") @-> R.create
+    ; get R.id_path @-> R.get
+    ; get (R.id_path / s "edit") @-> R.edit
+    ; put R.id_path @-> R.update
+    ; delete R.id_path @-> R.delete
+    ]

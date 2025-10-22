@@ -181,7 +181,6 @@ The kernel package exports the following modules:
 - {!module:Tapak_kernel.Middleware} - Middleware/filter system
 - {!module:Tapak_kernel.App} - Application composition
 - {!module:Tapak_kernel.Router} - Pattern-based routing
-- {!module:Tapak_kernel.Server} - HTTP server (coming soon)
 
 {1 Design Philosophy}
 

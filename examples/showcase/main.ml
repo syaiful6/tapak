@@ -24,15 +24,9 @@ let home_handler _req =
   <li><a href="/form">CSRF-Protected Form</a></li>
 </ul>|}
 
-let user_handler req =
-  match Router.route_params req with
-  | Some params ->
-    (match List.assoc_opt "id" params with
-    | Some id ->
-      let html = Printf.sprintf "<h1>User Profile</h1><p>User ID: %s</p>" id in
-      Response.of_html ~status:`OK html
-    | None -> Response.of_string' ~status:`Not_found "User ID not found")
-  | None -> Response.of_string' ~status:`Not_found "No route params"
+let user_handler id _req =
+  let html = Printf.sprintf "<h1>User Profile</h1><p>User ID: %Ld</p>" id in
+  Response.of_html ~status:`OK html
 
 let api_hello_handler req =
   Response.negotiate
@@ -42,15 +36,11 @@ let api_hello_handler req =
     ; (`Text, fun () -> "Hello from Tapak!\nVersion: 1.0")
     ]
 
-let files_handler req =
-  match Router.route_splat req with
-  | Some paths ->
-    let path = String.concat "/" paths in
-    let html =
-      Printf.sprintf "<h1>File Browser</h1><p>Requested path: %s</p>" path
-    in
-    Response.of_string' ~content_type:"text/html" ~status:`OK html
-  | None -> Response.of_string' ~status:`Not_found "No file path"
+let files_handler path _req =
+  let html =
+    Printf.sprintf "<h1>File Browser</h1><p>Requested path: %s</p>" path
+  in
+  Response.of_string' ~content_type:"text/html" ~status:`OK html
 
 let echo_handler req =
   let method_ = Request.meth req in
@@ -167,17 +157,18 @@ let setup_app env =
   let open Middleware in
   let now () = Eio.Time.now (Eio.Stdenv.clock env) in
 
+  let open Router in
   App.(
     routes
       ~not_found
-      [ Router.get "/" home_handler
-      ; Router.get "/users/:id" user_handler
-      ; Router.get "/api/hello" api_hello_handler
-      ; Router.get "/files/**" files_handler
-      ; Router.post "/echo" echo_handler
-      ; Router.put "/echo" echo_handler
-      ; Router.get "/form" form_get_handler
-      ; Router.post "/form" form_post_handler
+      [ get (s "") @-> home_handler
+      ; get (s "users" / int64) @-> user_handler
+      ; get (s "api" / s "hello") @-> api_hello_handler
+      ; get (s "files" / str) @-> files_handler
+      ; post (s "echo") @-> echo_handler
+      ; put (s "echo") @-> echo_handler
+      ; get (s "form") @-> form_get_handler
+      ; post (s "form") @-> form_post_handler
       ]
       ()
     <++> [ use
