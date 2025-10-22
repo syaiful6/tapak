@@ -55,12 +55,12 @@ module Request_logger : sig
   type args =
     { now : unit -> float
     ; formatter : formatter
-    ; trusted_proxies : string list
+    ; trusted_proxies : Ipaddr.Prefix.t list
     }
 
   val args :
      now:(unit -> float)
-    -> trusted_proxies:string list
+    -> trusted_proxies:Ipaddr.Prefix.t list
     -> ?formatter:formatter
     -> unit
     -> args

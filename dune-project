@@ -41,6 +41,7 @@
   dune
   angstrom
   hmap
+  ipaddr
   logs
   (eio
    (>= 1.3))

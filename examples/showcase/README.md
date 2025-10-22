@@ -11,13 +11,22 @@ This example demonstrates all the major features of the Tapak web framework.
 - Wildcard matching (`/files/**`)
 - HTTP method routing (GET, POST, PUT)
 
-### 2. **Request Body Decompression**
+### 2. **CSRF Protection**
+
+- Cross-Site Request Forgery (CSRF) protection using double-submit cookie pattern
+- Token generation with `CSRF.csrf_input`
+- Secure cookie management with `CSRF.with_csrf_cookie`
+- Token verification with `CSRF.verify_csrf_token`
+- Masked tokens to prevent BREACH attacks
+- Constant-time comparison to prevent timing attacks
+
+### 3. **Request Body Decompression**
 
 - Automatic decompression of compressed request bodies
 - Support for gzip, deflate, brotli, zstd (with tapak-compressions)
 - Proper HTTP status codes (415 for unsupported, 400 for errors)
 
-### 3. **Systemd Socket Activation** (Development & Production)
+### 4. **Systemd Socket Activation** (Development & Production)
 
 - Zero-downtime rebuilds using systemd socket activation
 - Hot-reload in development with `systemfd` and `watchexec`
@@ -25,12 +34,14 @@ This example demonstrates all the major features of the Tapak web framework.
 - Multi-domain support for parallel request handling
 - No dropped connections during reload
 
-### 4. **Content Negotiation**
+### 5. **Content Negotiation**
 
-- Responds with JSON or HTML based on `Accept` header
-- Demonstrates `Header_parser.Content_negotiation`
+- Rails-style content negotiation with `Response.negotiate`
+- Automatically selects format based on `Accept` header quality values
+- Returns 406 Not Acceptable if no format matches
+- Lazy evaluation - only selected format is rendered
 
-### 5. **Responses**
+### 6. **Responses**
 
 - Plain text responses
 - HTML responses
@@ -43,7 +54,8 @@ This example demonstrates all the major features of the Tapak web framework.
 
 ```bash
 # Terminal 1: Run with hot reload
-systemfd --no-pid -s http::3000 -- watchexec -r -e ml,mli --ignore _build -- dune exec tapak-showcase
+systemfd --no-pid -s http::3000 -- watchexec -r -e ml,mli \
+  --ignore _build -- dune exec tapak-showcase
 
 # Terminal 2: Make requests
 curl http://localhost:3000/
@@ -192,6 +204,71 @@ echo "Hello Tapak!" | gzip | curl -X POST \
   http://localhost:3000/echo
 ```
 
+### `GET /form` and `POST /form`
+
+CSRF-protected form demonstrating cross-site request forgery protection.
+
+**Features:**
+
+- Token generation using `CSRF.csrf_input`
+- Secure cookie storage with `CSRF.with_csrf_cookie`
+- Token verification using `CSRF.verify_csrf_token`
+- Constant-time comparison to prevent timing attacks
+- Masked tokens to prevent BREACH attacks
+
+**How it works:**
+
+1. **GET /form**: Displays a form with an embedded CSRF token
+   - Generates a random secret (32 bytes)
+   - Creates a masked token from the secret
+   - Stores secret in `XSRF-TOKEN` cookie
+   - Embeds masked token in hidden form field
+
+2. **POST /form**: Validates the submitted form
+   - Extracts token from form data
+   - Retrieves secret from cookie
+   - Unmasks and compares using constant-time equality
+   - Returns success or 403 Forbidden
+
+**Security features:**
+
+- **Double-submit cookie pattern**: Secret in cookie, masked token in form
+- **Token masking**: Prevents BREACH attack by randomizing token on each request
+- **Constant-time comparison**: Prevents timing attacks
+- **SameSite cookie**: Defaults to `Lax` for additional protection
+
+**Examples:**
+
+```bash
+# View the form (sets XSRF-TOKEN cookie)
+curl -c cookies.txt http://localhost:3000/form
+
+# Extract token from HTML
+TOKEN=$(curl -b cookies.txt http://localhost:3000/form | grep -oP 'value="\K[^"]+' | head -1)
+
+# Submit form with valid token
+curl -b cookies.txt -X POST \
+  -d "message=Hello&csrf_token=$TOKEN" \
+  http://localhost:3000/form
+
+# Try to submit without token (will fail with 400)
+curl -b cookies.txt -X POST \
+  -d "message=Hello" \
+  http://localhost:3000/form
+
+# Try to submit with invalid token (will fail with 403)
+curl -b cookies.txt -X POST \
+  -d "message=Hello&csrf_token=invalid" \
+  http://localhost:3000/form
+```
+
+**Testing in a browser:**
+
+1. Open <http://localhost:3000/form>
+2. Check browser DevTools → Application → Cookies for `XSRF-TOKEN`
+3. Submit the form normally - should succeed
+4. Try editing the hidden `csrf_token` field - should fail with 403
+
 ## Code Structure
 
 ```ocaml
@@ -281,14 +358,10 @@ echo '{"test": "zstd"}' | zstd -c | \
   --data-binary @- http://localhost:3000/echo
 ```
 
-### Documentation
-
-- **[COMPRESSION_TESTING.md](./COMPRESSION_TESTING.md)** - Comprehensive guide with all formats and debugging tips
-- **[COMPRESSION_QUICK_REF.md](./COMPRESSION_QUICK_REF.md)** - Quick reference with one-liners for all formats
-
 ## Adding Compression Support
 
-To enable actual compression/decompression (not just the identity encoder), add the `tapak-compressions` package:
+To enable actual compression/decompression (not just the identity encoder),
+ add the `tapak-compressions` package:
 
 ```ocaml
 (* In dune file *)
@@ -305,7 +378,7 @@ let app =
 
 ## Next Steps
 
-- Add more middlewares (logging, authentication, CSRF protection)
+- Add more middlewares (authentication, rate limiting, etc.)
 - Use `Router.scope` for grouping routes with shared middlewares
 - Implement REST resources with `Router.resources`
 - Add database integration
@@ -352,7 +425,8 @@ PORT=3001 dune exec -- tapak-showcase
 Make sure you're using `systemfd`, `watchexec -r`, and `Server.run_with_systemd_socket`:
 
 ```bash
-systemfd --no-pid -s http::3000 -- watchexec -r -e ml,mli --ignore _build -- dune exec tapak-showcase
+systemfd --no-pid -s http::3000 -- watchexec -r -e ml,mli \
+  --ignore _build -- dune exec tapak-showcase
 ```
 
 Also ensure `TAPAK_SYSTEMD` is not set to `false`.

@@ -4,6 +4,7 @@
  (libraries
   piaf
   eio
+  ipaddr
   yojson
   logs
   ptime

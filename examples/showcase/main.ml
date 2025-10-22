@@ -2,14 +2,14 @@ open Tapak
 module Log = (val Logs.src_log Logs.default : Logs.LOG)
 
 let trusted_proxies =
-  [ "127.0.0.1"
+  [ Ipaddr.Prefix.of_string_exn "127.0.0.1/32"
   ; (* Localhost IPv4 *)
-    "::1"
+    Ipaddr.Prefix.of_string_exn "::1/128"
     (* Localhost IPv6 *)
     (* Add actual load balancer/CDN IPs/ranges here, e.g.: *)
-    (* "10.0.0.0/8"; *)
-    (* "172.16.0.0/12"; *)
-    (* "192.168.0.0/16"; *)
+    (* Ipaddr.Prefix.of_string_exn "10.0.0.0/8"; *)
+    (* Ipaddr.Prefix.of_string_exn "172.16.0.0/12"; *)
+    (* Ipaddr.Prefix.of_string_exn "192.168.0.0/16"; *)
   ]
 
 let home_handler _req =
@@ -21,6 +21,7 @@ let home_handler _req =
   <li><a href="/api/hello">JSON API</a></li>
   <li><a href="/files/docs/readme.md">File Browser</a></li>
   <li><a href="/echo">Echo (POST with body)</a></li>
+  <li><a href="/form">CSRF-Protected Form</a></li>
 </ul>|}
 
 let user_handler req =
@@ -29,31 +30,17 @@ let user_handler req =
     (match List.assoc_opt "id" params with
     | Some id ->
       let html = Printf.sprintf "<h1>User Profile</h1><p>User ID: %s</p>" id in
-      Response.of_string' ~content_type:"text/html" ~status:`OK html
+      Response.of_html ~status:`OK html
     | None -> Response.of_string' ~status:`Not_found "User ID not found")
   | None -> Response.of_string' ~status:`Not_found "No route params"
 
 let api_hello_handler req =
-  (* Demonstrate content negotiation *)
-  let accept_header = Request.header "Accept" req in
-  let format =
-    Header_parser.Content_negotiation.preferred_format
-      accept_header
-      [ `Json; `Html ]
-  in
-
-  match format with
-  | `Json ->
-    Response.of_string'
-      ~content_type:"application/json"
-      ~status:`OK
-      {|{"message": "Hello from Tapak!", "version": "1.0"}|}
-  | `Html ->
-    Response.of_string'
-      ~content_type:"text/html"
-      ~status:`OK
-      "<h1>Hello from Tapak!</h1><p>Version: 1.0</p>"
-  | _ -> Response.of_string' ~status:`OK "Hello from Tapak!\nVersion: 1.0"
+  Response.negotiate
+    req
+    [ (`Json, fun () -> {|{"message": "Hello from Tapak!", "version": "1.0"}|})
+    ; (`Html, fun () -> "<h1>Hello from Tapak!</h1><p>Version: 1.0</p>")
+    ; (`Text, fun () -> "Hello from Tapak!\nVersion: 1.0")
+    ]
 
 let files_handler req =
   match Router.route_splat req with
@@ -70,17 +57,11 @@ let echo_handler req =
 
   match method_ with
   | `POST | `PUT ->
-    let body = Request.body req in
     let body_content =
-      let stream = Body.to_stream body in
-      let rec read acc =
-        match Piaf.Stream.take stream with
-        | Some { Piaf.IOVec.buffer; off; len } ->
-          let str = Bigstringaf.substring buffer ~off ~len in
-          read (str :: acc)
-        | None -> String.concat "" (List.rev acc)
-      in
-      read []
+      Result.fold
+        ~ok:Fun.id
+        ~error:(fun _ -> "")
+        (Body.to_string (Request.body req))
     in
     let encoding_header = Request.header "Content-Encoding" req in
     let encoding_status =
@@ -101,6 +82,82 @@ let echo_handler req =
       ~status:`Method_not_allowed
       "Please POST or PUT data to this endpoint"
 
+let form_get_handler req =
+  let token, secret = CSRF.csrf_input req in
+  let html =
+    Printf.sprintf
+      {|<h1>CSRF-Protected Form</h1>
+<p>This form demonstrates CSRF protection using Tapak's CSRF module.</p>
+
+<form method="POST" action="/form">
+  <label for="message">Message:</label><br>
+  <input type="text" id="message" name="message" required><br><br>
+
+  <input type="hidden" name="csrf_token" value="%s">
+
+  <button type="submit">Submit</button>
+</form>
+
+<hr>
+<h2>How it works</h2>
+<ol>
+  <li>Server generates a secret and stores it in a cookie</li>
+  <li>Server generates a masked token from the secret</li>
+  <li>Token is embedded in the form as a hidden field</li>
+  <li>On submit, server verifies token matches the cookie secret</li>
+  <li>Uses constant-time comparison to prevent timing attacks</li>
+</ol>
+
+<p><strong>Current Token:</strong> <code>%s</code></p>
+<p><strong>Cookie Secret:</strong> Set in XSRF-TOKEN cookie (check browser dev tools)</p>
+
+<p><a href="/">Back to home</a></p>
+|}
+      token
+      token
+  in
+  Response.of_html ~status:`OK html |> CSRF.with_csrf_cookie secret
+
+let form_post_handler req =
+  let form_data =
+    Form.Urlencoded.of_body (Request.body req)
+    |> Result.map Form.Urlencoded.normalize
+  in
+  match Result.map (Form.Urlencoded.get "csrf_token") form_data with
+  | Ok (Some token) when CSRF.verify_csrf_token ~token req ->
+    let form_data = Result.get_ok form_data in
+    let message =
+      Form.Urlencoded.get "message" form_data
+      |> Option.value ~default:"(no message)"
+    in
+    let html =
+      Printf.sprintf
+        {|<h1>Form Submitted Successfully!</h1>
+<p><strong>Your message:</strong> %s</p>
+
+<p>The CSRF token was validated successfully. This proves:</p>
+<ul>
+  <li>The request came from your form (not a malicious site)</li>
+  <li>The token matches the secret in your cookie</li>
+  <li>The request is protected against CSRF attacks</li>
+</ul>
+
+<p><a href="/form">Submit another message</a> | <a href="/">Back to home</a></p>
+|}
+        (String.escaped message)
+    in
+    Response.of_html ~status:`OK html
+  | Ok (Some _) | Ok None ->
+    Response.of_html
+      ~status:`Forbidden
+      "<h1>403 Forbidden</h1><p>Invalid CSRF token</p><p><a href=\"/form\">Try \
+       again</a></p>"
+  | Error _ ->
+    Response.of_html
+      ~status:`Bad_request
+      "<h1>400 Bad Request</h1><p>Invalid form data</p><p><a \
+       href=\"/form\">Try again</a></p>"
+
 let not_found _req =
   Response.of_string'
     ~status:`Not_found
@@ -119,6 +176,8 @@ let setup_app env =
       ; Router.get "/files/**" files_handler
       ; Router.post "/echo" echo_handler
       ; Router.put "/echo" echo_handler
+      ; Router.get "/form" form_get_handler
+      ; Router.post "/form" form_post_handler
       ]
       ()
     <++> [ use
