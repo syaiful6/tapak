@@ -21,3 +21,4 @@ module Compression = struct
 end
 
 module Request_logger = Middleware_logger
+module Limit_request_size = Middleware_limit_request_size

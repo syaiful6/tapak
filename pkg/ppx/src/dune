@@ -1,0 +1,15 @@
+(library
+ (name tapak_ppx)
+ (modules :standard \ standalone)
+ (public_name tapak-ppx)
+ (kind ppx_rewriter)
+ (libraries ppxlib angstrom)
+ (preprocess
+  (pps ppxlib.metaquot)))
+
+(executable
+ (name standalone)
+ (public_name tapak-ppx)
+ (package tapak-ppx)
+ (modules standalone)
+ (libraries tapak_ppx))

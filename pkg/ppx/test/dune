@@ -1,0 +1,8 @@
+(cram
+ (package tapak-ppx)
+ (deps
+  (package tapak-ppx)
+  %{bin:tapak-ppx}
+  %{bin:jq}
+  %{bin:dune}
+  ppx.sh))

@@ -13,13 +13,10 @@ let apply_all mws handler =
 let pp fmt { name; _ } = Format.fprintf fmt "Middleware(%s)" name
 
 module type Intf = sig
-  type args
-  type state
+  type t
 
-  val init : args -> state
-  val call : state -> (Request.t, Response.t) Filter.simple
+  val call : t -> (Request.t, Response.t) Filter.simple
 end
 
-let use (type a) ?(name = "") (module T : Intf with type args = a) (args : a) =
-  let state = T.init args in
-  { name; filter = T.call state }
+let use (type a) ~name (module M : Intf with type t = a) (args : a) =
+  { name; filter = M.call args }

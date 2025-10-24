@@ -9,13 +9,11 @@ end
 type encoder = Accept.encoding -> (module S) option
 type predicate = Request.t -> Response.t -> bool
 
-type args =
+type t =
   { encoder : encoder
   ; predicate : predicate
   ; preferred_encodings : Accept.encoding list
   }
-
-type state = args
 
 let encoding_to_string = function
   | `Gzip -> "gzip"
@@ -28,8 +26,6 @@ let encoding_to_string = function
 
 let args ~encoder ~predicate ~preferred_encodings =
   { encoder; predicate; preferred_encodings }
-
-external init : args -> state = "%identity"
 
 let call { encoder; predicate; preferred_encodings } next request =
   let response = next request in

@@ -23,7 +23,7 @@ let
   } // args);
 in
 
- {
+rec {
   simdutf = buildTapak {
     pname = "simdutf";
     src = genSrc {
@@ -63,6 +63,18 @@ in
       piaf
       camlzip
       dune-configurator
+    ];
+  };
+
+  tapak-ppx = buildTapak {
+    pname = "tapak-ppx";
+    src = genSrc {
+      dirs = [ "pkg/ppx" ];
+      files = [ "tapak-ppx.opam" ];
+    };
+    propagatedBuildInputs = [
+      tapak
+      ppxlib
     ];
   };
 }

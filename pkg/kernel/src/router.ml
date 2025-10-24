@@ -17,23 +17,39 @@ type (_, _) path =
       -> ('param -> 'a, 'b) path
   | Method : Piaf.Method.t * ('a, 'b) path -> ('a, 'b) path
 
+(* Path builder with rank-2 polymorphism
+
+   This is the key to avoiding value restriction!
+   - The build method is universally quantified over both type parameters
+   - This allows the same builder to create fresh polymorphic paths each time
+*)
+type ('input, 'output) path_builder =
+  { build : 'a. unit -> ('input, 'output) path }
+
+let int = { build = (fun () -> Int Nil) }
+let int32 = { build = (fun () -> Int32 Nil) }
+let int64 = { build = (fun () -> Int64 Nil) }
+let str = { build = (fun () -> String Nil) }
+let bool = { build = (fun () -> Bool Nil) }
+let splat = { build = (fun () -> Splat Nil) }
+let s literal = { build = (fun () -> Literal (literal, Nil)) }
+
+let custom ~parse ~format =
+  { build = (fun () -> Custom { parse; format; rest = Nil }) }
+
 type route =
   | Route :
       { method_ : Piaf.Method.t
       ; pattern : ('a, Request.t -> Response.t) path
       ; handler : 'a
+      }
+      -> route
+  | Scope :
+      { prefix : ('a, 'a) path
+      ; routes : route list
       ; middlewares : Middleware.t list
       }
       -> route
-
-let int = Int Nil
-let int32 = Int32 Nil
-let int64 = Int64 Nil
-let str = String Nil
-let bool = Bool Nil
-let splat = Splat Nil
-let s literal = Literal (literal, Nil)
-let custom ~parse ~format = Custom { parse; format; rest = Nil }
 
 let is_slug s =
   let len = String.length s in
@@ -51,34 +67,64 @@ let is_slug s =
     in
     check 0
 
-let slug : (string -> 'a, 'a) path =
-  Custom
-    { parse = (fun s -> if is_slug s then Some s else None)
-    ; format = Fun.id
-    ; rest = Nil
-    }
+let slug : (string -> 'a, 'a) path_builder =
+  { build =
+      (fun () ->
+        Custom
+          { parse = (fun s -> if is_slug s then Some s else None)
+          ; format = Fun.id
+          ; rest = Nil
+          })
+  }
 
-let rec ( / ) : type a b c. (a, c) path -> (c, b) path -> (a, b) path =
+(* Path concatenation - works on path GADT *)
+let rec path_concat : type a b c. (a, c) path -> (c, b) path -> (a, b) path =
  fun left right ->
   match left with
   | Nil -> right
-  | Literal (lit, rest) -> Literal (lit, rest / right)
-  | Int rest -> Int (rest / right)
-  | Int32 rest -> Int32 (rest / right)
-  | Int64 rest -> Int64 (rest / right)
-  | String rest -> String (rest / right)
-  | Bool rest -> Bool (rest / right)
-  | Splat rest -> Splat (rest / right)
+  | Literal (lit, rest) -> Literal (lit, path_concat rest right)
+  | Int rest -> Int (path_concat rest right)
+  | Int32 rest -> Int32 (path_concat rest right)
+  | Int64 rest -> Int64 (path_concat rest right)
+  | String rest -> String (path_concat rest right)
+  | Bool rest -> Bool (path_concat rest right)
+  | Splat rest -> Splat (path_concat rest right)
   | Custom { parse; format; rest } ->
-    Custom { parse; format; rest = rest / right }
-  | Method (m, rest) -> Method (m, rest / right)
+    Custom { parse; format; rest = path_concat rest right }
+  | Method (m, rest) -> Method (m, path_concat rest right)
 
-let get pattern = Method (`GET, pattern)
-let post pattern = Method (`POST, pattern)
-let put pattern = Method (`PUT, pattern)
-let patch pattern = Method (`Other "PATCH", pattern)
-let delete pattern = Method (`DELETE, pattern)
-let head pattern = Method (`HEAD, pattern)
+(* Path builder combinator - combines two builders *)
+let ( / ) : type a b c.
+  (a, c) path_builder -> (c, b) path_builder -> (a, b) path_builder
+  =
+ fun left_builder right_builder ->
+  { build =
+      (fun () ->
+        let left = left_builder.build () in
+        let right = right_builder.build () in
+        path_concat left right)
+  }
+
+(* HTTP method combinators - work with path_builder *)
+let get : type a b. (a, b) path_builder -> (a, b) path_builder =
+ fun builder -> { build = (fun () -> Method (`GET, builder.build ())) }
+
+let post : type a b. (a, b) path_builder -> (a, b) path_builder =
+ fun builder -> { build = (fun () -> Method (`POST, builder.build ())) }
+
+let put : type a b. (a, b) path_builder -> (a, b) path_builder =
+ fun builder -> { build = (fun () -> Method (`PUT, builder.build ())) }
+
+let patch : type a b. (a, b) path_builder -> (a, b) path_builder =
+ fun builder ->
+  { build = (fun () -> Method (`Other "PATCH", builder.build ())) }
+
+let delete : type a b. (a, b) path_builder -> (a, b) path_builder =
+ fun builder -> { build = (fun () -> Method (`DELETE, builder.build ())) }
+
+let head : type a b. (a, b) path_builder -> (a, b) path_builder =
+ fun builder -> { build = (fun () -> Method (`HEAD, builder.build ())) }
+
 let parse_int s = try Some (int_of_string s) with Failure _ -> None
 let parse_int32 s = try Some (Int32.of_string s) with Failure _ -> None
 let parse_int64 s = try Some (Int64.of_string s) with Failure _ -> None
@@ -91,6 +137,15 @@ let parse_bool = function
 let split_path path =
   let segments = String.split_on_char '/' path in
   List.filter (fun s -> s <> "") segments
+
+let rec prepend_path : type a b c. (a, a) path -> (b, c) path -> (b, c) path =
+ fun prefix pattern ->
+  match prefix with
+  | Nil -> pattern
+  | Literal (s, rest) -> Literal (s, prepend_path rest pattern)
+  | Method (m, rest) -> Method (m, prepend_path rest pattern)
+  | Int _ | Int32 _ | Int64 _ | String _ | Bool _ | Splat _ | Custom _ ->
+    failwith "Scope prefix cannot contain parameter extractors"
 
 let rec match_pattern : type a b. (a, b) path -> string list -> a -> b option =
  fun pattern segments k ->
@@ -136,27 +191,51 @@ let rec get_method : type a b. (a, b) path -> Piaf.Method.t option = function
   | Custom { rest; _ } -> get_method rest
   | Nil -> None
 
-let ( @-> ) : type a. (a, Request.t -> Response.t) path -> a -> route =
- fun pattern handler_fn ->
+(* Handler attachment - builds the path from builder *)
+let ( @-> ) : type a. (a, Request.t -> Response.t) path_builder -> a -> route =
+ fun builder handler_fn ->
+  let pattern = builder.build () in
   let method_ = get_method pattern |> Option.value ~default:`GET in
-  Route { method_; pattern; handler = handler_fn; middlewares = [] }
+  Route { method_; pattern; handler = handler_fn }
 
-let match_route (Route route) request =
-  let method_matches =
-    Piaf.Method.to_string route.method_
-    = Piaf.Method.to_string (Request.meth request)
-  in
-  if not method_matches
-  then None
-  else
-    let segments = split_path (Request.target request) in
-    match match_pattern route.pattern segments route.handler with
-    | Some handler ->
-      let service =
-        Middleware.apply_all route.middlewares (fun req -> handler req)
-      in
-      Some (service request)
-    | None -> None
+let rec match_route ?(middlewares = []) route request =
+  match route with
+  | Route route ->
+    let method_matches =
+      Piaf.Method.to_string route.method_
+      = Piaf.Method.to_string (Request.meth request)
+    in
+    if not method_matches
+    then None
+    else
+      let segments = split_path (Request.target request) in
+      (match match_pattern route.pattern segments route.handler with
+      | Some handler ->
+        let service =
+          Middleware.apply_all middlewares (fun req -> handler req)
+        in
+        Some (service request)
+      | None -> None)
+  | Scope scope ->
+    let accumulated_middlewares = middlewares @ scope.middlewares in
+    let expanded_routes =
+      List.map
+        (fun r ->
+           match r with
+           | Route route ->
+             Route
+               { route with pattern = prepend_path scope.prefix route.pattern }
+           | Scope inner_scope ->
+             Scope
+               { inner_scope with
+                 prefix = prepend_path scope.prefix inner_scope.prefix
+               })
+        scope.routes
+    in
+    List.find_map
+      (fun route ->
+         match_route ~middlewares:accumulated_middlewares route request)
+      expanded_routes
 
 let match' routes request =
   List.find_map (fun route -> match_route route request) routes
@@ -166,52 +245,42 @@ let router routes request =
   | Some response -> response
   | None -> raise Not_found
 
-let rec sprintf : type a. (a, string) path -> string -> a =
+(* sprintf_path works on path GADT *)
+let rec sprintf_path : type a. (a, string) path -> string -> a =
  fun pattern acc ->
   match pattern with
   | Nil -> acc
-  | Literal ("", rest) -> sprintf rest (if acc = "" then "/" else acc)
-  | Literal (s, rest) -> sprintf rest (acc ^ "/" ^ s)
-  | Int rest -> fun n -> sprintf rest (acc ^ "/" ^ string_of_int n)
-  | Int32 rest -> fun n -> sprintf rest (acc ^ "/" ^ Int32.to_string n)
-  | Int64 rest -> fun n -> sprintf rest (acc ^ "/" ^ Int64.to_string n)
-  | String rest -> fun s -> sprintf rest (acc ^ "/" ^ s)
-  | Bool rest -> fun b -> sprintf rest (acc ^ "/" ^ string_of_bool b)
+  | Literal ("", rest) -> sprintf_path rest (if acc = "" then "/" else acc)
+  | Literal (s, rest) -> sprintf_path rest (acc ^ "/" ^ s)
+  | Int rest -> fun n -> sprintf_path rest (acc ^ "/" ^ string_of_int n)
+  | Int32 rest -> fun n -> sprintf_path rest (acc ^ "/" ^ Int32.to_string n)
+  | Int64 rest -> fun n -> sprintf_path rest (acc ^ "/" ^ Int64.to_string n)
+  | String rest -> fun s -> sprintf_path rest (acc ^ "/" ^ s)
+  | Bool rest -> fun b -> sprintf_path rest (acc ^ "/" ^ string_of_bool b)
   | Splat rest ->
     fun segments ->
       let splat_path = String.concat "/" segments in
-      sprintf rest (if splat_path = "" then acc else acc ^ "/" ^ splat_path)
-  | Custom { format; rest; _ } -> fun v -> sprintf rest (acc ^ "/" ^ format v)
-  | Method (_, rest) -> sprintf rest acc
+      sprintf_path
+        rest
+        (if splat_path = "" then acc else acc ^ "/" ^ splat_path)
+  | Custom { format; rest; _ } ->
+    fun v -> sprintf_path rest (acc ^ "/" ^ format v)
+  | Method (_, rest) -> sprintf_path rest acc
 
-let sprintf pattern = sprintf pattern ""
+(* sprintf works on path_builder - builds fresh path each time! *)
+let sprintf : type a. (a, string) path_builder -> a =
+ fun builder ->
+  let pattern = builder.build () in
+  sprintf_path pattern ""
 
-let with_middlewares middlewares (Route route) =
-  Route { route with middlewares = route.middlewares @ middlewares }
-
-let rec prepend_path : type a b c. (a, a) path -> (b, c) path -> (b, c) path =
- fun prefix pattern ->
-  match prefix with
-  | Nil -> pattern
-  | Literal (s, rest) -> Literal (s, prepend_path rest pattern)
-  | Method (m, rest) -> Method (m, prepend_path rest pattern)
-  | Int _ | Int32 _ | Int64 _ | String _ | Bool _ | Splat _ | Custom _ ->
-    failwith "Scope prefix cannot contain parameter extractors"
-
-let scope ?(middlewares = []) prefix routes =
-  List.map
-    (fun (Route route) ->
-       Route
-         { route with
-           pattern = prepend_path prefix route.pattern
-         ; middlewares = middlewares @ route.middlewares
-         })
-    routes
+let scope ?(middlewares = []) prefix_builder routes =
+  let prefix = prefix_builder.build () in
+  Scope { prefix; routes; middlewares }
 
 module type Resource = sig
   type id
 
-  val id_path : (id -> 'a, 'a) path
+  val id_path : (id -> 'a, 'a) path_builder
   val index : Handler.t
   val new_ : Handler.t
   val create : Handler.t
@@ -221,10 +290,10 @@ module type Resource = sig
   val delete : id -> Handler.t
 end
 
-let resource ?(middlewares = []) prefix (module R : Resource) =
+let resource ?(middlewares = []) prefix_builder (module R : Resource) =
   scope
     ~middlewares
-    prefix
+    prefix_builder
     [ get (s "") @-> R.index
     ; get (s "new") @-> R.new_
     ; post (s "") @-> R.create

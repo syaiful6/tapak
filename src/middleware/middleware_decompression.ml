@@ -8,8 +8,7 @@ module type S = sig
 end
 
 type decoder = Accept.encoding -> (module S) option
-type args = decoder
-type state = args
+type t = decoder
 
 let encoding_of_string = function
   | "gzip" -> Some `Gzip
@@ -27,8 +26,6 @@ let content_encodings req =
     |> List.map (fun x -> x |> String.trim |> String.lowercase_ascii)
     |> List.filter_map encoding_of_string
     |> fun xs -> if List.is_empty xs then None else Some xs
-
-external init : args -> state = "%identity"
 
 let call (decoder : decoder) next request =
   match content_encodings request with

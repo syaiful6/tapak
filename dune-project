@@ -77,3 +77,19 @@
   (odoc :with-doc))
  (tags
   ("web" "compression" "brotli" "zstd" "gzip" "deflate")))
+
+(package
+ (name tapak-ppx)
+ (synopsis "PPX extension for type-safe route generation in Tapak")
+ (description
+  "tapak-ppx is a PPX rewriter that generates type-safe route definitions from annotated handler functions. It eliminates boilerplate when defining routes in the Tapak web framework.")
+ (depends
+  (ocaml
+   (>= 5.2.0))
+  dune
+  (ppxlib
+   (>= 0.32.0))
+  angstrom
+  (odoc :with-doc))
+ (tags
+  ("ppx" "web" "framework" "tapak" "routes" "type-safe")))
