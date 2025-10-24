@@ -2,10 +2,10 @@ open Tapak
 
 (* Example of Django-style typed parameters with custom types *)
 
-(* Define custom path types using rank-2 polymorphism to avoid value restriction.
+(* Define custom path types using functions to avoid value restriction.
 
-   The Router module now uses path_builder internally, which provides rank-2 polymorphism.
-   This means we can define reusable path patterns that work for both routing AND URL generation!
+   Custom types must be defined as functions because Router.custom returns
+   a non-expansive value. Each call to the function creates a fresh polymorphic path.
 *)
 
 let uuid_parse s =
@@ -33,24 +33,17 @@ let hex_color_parse s =
   then Some s
   else None
 
-(* Define custom path patterns as functions to work around value restriction.
+(* Define custom path patterns - must be functions due to value restriction.
+   The `custom` function is non-expansive, so we must wrap in functions. *)
+let uuid () = Router.custom ~parse:uuid_parse ~format:Fun.id
 
-   The issue: Router.custom ~parse ~format creates a non-expansive expression,
-   which means even with type annotations, OCaml assigns weak type variables.
-
-   The solution: Wrap in a function so each call creates a fresh polymorphic value.
-*)
-let uuid () : (string -> 'a, 'a) Router.path_builder =
-  Router.custom ~parse:uuid_parse ~format:Fun.id
-
-let hex_color () : (string -> 'a, 'a) Router.path_builder =
+let hex_color () =
   Router.custom ~parse:hex_color_parse ~format:String.lowercase_ascii
 
-(* Demonstrate URL generation with rank-2 polymorphic paths *)
 let () =
-  Printf.printf "=== URL Generation Demo (Rank-2 Polymorphism) ===\n";
+  Printf.printf "=== URL Generation Demo ===\n";
 
-  (* Custom types - call as functions to get fresh polymorphic values! *)
+  (* Custom types - must call as functions *)
   let article_url =
     Router.sprintf
       Router.(s "articles" / uuid ())
@@ -98,11 +91,9 @@ let routes =
   ; get_page_route
   ]
 
-(* Demonstrate URL generation with generated path variables *)
 let () =
   Printf.printf "\n=== Generated Path Variables ===\n";
 
-  (* Built-in types work fine - the generated paths stay polymorphic *)
   let user_url = Router.sprintf get_user_path 123L in
   Printf.printf "User URL: %s\n" user_url;
 
@@ -115,7 +106,6 @@ let () =
   let feature_url = Router.sprintf toggle_feature_path true in
   Printf.printf "Feature URL: %s\n" feature_url;
 
-  (* Simple param *)
   let page_url = Router.sprintf get_page_path 5 in
   Printf.printf "Page URL: %s\n" page_url;
 
@@ -129,5 +119,5 @@ let () =
 
   Printf.printf
     "\n\
-     Success! Both routing and URL generation work with the same path \
-     definitions.\n"
+     Success! Both routing and URL generation work with the same generated \
+     path variables.\n"

@@ -17,25 +17,20 @@ type (_, _) path =
       -> ('param -> 'a, 'b) path
   | Method : Piaf.Method.t * ('a, 'b) path -> ('a, 'b) path
 
-(* Path builder with rank-2 polymorphism
+let int = Int Nil
+let int32 = Int32 Nil
+let int64 = Int64 Nil
+let str = String Nil
+let bool = Bool Nil
+let splat = Splat Nil
+let s literal = Literal (literal, Nil)
 
-   This is the key to avoiding value restriction!
-   - The build method is universally quantified over both type parameters
-   - This allows the same builder to create fresh polymorphic paths each time
-*)
-type ('input, 'output) path_builder =
-  { build : 'a. unit -> ('input, 'output) path }
-
-let int = { build = (fun () -> Int Nil) }
-let int32 = { build = (fun () -> Int32 Nil) }
-let int64 = { build = (fun () -> Int64 Nil) }
-let str = { build = (fun () -> String Nil) }
-let bool = { build = (fun () -> Bool Nil) }
-let splat = { build = (fun () -> Splat Nil) }
-let s literal = { build = (fun () -> Literal (literal, Nil)) }
-
-let custom ~parse ~format =
-  { build = (fun () -> Custom { parse; format; rest = Nil }) }
+let custom : type a.
+  parse:(string -> 'param option)
+  -> format:('param -> string)
+  -> ('param -> a, a) path
+  =
+ fun ~parse ~format -> Custom { parse; format; rest = Nil }
 
 type route =
   | Route :
@@ -67,64 +62,34 @@ let is_slug s =
     in
     check 0
 
-let slug : (string -> 'a, 'a) path_builder =
-  { build =
-      (fun () ->
-        Custom
-          { parse = (fun s -> if is_slug s then Some s else None)
-          ; format = Fun.id
-          ; rest = Nil
-          })
-  }
+let slug =
+  Custom
+    { parse = (fun s -> if is_slug s then Some s else None)
+    ; format = Fun.id
+    ; rest = Nil
+    }
 
-(* Path concatenation - works on path GADT *)
-let rec path_concat : type a b c. (a, c) path -> (c, b) path -> (a, b) path =
+let rec ( / ) : type a b c. (a, c) path -> (c, b) path -> (a, b) path =
  fun left right ->
   match left with
   | Nil -> right
-  | Literal (lit, rest) -> Literal (lit, path_concat rest right)
-  | Int rest -> Int (path_concat rest right)
-  | Int32 rest -> Int32 (path_concat rest right)
-  | Int64 rest -> Int64 (path_concat rest right)
-  | String rest -> String (path_concat rest right)
-  | Bool rest -> Bool (path_concat rest right)
-  | Splat rest -> Splat (path_concat rest right)
+  | Literal (lit, rest) -> Literal (lit, rest / right)
+  | Int rest -> Int (rest / right)
+  | Int32 rest -> Int32 (rest / right)
+  | Int64 rest -> Int64 (rest / right)
+  | String rest -> String (rest / right)
+  | Bool rest -> Bool (rest / right)
+  | Splat rest -> Splat (rest / right)
   | Custom { parse; format; rest } ->
-    Custom { parse; format; rest = path_concat rest right }
-  | Method (m, rest) -> Method (m, path_concat rest right)
+    Custom { parse; format; rest = rest / right }
+  | Method (m, rest) -> Method (m, rest / right)
 
-(* Path builder combinator - combines two builders *)
-let ( / ) : type a b c.
-  (a, c) path_builder -> (c, b) path_builder -> (a, b) path_builder
-  =
- fun left_builder right_builder ->
-  { build =
-      (fun () ->
-        let left = left_builder.build () in
-        let right = right_builder.build () in
-        path_concat left right)
-  }
-
-(* HTTP method combinators - work with path_builder *)
-let get : type a b. (a, b) path_builder -> (a, b) path_builder =
- fun builder -> { build = (fun () -> Method (`GET, builder.build ())) }
-
-let post : type a b. (a, b) path_builder -> (a, b) path_builder =
- fun builder -> { build = (fun () -> Method (`POST, builder.build ())) }
-
-let put : type a b. (a, b) path_builder -> (a, b) path_builder =
- fun builder -> { build = (fun () -> Method (`PUT, builder.build ())) }
-
-let patch : type a b. (a, b) path_builder -> (a, b) path_builder =
- fun builder ->
-  { build = (fun () -> Method (`Other "PATCH", builder.build ())) }
-
-let delete : type a b. (a, b) path_builder -> (a, b) path_builder =
- fun builder -> { build = (fun () -> Method (`DELETE, builder.build ())) }
-
-let head : type a b. (a, b) path_builder -> (a, b) path_builder =
- fun builder -> { build = (fun () -> Method (`HEAD, builder.build ())) }
-
+let get pattern = Method (`GET, pattern)
+let post pattern = Method (`POST, pattern)
+let put pattern = Method (`PUT, pattern)
+let patch pattern = Method (`Other "PATCH", pattern)
+let delete pattern = Method (`DELETE, pattern)
+let head pattern = Method (`HEAD, pattern)
 let parse_int s = try Some (int_of_string s) with Failure _ -> None
 let parse_int32 s = try Some (Int32.of_string s) with Failure _ -> None
 let parse_int64 s = try Some (Int64.of_string s) with Failure _ -> None
@@ -191,10 +156,8 @@ let rec get_method : type a b. (a, b) path -> Piaf.Method.t option = function
   | Custom { rest; _ } -> get_method rest
   | Nil -> None
 
-(* Handler attachment - builds the path from builder *)
-let ( @-> ) : type a. (a, Request.t -> Response.t) path_builder -> a -> route =
- fun builder handler_fn ->
-  let pattern = builder.build () in
+let ( @-> ) : type a. (a, Request.t -> Response.t) path -> a -> route =
+ fun pattern handler_fn ->
   let method_ = get_method pattern |> Option.value ~default:`GET in
   Route { method_; pattern; handler = handler_fn }
 
@@ -245,42 +208,33 @@ let router routes request =
   | Some response -> response
   | None -> raise Not_found
 
-(* sprintf_path works on path GADT *)
-let rec sprintf_path : type a. (a, string) path -> string -> a =
+let rec sprintf' : type a. (a, string) path -> string -> a =
  fun pattern acc ->
   match pattern with
   | Nil -> acc
-  | Literal ("", rest) -> sprintf_path rest (if acc = "" then "/" else acc)
-  | Literal (s, rest) -> sprintf_path rest (acc ^ "/" ^ s)
-  | Int rest -> fun n -> sprintf_path rest (acc ^ "/" ^ string_of_int n)
-  | Int32 rest -> fun n -> sprintf_path rest (acc ^ "/" ^ Int32.to_string n)
-  | Int64 rest -> fun n -> sprintf_path rest (acc ^ "/" ^ Int64.to_string n)
-  | String rest -> fun s -> sprintf_path rest (acc ^ "/" ^ s)
-  | Bool rest -> fun b -> sprintf_path rest (acc ^ "/" ^ string_of_bool b)
+  | Literal ("", rest) -> sprintf' rest (if acc = "" then "/" else acc)
+  | Literal (s, rest) -> sprintf' rest (acc ^ "/" ^ s)
+  | Int rest -> fun n -> sprintf' rest (acc ^ "/" ^ string_of_int n)
+  | Int32 rest -> fun n -> sprintf' rest (acc ^ "/" ^ Int32.to_string n)
+  | Int64 rest -> fun n -> sprintf' rest (acc ^ "/" ^ Int64.to_string n)
+  | String rest -> fun s -> sprintf' rest (acc ^ "/" ^ s)
+  | Bool rest -> fun b -> sprintf' rest (acc ^ "/" ^ string_of_bool b)
   | Splat rest ->
     fun segments ->
       let splat_path = String.concat "/" segments in
-      sprintf_path
-        rest
-        (if splat_path = "" then acc else acc ^ "/" ^ splat_path)
-  | Custom { format; rest; _ } ->
-    fun v -> sprintf_path rest (acc ^ "/" ^ format v)
-  | Method (_, rest) -> sprintf_path rest acc
+      sprintf' rest (if splat_path = "" then acc else acc ^ "/" ^ splat_path)
+  | Custom { format; rest; _ } -> fun v -> sprintf' rest (acc ^ "/" ^ format v)
+  | Method (_, rest) -> sprintf' rest acc
 
-(* sprintf works on path_builder - builds fresh path each time! *)
-let sprintf : type a. (a, string) path_builder -> a =
- fun builder ->
-  let pattern = builder.build () in
-  sprintf_path pattern ""
+let sprintf pattern = sprintf' pattern ""
 
-let scope ?(middlewares = []) prefix_builder routes =
-  let prefix = prefix_builder.build () in
+let scope ?(middlewares = []) prefix routes =
   Scope { prefix; routes; middlewares }
 
 module type Resource = sig
   type id
 
-  val id_path : (id -> 'a, 'a) path_builder
+  val id_path : (id -> 'a, 'a) path
   val index : Handler.t
   val new_ : Handler.t
   val create : Handler.t
