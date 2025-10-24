@@ -18,12 +18,7 @@ let port_of_address = function `Tcp (_, port) -> port | `Unix _ -> 0
 
 let run_with ?error_handler ~config ~env app =
   Eio.Switch.run @@ fun sw ->
-  let server =
-    Server.create
-      ?error_handler
-      ~config
-      (Tapak_kernel.Server_connection.to_piaf_request_handler app)
-  in
+  let server = Server.create ?error_handler ~config (App.to_piaf app) in
   Server.Command.start ~sw env server
 
 module Systemd = struct
@@ -156,12 +151,7 @@ end
 
 let run_with_systemd_socket ?error_handler ~config ~env app =
   Eio.Switch.run @@ fun sw ->
-  let server =
-    Server.create
-      ?error_handler
-      ~config
-      (Tapak_kernel.Server_connection.to_piaf_request_handler app)
-  in
+  let server = Server.create ?error_handler ~config (App.to_piaf app) in
 
   match get_systemd_listen_fd () with
   | Some unix_fd ->

@@ -40,16 +40,13 @@ let apache_common_log_format (info : request_info) : string =
     user_agent
     info.duration_ms
 
-type args =
+type t =
   { now : unit -> float
   ; formatter : formatter
   ; trusted_proxies : Ipaddr.Prefix.t list
   }
 
-type state = args
-
-let args ~now ~trusted_proxies ?(formatter = apache_common_log_format) () : args
-  =
+let args ~now ~trusted_proxies ?(formatter = apache_common_log_format) () : t =
   { now; trusted_proxies; formatter }
 
 let build_request_info ~args ~duration_ms request response =
@@ -74,8 +71,6 @@ let build_request_info ~args ~duration_ms request response =
   ; request_id
   ; duration_ms
   }
-
-external init : args -> state = "%identity"
 
 let call args next request =
   let start_time = args.now () in

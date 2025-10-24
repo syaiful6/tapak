@@ -16,3 +16,6 @@ result
 # Downloaded simdutf single-header files (auto-downloaded during build)
 pkg/simdutf/c/simdutf.h
 pkg/simdutf/c/simdutf.cpp
+
+# Design ideas and sketches (not part of the project)
+ideas/

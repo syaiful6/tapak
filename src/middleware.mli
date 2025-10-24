@@ -9,10 +9,7 @@ module Decompression : sig
 
   type decoder = Header_parser.Accept.encoding -> (module Decoder) option
 
-  include
-    Tapak_kernel.Middleware.Intf
-    with type args = decoder
-     and type state = decoder
+  include Tapak_kernel.Middleware.Intf with type t = decoder
 end
 
 module Compression : sig
@@ -25,7 +22,7 @@ module Compression : sig
   type encoder = Header_parser.Accept.encoding -> (module Encoder) option
   type predicate = Request.t -> Response.t -> bool
 
-  type args =
+  type t =
     { encoder : encoder
     ; predicate : predicate
     ; preferred_encodings : Header_parser.Accept.encoding list
@@ -35,10 +32,9 @@ module Compression : sig
      encoder:encoder
     -> predicate:predicate
     -> preferred_encodings:Header_parser.Accept.encoding list
-    -> args
+    -> t
 
-  include
-    Tapak_kernel.Middleware.Intf with type args := args and type state = args
+  include Tapak_kernel.Middleware.Intf with type t := t
 end
 
 module Request_logger : sig
@@ -58,7 +54,7 @@ module Request_logger : sig
 
   val apache_common_log_format : formatter
 
-  type args =
+  type t =
     { now : unit -> float
     ; formatter : formatter
     ; trusted_proxies : Ipaddr.Prefix.t list
@@ -69,8 +65,15 @@ module Request_logger : sig
     -> trusted_proxies:Ipaddr.Prefix.t list
     -> ?formatter:formatter
     -> unit
-    -> args
+    -> t
 
-  include
-    Tapak_kernel.Middleware.Intf with type args := args and type state = args
+  include Tapak_kernel.Middleware.Intf with type t := t
+end
+
+module Limit_request_size : sig
+  type t = { max_bytes : int64 }
+
+  val args : max_bytes:int64 -> t
+
+  include Tapak_kernel.Middleware.Intf with type t := t
 end

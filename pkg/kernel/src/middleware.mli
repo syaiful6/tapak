@@ -18,12 +18,10 @@ val apply_all :
   -> (Request.t, Response.t) Service.t
 
 module type Intf = sig
-  type args
-  type state
+  type t
 
-  val init : args -> state
-  val call : state -> (Request.t, Response.t) Filter.simple
+  val call : t -> (Request.t, Response.t) Filter.simple
 end
 
-val use : ?name:string -> (module Intf with type args = 'a) -> 'a -> t
+val use : name:string -> (module Intf with type t = 'a) -> 'a -> t
 val pp : Format.formatter -> t -> unit

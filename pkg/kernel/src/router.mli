@@ -26,31 +26,47 @@ exception Not_found
 (** {1 Core Types} *)
 
 type (_, _) path
-(** The type of a route pattern.
+(** The type of a route pattern (internal GADT).
     ['a] is the accumulated function type for extracted parameters.
     ['b] is the final return type. *)
+
+type ('input, 'output) path_builder
+(** Rank-2 polymorphic path builder to avoid value restriction.
+
+    This allows you to define reusable paths that work for both routing and URL generation:
+    {[
+      (* Define once *)
+      let user_path = s "users" / int64
+
+      (* Use for routing *)
+      let route = get user_path @-> handler
+
+      (* Use for URL generation *)
+      let url = sprintf user_path 42L  (* Works! No value restriction! *)
+    ]}
+*)
 
 type route
 (** The type of a complete route with handler attached. *)
 
 (** {1 Combinators} *)
 
-val int : (int -> 'a, 'a) path
+val int : (int -> 'a, 'a) path_builder
 (** [int] matches an integer path segment and extracts it as [int]. *)
 
-val int32 : (int32 -> 'a, 'a) path
+val int32 : (int32 -> 'a, 'a) path_builder
 (** [int32] matches a 32-bit integer path segment. *)
 
-val int64 : (int64 -> 'a, 'a) path
+val int64 : (int64 -> 'a, 'a) path_builder
 (** [int64] matches a 64-bit integer path segment. *)
 
-val str : (string -> 'a, 'a) path
+val str : (string -> 'a, 'a) path_builder
 (** [str] matches any path segment and extracts it as [string]. *)
 
-val bool : (bool -> 'a, 'a) path
+val bool : (bool -> 'a, 'a) path_builder
 (** [bool] matches "true" or "false" and extracts as [bool]. *)
 
-val splat : (string list -> 'a, 'a) path
+val splat : (string list -> 'a, 'a) path_builder
 (** [splat] matches all remaining path segments and extracts them as [string list].
     This is useful for catch-all routes, serving SPAs, or file browsers.
     {[
@@ -61,22 +77,43 @@ val splat : (string list -> 'a, 'a) path
 val custom :
    parse:(string -> 'param option)
   -> format:('param -> string)
-  -> ('param -> 'a, 'a) path
+  -> ('param -> 'a, 'a) path_builder
 (** [custom ~parse ~format] creates a custom parameter extractor.
-    The [parse] function validates and converts a path segment to your type.
-    The [format] function converts your type back to a string for URL generation.
+
+    {b Custom Type Pattern (OCaml Value Restriction):}
+
+    Due to OCaml's value restriction, custom types must be defined as {b functions}
+    to be reusable for both routing and URL generation:
+
     {[
-      (* Create a UUID validator *)
-      let uuid =
+      (* Define as a function - note the () *)
+      let uuid () =
         custom
           ~parse:(fun s -> if is_valid_uuid s then Some s else None)
           ~format:Fun.id
 
-      (* Use in routes *)
-      get (s "users" / uuid) @-> fun uuid_str req -> ...
-    ]} *)
+      (* Manual usage - call it *)
+      get (s "articles" / uuid ()) @-> fun uuid_str req -> ...
+      let url = sprintf (s "articles" / uuid ()) "550e8400-..."
 
-val slug : (string -> 'a, 'a) path
+      (* PPX usage - automatically calls it *)
+      let get_article ~id _req = ...[@@route GET, "/articles/<uuid:id>"]
+      (* ^^^ PPX generates: get (s "articles" / uuid ()) *)
+    ]}
+
+    {b Why functions?}
+    The expression [custom ~parse ~format] is non-expansive (calling a function
+    with function arguments), so OCaml assigns weak type variables that cannot
+    be reused polymorphically. Wrapping in a function [let uuid () = ...] makes
+    each call produce a fresh polymorphic value.
+
+    {b For PPX users:} The PPX automatically handles calling custom types as
+    functions, so you can use them naturally in route annotations.
+
+    {b For manual users:} Remember to call custom types: [uuid ()] not [uuid].
+*)
+
+val slug : (string -> 'a, 'a) path_builder
 (** [slug] matches URL-friendly slugs (lowercase letters, numbers, hyphens).
     This is useful for article URLs, product slugs, etc.
     {[
@@ -84,10 +121,13 @@ val slug : (string -> 'a, 'a) path
       get (s "posts" / slug) @-> fun slug req -> ...
     ]} *)
 
-val s : string -> ('a, 'a) path
+val s : string -> ('a, 'a) path_builder
 (** [s literal] matches a literal string segment. *)
 
-val ( / ) : ('a, 'c) path -> ('c, 'b) path -> ('a, 'b) path
+val ( / ) :
+   ('a, 'c) path_builder
+  -> ('c, 'b) path_builder
+  -> ('a, 'b) path_builder
 (** [( / )] chains two path segments together.
     {[
       s "users" / int64 / s "posts" / str
@@ -95,28 +135,28 @@ val ( / ) : ('a, 'c) path -> ('c, 'b) path -> ('a, 'b) path
 
 (** {1 Handler Attachment} *)
 
-val ( @-> ) : ('a, Request.t -> Response.t) path -> 'a -> route
+val ( @-> ) : ('a, Request.t -> Response.t) path_builder -> 'a -> route
 (** [pattern @-> handler] attaches a handler to a route pattern.
     The handler must accept all extracted parameters followed by [Request.t]. *)
 
 (** {1 HTTP Methods} *)
 
-val get : ('a, 'b) path -> ('a, 'b) path
+val get : ('a, 'b) path_builder -> ('a, 'b) path_builder
 (** [get pattern] creates a GET route with the given pattern. *)
 
-val post : ('a, 'b) path -> ('a, 'b) path
+val post : ('a, 'b) path_builder -> ('a, 'b) path_builder
 (** [post pattern] creates a POST route with the given pattern. *)
 
-val put : ('a, 'b) path -> ('a, 'b) path
+val put : ('a, 'b) path_builder -> ('a, 'b) path_builder
 (** [put pattern] creates a PUT route with the given pattern. *)
 
-val patch : ('a, 'b) path -> ('a, 'b) path
+val patch : ('a, 'b) path_builder -> ('a, 'b) path_builder
 (** [patch pattern] creates a PATCH route with the given pattern. *)
 
-val delete : ('a, 'b) path -> ('a, 'b) path
+val delete : ('a, 'b) path_builder -> ('a, 'b) path_builder
 (** [delete pattern] creates a DELETE route with the given pattern. *)
 
-val head : ('a, 'b) path -> ('a, 'b) path
+val head : ('a, 'b) path_builder -> ('a, 'b) path_builder
 (** [head pattern] creates a HEAD route with the given pattern. *)
 
 (** {1 Routing} *)
@@ -131,7 +171,7 @@ val router : route list -> Request.t -> Response.t
 
 (** {1 URL Generation} *)
 
-val sprintf : ('a, string) path -> 'a
+val sprintf : ('a, string) path_builder -> 'a
 (** [sprintf pattern args...] generates a URL from a route pattern and arguments.
 
     Define your route patterns once and reuse them for both routing and URL generation:
@@ -147,19 +187,13 @@ val sprintf : ('a, string) path -> 'a
       let url = sprintf user_path 42L  (* "/users/42" *)
     ]} *)
 
-(** {1 Middleware Integration} *)
-
-val with_middlewares : Middleware.t list -> route -> route
-(** [with_middlewares middlewares route] attaches middlewares to a route.
-    Middlewares are applied in order when the route matches. *)
-
 (** {1 Scoping} *)
 
 val scope :
    ?middlewares:Middleware.t list
-  -> ('a, 'a) path
+  -> ('a, 'a) path_builder
   -> route list
-  -> route list
+  -> route
 (** [scope ?middlewares prefix routes] groups routes under a common prefix.
     {[
       scope ~middlewares:[auth; logging] (s "api" / s "v1") [
@@ -223,7 +257,7 @@ module type Resource = sig
   type id
   (** The type of the resource identifier. *)
 
-  val id_path : (id -> 'a, 'a) path
+  val id_path : (id -> 'a, 'a) path_builder
   (** The path pattern for extracting the resource ID.
       This allows you to specify custom validation and formatting for IDs. *)
 
@@ -251,9 +285,9 @@ end
 
 val resource :
    ?middlewares:Middleware.t list
-  -> ('a, 'a) path
+  -> ('a, 'a) path_builder
   -> (module Resource)
-  -> route list
+  -> route
 (** [resource ?middlewares prefix module] creates RESTful routes for a resource.
 
     This generates 7 standard RESTful routes with proper HTTP methods:

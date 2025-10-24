@@ -280,6 +280,171 @@ let test_django_style_workflow () =
   Alcotest.(check (list string)) "Get color list" [ "red"; "blue" ] colors;
   Alcotest.(check (list string)) "Get tags list" [ "ocaml"; "web" ] tags
 
+(* Multipart tests *)
+
+let test_multipart_get_part_from_empty () =
+  let fields : Form.Multipart.t = [] in
+  let result = Form.Multipart.get_part "name" fields in
+  Alcotest.(check (option reject))
+    "Get part from empty list"
+    None
+    (Option.map (fun _ -> ()) result)
+
+let test_multipart_get_part_existing () =
+  let fields : Form.Multipart.t =
+    [ ( "name"
+      , { name = "name"
+        ; filename = None
+        ; content_type = "text/plain"
+        ; body = Piaf.Body.of_string "John"
+        } )
+    ]
+  in
+  let result = Form.Multipart.get_part "name" fields in
+  match result with
+  | Some part ->
+    Alcotest.(check string) "Name matches" "name" part.name;
+    Alcotest.(check (option string)) "No filename" None part.filename
+  | None -> Alcotest.fail "Expected to find part"
+
+let test_multipart_get_field_from_empty () =
+  let fields : Form.Multipart.t = [] in
+  let result = Form.Multipart.get_field "name" fields in
+  Alcotest.(check (option reject))
+    "Get field from empty list"
+    None
+    (Option.map (fun _ -> ()) result)
+
+let test_multipart_get_field_existing () =
+  let fields : Form.Multipart.t =
+    [ ( "name"
+      , { name = "name"
+        ; filename = None
+        ; content_type = "text/plain"
+        ; body = Piaf.Body.of_string "John"
+        } )
+    ]
+  in
+  let result = Form.Multipart.get_field "name" fields in
+  match result with
+  | Some (Ok value) -> Alcotest.(check string) "Value matches" "John" value
+  | Some (Error _) -> Alcotest.fail "Failed to read field"
+  | None -> Alcotest.fail "Expected to find field"
+
+let test_multipart_get_field_missing () =
+  let fields : Form.Multipart.t =
+    [ ( "name"
+      , { name = "name"
+        ; filename = None
+        ; content_type = "text/plain"
+        ; body = Piaf.Body.of_string "John"
+        } )
+    ]
+  in
+  let result = Form.Multipart.get_field "age" fields in
+  Alcotest.(check (option reject))
+    "Get missing field"
+    None
+    (Option.map (fun _ -> ()) result)
+
+let test_multipart_get_all_parts () =
+  let fields : Form.Multipart.t =
+    [ ( "tag"
+      , { name = "tag"
+        ; filename = None
+        ; content_type = "text/plain"
+        ; body = Piaf.Body.of_string "ocaml"
+        } )
+    ; ( "name"
+      , { name = "name"
+        ; filename = None
+        ; content_type = "text/plain"
+        ; body = Piaf.Body.of_string "John"
+        } )
+    ; ( "tag"
+      , { name = "tag"
+        ; filename = None
+        ; content_type = "text/plain"
+        ; body = Piaf.Body.of_string "web"
+        } )
+    ]
+  in
+  let result = Form.Multipart.get_all_parts "tag" fields in
+  Alcotest.(check int) "Number of parts" 2 (List.length result)
+
+let test_multipart_get_all_fields () =
+  let fields : Form.Multipart.t =
+    [ ( "tag"
+      , { name = "tag"
+        ; filename = None
+        ; content_type = "text/plain"
+        ; body = Piaf.Body.of_string "ocaml"
+        } )
+    ; ( "name"
+      , { name = "name"
+        ; filename = None
+        ; content_type = "text/plain"
+        ; body = Piaf.Body.of_string "John"
+        } )
+    ; ( "tag"
+      , { name = "tag"
+        ; filename = None
+        ; content_type = "text/plain"
+        ; body = Piaf.Body.of_string "web"
+        } )
+    ]
+  in
+  let result = Form.Multipart.get_all_fields "tag" fields in
+  match result with
+  | Ok values ->
+    Alcotest.(check (list string)) "Values match" [ "ocaml"; "web" ] values
+  | Error _ -> Alcotest.fail "Failed to read fields"
+
+let test_multipart_get_all_fields_empty () =
+  let fields : Form.Multipart.t =
+    [ ( "name"
+      , { name = "name"
+        ; filename = None
+        ; content_type = "text/plain"
+        ; body = Piaf.Body.of_string "John"
+        } )
+    ]
+  in
+  let result = Form.Multipart.get_all_fields "tag" fields in
+  match result with
+  | Ok values -> Alcotest.(check (list string)) "Empty list" [] values
+  | Error _ -> Alcotest.fail "Should return empty list"
+
+let test_multipart_drain_empty () =
+  let fields : Form.Multipart.t = [] in
+  let result = Form.Multipart.drain fields in
+  Alcotest.(check (result unit (of_pp (fun ppf _ -> Format.fprintf ppf "Msg"))))
+    "Drain empty list"
+    (Ok ())
+    result
+
+let test_multipart_drain_with_parts () =
+  let fields : Form.Multipart.t =
+    [ ( "name"
+      , { name = "name"
+        ; filename = None
+        ; content_type = "text/plain"
+        ; body = Piaf.Body.of_string "John"
+        } )
+    ; ( "avatar"
+      , { name = "avatar"
+        ; filename = Some "photo.jpg"
+        ; content_type = "image/jpeg"
+        ; body = Piaf.Body.of_string "fake image data"
+        } )
+    ]
+  in
+  let result = Form.Multipart.drain fields in
+  Alcotest.(check (result unit (of_pp (fun ppf _ -> Format.fprintf ppf "Msg"))))
+    "Drain successfully"
+    (Ok ())
+    result
+
 let tests =
   List.map
     (fun (name, cases) -> Format.asprintf "Form: %s" name, cases)
@@ -370,5 +535,41 @@ let tests =
             "Django-style workflow"
             `Quick
             test_django_style_workflow
+        ] )
+    ; ( "multipart tests"
+      , [ Alcotest.test_case
+            "Get part from empty"
+            `Quick
+            test_multipart_get_part_from_empty
+        ; Alcotest.test_case
+            "Get part existing"
+            `Quick
+            test_multipart_get_part_existing
+        ; Alcotest.test_case
+            "Get field from empty"
+            `Quick
+            test_multipart_get_field_from_empty
+        ; Alcotest.test_case
+            "Get field existing"
+            `Quick
+            test_multipart_get_field_existing
+        ; Alcotest.test_case
+            "Get field missing"
+            `Quick
+            test_multipart_get_field_missing
+        ; Alcotest.test_case "Get all parts" `Quick test_multipart_get_all_parts
+        ; Alcotest.test_case
+            "Get all fields"
+            `Quick
+            test_multipart_get_all_fields
+        ; Alcotest.test_case
+            "Get all fields empty"
+            `Quick
+            test_multipart_get_all_fields_empty
+        ; Alcotest.test_case "Drain empty" `Quick test_multipart_drain_empty
+        ; Alcotest.test_case
+            "Drain with parts"
+            `Quick
+            test_multipart_drain_with_parts
         ] )
     ]

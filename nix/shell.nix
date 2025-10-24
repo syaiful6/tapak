@@ -3,7 +3,7 @@
 with ocamlPackages;
 
 pkgs.mkShell {
-  inputsFrom = with packages; [ simdutf tapak tapak-compressions ];
+  inputsFrom = with packages; [ simdutf tapak tapak-compressions tapak-ppx ];
   buildInputs = [
     ocaml
     dune

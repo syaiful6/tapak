@@ -13,3 +13,11 @@ val create :
   -> t
 
 val call : t -> Request.t -> Response.t
+
+val use :
+   name:string
+  -> (module Middleware.Intf with type t = 'a)
+  -> 'a
+  -> Middleware.t
+
+val to_piaf : t -> Piaf.Request_info.t Piaf.Server.Handler.t

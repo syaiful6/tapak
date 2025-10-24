@@ -161,13 +161,13 @@ let test_bool_param () =
 
 let test_scope () =
   let open Router in
-  let routes =
+  let route =
     scope
       (s "api" / s "v1")
       [ (get (s "users") @-> fun _req -> Response.of_string ~body:"users" `OK) ]
   in
   let request = make_request "/api/v1/users" in
-  match match' routes request with
+  match match' [ route ] request with
   | Some _ -> ()
   | None -> Alcotest.fail "scoped route should have matched"
 
@@ -188,10 +188,7 @@ let test_url_generation () =
 let test_scope_with_middlewares () =
   let open Router in
   let module M = struct
-    type args = unit
-    type state = unit
-
-    let init () = ()
+    type t = unit
 
     let call () next req =
       let resp = next req in
@@ -201,14 +198,14 @@ let test_scope_with_middlewares () =
   end
   in
   let test_middleware = Middleware.use ~name:"test" (module M) () in
-  let routes =
+  let route =
     scope
       ~middlewares:[ test_middleware ]
       (s "api")
       [ (get (s "test") @-> fun _req -> Response.of_string ~body:"ok" `OK) ]
   in
   let request = make_request "/api/test" in
-  match match' routes request with
+  match match' [ route ] request with
   | Some response ->
     (match Piaf.Headers.get (Response.headers response) "x-test" with
     | Some value -> Alcotest.(check string) "middleware should run" "true" value
@@ -458,13 +455,13 @@ let test_root_doesnt_match_subpaths () =
 
 let test_scoped_empty_literal () =
   let open Router in
-  let routes =
+  let route =
     scope
       (s "users")
       [ (get (s "") @-> fun _req -> Response.of_string ~body:"user list" `OK) ]
   in
   let request = make_request "/users" in
-  match match' routes request with
+  match match' [ route ] request with
   | Some response ->
     Alcotest.(check bool)
       "scoped empty literal should match /users"
@@ -474,13 +471,13 @@ let test_scoped_empty_literal () =
 
 let test_scoped_empty_literal_no_trailing_slash () =
   let open Router in
-  let routes =
+  let route =
     scope
       (s "api" / s "v1")
       [ (get (s "") @-> fun _req -> Response.of_string ~body:"api index" `OK) ]
   in
   let request = make_request "/api/v1" in
-  match match' routes request with
+  match match' [ route ] request with
   | Some response ->
     Alcotest.(check bool)
       "nested scoped empty literal should match /api/v1"
@@ -491,7 +488,7 @@ let test_scoped_empty_literal_no_trailing_slash () =
 
 let test_scoped_with_trailing_route () =
   let open Router in
-  let routes =
+  let route =
     scope
       (s "users")
       [ (get (s "") @-> fun _req -> Response.of_string ~body:"user list" `OK)
@@ -500,10 +497,10 @@ let test_scoped_with_trailing_route () =
   in
   let request1 = make_request "/users" in
   let request2 = make_request "/users/new" in
-  (match match' routes request1 with
+  (match match' [ route ] request1 with
   | Some _ -> ()
   | None -> Alcotest.fail "/users should match");
-  match match' routes request2 with
+  match match' [ route ] request2 with
   | Some _ -> ()
   | None -> Alcotest.fail "/users/new should match"
 

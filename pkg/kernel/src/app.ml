@@ -10,3 +10,11 @@ let create ?(middlewares = []) ~handler () = { middlewares; handler }
 let call t request =
   let service = Middleware.apply_all t.middlewares t.handler in
   service request
+
+let use = Middleware.use
+
+let to_piaf app ctx =
+  let module H = Piaf.Server.Handler in
+  let context = Request_info.of_piaf ctx.H.ctx in
+  let request = { Request.request = ctx.H.request; ctx = context } in
+  call app request |> Response.to_piaf

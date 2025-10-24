@@ -1,4 +1,4 @@
 (test
  (name test)
- (modules :standard)
+ (modules test test_form test_router)
  (libraries alcotest fmt tapak.kernel))

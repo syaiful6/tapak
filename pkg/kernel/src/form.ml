@@ -1,4 +1,83 @@
-include Piaf.Form
+module Multipart = struct
+  module PM = Piaf.Form.Multipart
+
+  type part =
+    { name : string
+    ; filename : string option
+    ; content_type : string
+    ; body : Body.t
+    }
+
+  type t = (string * part) list
+
+  let to_msg_error = function
+    | `Msg msg -> `Msg msg
+    | `Bad_gateway -> `Msg "Bad gateway"
+    | `Bad_request -> `Msg "Bad request"
+    | `Connect_error msg -> `Msg ("Connect error: " ^ msg)
+    | `Exn exn -> `Msg ("Exception: " ^ Printexc.to_string exn)
+    | `Internal_server_error -> `Msg "Internal server error"
+    | `Invalid_response_body_length _ -> `Msg "Invalid response body length"
+    | `Malformed_response msg -> `Msg ("Malformed response: " ^ msg)
+    | `Protocol_error (_, msg) -> `Msg ("Protocol error: " ^ msg)
+    | `TLS_error _ -> `Msg "TLS error"
+    | `Upgrade_not_supported -> `Msg "Upgrade not supported"
+
+  let parse ?(max_chunk_size = 0x100000 (* 1 MB *)) request =
+    let { Request.request = piaf_request; _ } = request in
+    match PM.assoc ~max_chunk_size piaf_request with
+    | Error e -> Error (to_msg_error e)
+    | Ok piaf_fields ->
+      let fields =
+        List.map
+          (fun (_key, piaf_part) ->
+             let { PM.name; filename; content_type; body } = piaf_part in
+             name, { name; filename; content_type; body })
+          piaf_fields
+      in
+      Ok fields
+
+  let get_part key fields = List.assoc_opt key fields
+
+  let get_all_parts key fields =
+    List.filter_map
+      (fun (k, part) -> if String.equal k key then Some part else None)
+      fields
+
+  let get_field key fields =
+    match get_part key fields with
+    | None -> None
+    | Some { body; _ } ->
+      (match Body.to_string body with
+      | Ok value -> Some (Ok value)
+      | Error e -> Some (Error (to_msg_error e)))
+
+  let get_all_fields key fields =
+    let parts = get_all_parts key fields in
+    let rec read_all acc = function
+      | [] -> Ok (List.rev acc)
+      | { body; _ } :: rest ->
+        (match Body.to_string body with
+        | Ok value -> read_all (value :: acc) rest
+        | Error e -> Error (to_msg_error e))
+    in
+    read_all [] parts
+
+  let drain fields =
+    let rec drain_all errors = function
+      | [] ->
+        (match errors with
+        | [] -> Ok ()
+        | errs -> Error (`Msg (String.concat "; " (List.rev errs))))
+      | (_, { body; _ }) :: rest ->
+        (match Body.drain body with
+        | Ok () -> drain_all errors rest
+        | Error e ->
+          let err_msg = match to_msg_error e with `Msg m -> m in
+          drain_all (err_msg :: errors) rest)
+    in
+    drain_all [] fields
+end
 
 module Urlencoded = struct
   type t = (string * string list) list

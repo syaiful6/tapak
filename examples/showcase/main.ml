@@ -18,7 +18,7 @@ let home_handler _req =
     {|<h1>Tapak Showcases</h1>
 <ul>
   <li><a href="/users/123">User Profile</a></li>
-  <li><a href="/api/hello">JSON API</a></li>
+  <li><a href="/api/version">JSON API</a></li>
   <li><a href="/files/docs/readme.md">File Browser</a></li>
   <li><a href="/echo">Echo (POST with body)</a></li>
   <li><a href="/form">CSRF-Protected Form</a></li>
@@ -28,7 +28,7 @@ let user_handler id _req =
   let html = Printf.sprintf "<h1>User Profile</h1><p>User ID: %Ld</p>" id in
   Response.of_html ~status:`OK html
 
-let api_hello_handler req =
+let api_version_handler req =
   Response.negotiate
     req
     [ (`Json, fun () -> {|{"message": "Hello from Tapak!", "version": "1.0"}|})
@@ -148,6 +148,32 @@ let form_post_handler req =
       "<h1>400 Bad Request</h1><p>Invalid form data</p><p><a \
        href=\"/form\">Try again</a></p>"
 
+let api_users_handler _req =
+  Response.of_string
+    ~body:{|{"users": [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]}|}
+    `OK
+
+let api_detail_user_handler id _req =
+  match id with
+  | 1L -> Response.of_string ~body:{|{"id": 1, "name": "Alice"}|} `OK
+  | 2L -> Response.of_string ~body:{|{"id": 2, "name": "Bob"}|} `OK
+  | _ -> Response.of_string ~body:{|{"error": "User not found"}|} `Not_found
+
+let api_update_user_handler id req =
+  let body_content =
+    Result.fold
+      ~ok:Fun.id
+      ~error:(fun _ -> "")
+      (Body.to_string (Request.body req))
+  in
+  let response_text =
+    Printf.sprintf
+      {|{"message": "User %Ld updated", "data": %s}|}
+      id
+      (String.escaped body_content)
+  in
+  Response.of_string' ~status:`OK response_text
+
 let not_found _req =
   Response.of_string'
     ~status:`Not_found
@@ -155,15 +181,32 @@ let not_found _req =
 
 let setup_app env =
   let open Middleware in
-  let now () = Eio.Time.now (Eio.Stdenv.clock env) in
-
   let open Router in
+  let now () = Eio.Time.now (Eio.Stdenv.clock env) in
+  let decoder = Tapak_compressions.decoder in
+  let max_bytes = Int64.mul 10L (Int64.mul 1024L 1024L) in
+
   App.(
     routes
       ~not_found
       [ get (s "") @-> home_handler
       ; get (s "users" / int64) @-> user_handler
-      ; get (s "api" / s "hello") @-> api_hello_handler
+      ; scope
+          (s "api")
+          [ get (s "version") @-> api_version_handler
+          ; scope
+              ~middlewares:
+                [ use
+                    ~name:"Limit_request_size"
+                    (module Limit_request_size)
+                    (Limit_request_size.args ~max_bytes)
+                ]
+              (s "users")
+              [ get (s "") @-> api_users_handler
+              ; get int64 @-> api_detail_user_handler
+              ; post int64 @-> api_update_user_handler
+              ]
+          ]
       ; get (s "files" / str) @-> files_handler
       ; post (s "echo") @-> echo_handler
       ; put (s "echo") @-> echo_handler
@@ -172,13 +215,10 @@ let setup_app env =
       ]
       ()
     <++> [ use
-             ~name:"Request Logger"
+             ~name:"Request_logger"
              (module Request_logger)
              (Request_logger.args ~now ~trusted_proxies ())
-         ; use
-             ~name:"Decompression"
-             (module Decompression)
-             Tapak_compressions.decoder
+         ; use ~name:"Decompression" (module Decompression) decoder
          ])
 
 let setup_log ?(threaded = false) ?style_renderer level =
