@@ -17,7 +17,6 @@ let compress body =
     else
       match Piaf.Stream.take input_stream with
       | None ->
-        (* Flush and finish *)
         (try
            let rec flush () =
              let success, _consumed, output, is_finished =

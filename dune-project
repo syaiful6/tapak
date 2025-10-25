@@ -72,8 +72,6 @@
    (>= 0.2.0))
   (camlzip
    (>= 1.11))
-  conf-brotli
-  conf-zstd
   (alcotest :with-test)
   (odoc :with-doc))
  (tags

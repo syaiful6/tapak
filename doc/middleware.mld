@@ -31,18 +31,18 @@ let logger = Middleware.create ~filter:logger_filter ~name:"logger"
 
 {3 Module-based (Complex)}
 
-For middleware requiring initialization or state, use {!val:Tapak_kernel.Middleware.use} with the [Intf] signature:
+For middleware requiring configuration or state, use {!val:Tapak_kernel.Middleware.use} with the [Intf] signature:
 
 {[
 module type Intf = sig
-  type t    (* Configuration/parameters *)
+  type t    (* Configuration/parameters or state *)
 
   val call : t -> (Request.t, Response.t) Filter.simple
 end
 ]}
 
-- [t]: Configuration/parameters passed when creating the middleware
-- [call]: Returns a filter function that wraps handlers
+- [t]: Configuration, parameters, or state for the middleware
+- [call]: Takes configuration/state and returns a filter function that wraps handlers
 
 {1 Creating Middlewares}
 
@@ -62,17 +62,17 @@ let logger = Middleware.create ~filter:logger_filter ~name:"logger"
 
 {2 Configurable Logger (Module-based)}
 
-When you need configuration or state, use [Middleware.use]:
+When you need configuration, use [Middleware.use]:
 
 {[
 module Logger = struct
   type t = { prefix : string }
 
-  let call config next request =
+  let call { prefix } next request =
     let method_ = Piaf.Method.to_string (Request.meth request) in
     let path = Request.target request in
     Logs.info (fun m ->
-      m "%s: %s %s" config.prefix method_ path);
+      m "%s: %s %s" prefix method_ path);
     next request
 end
 
@@ -85,7 +85,7 @@ let logger = Middleware.use ~name:"logger" (module Logger) { prefix = "HTTP" }
 module Timer = struct
   type t = unit
 
-  let call () next request =
+  let call _unit next request =
     let start = Ptime_clock.now () in
     let response = next request in
     let finish = Ptime_clock.now () in
@@ -111,9 +111,9 @@ let user_key : User.t Context.key =
 module Auth = struct
   type t = { secret : string }
 
-  let call config next request =
+  let call { secret } next request =
     match Request.header "Authorization" request with
-    | Some token when verify_token config.secret token ->
+    | Some token when verify_token secret token ->
       let user = decode_user token in
       let ctx = Request.context request in
       let request' = Request.with_context (Context.add user_key user ctx) request in
@@ -194,8 +194,8 @@ let add_header = Middleware.create ~filter:add_header_filter ~name:"add_header"
 module AddHeader = struct
   type t = { name : string; value : string }
 
-  let call config next request =
-    let request' = Request.add_header config.name config.value request in
+  let call { name; value } next request =
+    let request' = Request.add_header name value request in
     next request'
 end
 
@@ -218,9 +218,9 @@ let cors = Middleware.create ~filter:cors_filter ~name:"cors"
 module AddCorsHeaders = struct
   type t = { origin : string }
 
-  let call config next request =
+  let call { origin } next request =
     let response = next request in
-    Response.add_header "Access-Control-Allow-Origin" config.origin response
+    Response.add_header "Access-Control-Allow-Origin" origin response
 end
 
 let cors = Middleware.use ~name:"cors" (module AddCorsHeaders) { origin = "https://example.com" }
@@ -228,26 +228,26 @@ let cors = Middleware.use ~name:"cors" (module AddCorsHeaders) { origin = "https
 
 {2 Conditional Execution}
 
-Execute handler only under certain conditions (requires state, so use module-based):
+Execute handler only under certain conditions (uses mutable state in [t]):
 
 {[
 module RateLimiter = struct
   type t = { max_requests : int; mutable count : int }
 
-  let call config next request =
-    if config.count >= config.max_requests then
+  let call ({ max_requests; _ } as state) next request =
+    if state.count >= max_requests then
       Response.create
         ~body:(Piaf.Body.of_string "Rate limit exceeded")
         `Too_many_requests
     else begin
-      config.count <- config.count + 1;
+      state.count <- state.count + 1;
       next request
     end
 end
 
 let rate_limiter =
-  let config = { max_requests = 100; count = 0 } in
-  Middleware.use ~name:"rate_limiter" (module RateLimiter) config
+  let state = { max_requests = 100; count = 0 } in
+  Middleware.use ~name:"rate_limiter" (module RateLimiter) state
 ]}
 
 {2 Error Handling}
@@ -390,15 +390,15 @@ module Cors = struct
     ; allowed_headers : string list
     }
 
-  let call config next request =
+  let call { allowed_origins; allowed_methods; allowed_headers } next request =
     let response = next request in
     response
     |> Response.add_header "Access-Control-Allow-Origin"
-         (String.concat ", " config.allowed_origins)
+         (String.concat ", " allowed_origins)
     |> Response.add_header "Access-Control-Allow-Methods"
-         (String.concat ", " config.allowed_methods)
+         (String.concat ", " allowed_methods)
     |> Response.add_header "Access-Control-Allow-Headers"
-         (String.concat ", " config.allowed_headers)
+         (String.concat ", " allowed_headers)
 end
 ]}
 
@@ -408,13 +408,13 @@ end
 module Gzip = struct
   type t = { threshold : int }
 
-  let call config next request =
+  let call { threshold } next request =
     let response = next request in
     (* Check if client accepts gzip *)
     match Request.header "Accept-Encoding" request with
     | Some encoding when String.contains encoding "gzip" ->
       (* Compress response body if it's large enough *)
-      compress_response ~threshold:config.threshold response
+      compress_response ~threshold response
     | _ -> response
 end
 ]}
@@ -443,8 +443,9 @@ Pass data between middlewares using the Context:
 {[
 (* Middleware 1: extracts user *)
 module Auth = struct
-  (* ... *)
-  let call state next request =
+  type t = unit
+
+  let call () next request =
     let user = authenticate request in
     let ctx = Context.add user_key user (Request.context request) in
     next (Request.with_context ctx request)
@@ -452,8 +453,9 @@ end
 
 (* Middleware 2: uses user data *)
 module Authorize = struct
-  (* ... *)
-  let call state next request =
+  type t = unit
+
+  let call () next request =
     match Context.find user_key (Request.context request) with
     | Some user when has_permission user ->
       next request

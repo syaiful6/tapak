@@ -4,7 +4,6 @@ let test_zstd_basic_compression () =
   let original = "Hello, World! This is a test string for Zstd compression." in
 
   Zstd.Compress.with_cctx (fun cctx ->
-    (* Compress the data *)
     let status, consumed, compressed, is_finished =
       Zstd.Compress.compress_stream ~finish:false cctx original
     in
@@ -19,7 +18,6 @@ let test_zstd_basic_compression () =
       consumed;
     Alcotest.(check bool) "should not be finished yet" false is_finished;
 
-    (* Finish compression *)
     let status2, _consumed2, compressed2, is_finished2 =
       Zstd.Compress.compress_stream ~finish:true cctx ""
     in
@@ -29,7 +27,6 @@ let test_zstd_basic_compression () =
 
     let full_compressed = compressed ^ compressed2 in
 
-    (* Decompress and verify *)
     Zstd.Decompress.with_dctx (fun dctx ->
       let rec decompress_all acc input =
         if String.length input = 0
@@ -68,7 +65,6 @@ let test_zstd_empty_string () =
     Alcotest.(check int) "should consume all input" 0 consumed;
     Alcotest.(check bool) "should be finished" true is_finished;
 
-    (* Decompress empty compressed data *)
     Zstd.Decompress.with_dctx (fun dctx ->
       let rec decompress_all acc input =
         if String.length input = 0
@@ -93,12 +89,10 @@ let test_zstd_empty_string () =
         decompressed))
 
 let test_zstd_large_data () =
-  (* Create a large string with repetitive data (compresses well) *)
   let chunk = "The quick brown fox jumps over the lazy dog. " in
   let original = String.concat "" (List.init 1000 (fun _ -> chunk)) in
 
   Zstd.Compress.with_cctx ~level:5 (fun cctx ->
-    (* Compress the data first, then finish *)
     let status1, consumed1, compressed1, _is_finished1 =
       Zstd.Compress.compress_stream ~finish:false cctx original
     in
@@ -112,7 +106,6 @@ let test_zstd_large_data () =
       (String.length original)
       consumed1;
 
-    (* Finish compression *)
     let status2, _consumed2, compressed2, is_finished2 =
       Zstd.Compress.compress_stream ~finish:true cctx ""
     in
@@ -122,13 +115,11 @@ let test_zstd_large_data () =
 
     let compressed = compressed1 ^ compressed2 in
 
-    (* Check that compression actually reduced the size *)
     Alcotest.(check bool)
       "compressed should be smaller"
       true
       (String.length compressed < String.length original);
 
-    (* Decompress and verify *)
     Zstd.Decompress.with_dctx (fun dctx ->
       let rec decompress_all acc input =
         if String.length input = 0
@@ -153,7 +144,6 @@ let test_zstd_large_data () =
         decompressed))
 
 let test_zstd_streaming () =
-  (* Test streaming compression with multiple chunks *)
   let chunks =
     [ "First chunk of data. "
     ; "Second chunk of data. "
@@ -166,7 +156,6 @@ let test_zstd_streaming () =
   Zstd.Compress.with_cctx (fun cctx ->
     let compressed_parts = ref [] in
 
-    (* Compress each chunk *)
     List.iter
       (fun chunk ->
          let status, consumed, compressed, _is_finished =
@@ -186,7 +175,6 @@ let test_zstd_streaming () =
          then compressed_parts := compressed :: !compressed_parts)
       chunks;
 
-    (* Finish the stream *)
     let status, _consumed, compressed, is_finished =
       Zstd.Compress.compress_stream ~finish:true cctx ""
     in
@@ -199,7 +187,6 @@ let test_zstd_streaming () =
 
     let full_compressed = String.concat "" (List.rev !compressed_parts) in
 
-    (* Decompress *)
     Zstd.Decompress.with_dctx (fun dctx ->
       let rec decompress_all acc input =
         if String.length input = 0
@@ -226,7 +213,6 @@ let test_zstd_streaming () =
 let test_zstd_compression_levels () =
   let original = "Testing different compression levels with Zstd!" in
 
-  (* Test with different compression levels *)
   List.iter
     (fun level ->
        Zstd.Compress.with_cctx ~level (fun cctx ->
@@ -255,7 +241,6 @@ let test_zstd_compression_levels () =
 
          let compressed = compressed1 ^ compressed2 in
 
-         (* Verify decompression *)
          Zstd.Decompress.with_dctx (fun dctx ->
            let rec decompress_all acc input =
              if String.length input = 0

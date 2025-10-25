@@ -1,6 +1,8 @@
 (rule
  (targets simdutf.h simdutf.cpp)
  (deps download_simdutf.sh)
+ (enabled_if
+  (= true %{env:DOWNLOAD_SIMDUTF=true}))
  (action
   (progn
    (chdir

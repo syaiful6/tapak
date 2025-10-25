@@ -14,23 +14,11 @@ The framework is split into multiple packages:
 {1 Key Features}
 
 - {b Composable Architecture}: Build applications from small, reusable components
-- {b Type-Safe Routing}: Pattern matching based router with parameter extraction and splat matching
+- {b Type-Safe Routing}: GADT-based router with compile-time parameter type checking and type-safe URL generation
 - {b Middleware Pipeline}: Chain middlewares to handle cross-cutting concerns
 - {b Request/Response Compression}: Built-in support for gzip, deflate, brotli, and zstd
 - {b Built on EIO}: Uses OCaml 5's effect-based I/O for excellent performance
 - {b Finagle-Inspired}: Adopts proven patterns from Twitter's battle-tested framework
-
-{1 Installation}
-
-Add tapak to your [dune-project]:
-
-{[
-(package
-  (name your-app)
-  (depends
-    (tapak (>= 0.1.0))
-    (tapak-compressions (>= 0.1.0))))
-]}
 
 {1 Quick Start}
 
@@ -39,31 +27,46 @@ Here's a simple example to get you started:
 {[
 open Tapak
 
-let hello_handler _request =
-  Response.create
-    ~body:(Body.of_string "Hello, World!")
-    `OK
+(* Define handlers with typed parameters *)
+let home_handler _request =
+  Response.of_html ~status:`OK
+    "<h1>Welcome to Tapak!</h1>"
 
-let routes =
-  Router.router
-    [ Router.get "/" hello_handler
-    ; Router.get "/hello/:name" (fun request ->
-        match Router.route_params request with
-        | Some params ->
-          let name = List.assoc "name" params in
-          Response.create
-            ~body:(Body.of_string ("Hello, " ^ name ^ "!"))
-            `OK
-        | None -> Response.create `Not_found)
-    ]
+let user_handler user_id _request =
+  (* user_id is automatically parsed as int64 *)
+  let html = Printf.sprintf "<h1>User %Ld</h1>" user_id in
+  Response.of_html ~status:`OK html
 
-(* Create an app with compression middleware *)
-let app =
-  App.create routes
-  |> App.(<+>) (Middleware.Compression.middleware
-                  ~predicate:Tapak_compressions.Predicate.default_predicate
-                  ~preferred_encodings:[`Br; `Zstd; `Gzip]
-                  Tapak_compressions.encoder)
+let hello_handler name _request =
+  (* name is a typed string parameter *)
+  let html = Printf.sprintf "<h1>Hello, %s!</h1>" name in
+  Response.of_html ~status:`OK html
+
+(* Create app with type-safe routing *)
+let app env =
+  let open Middleware in
+  let open Router in
+  App.(
+    routes
+      [ get (s "") @-> home_handler
+      ; get (s "users" / int64) @-> user_handler
+      ; get (s "hello" / str) @-> hello_handler
+      ]
+      ()
+    <++> [ use ~name:"Logger" (module Request_logger)
+             (Request_logger.args
+               ~now:(fun () -> Eio.Time.now (Eio.Stdenv.clock env))
+               ())
+         ])
+
+(* Run with EIO *)
+let () =
+  Eio_main.run @@ fun env ->
+  let port = 3000 in
+  let address = `Tcp (Eio.Net.Ipaddr.V4.any, port) in
+  let config = Piaf.Server.Config.create address in
+  Printf.printf "Server running on http://localhost:%d\n" port;
+  ignore (Server.run_with ~config ~env (app env))
 ]}
 
 {1 Documentation}

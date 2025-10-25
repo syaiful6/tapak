@@ -1,5 +1,3 @@
-(* Main test runner for compression library *)
-
 let () =
   Alcotest.run
     "Tapak Compressions"

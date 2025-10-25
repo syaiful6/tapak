@@ -37,6 +37,45 @@ functional programming for web development, while keeping pragmatism in mind.
 - **Finagle-Inspired**: Adopts proven patterns from Twitter's battle-tested framework
 - **PPX Support**: Optional PPX for Django/Flask-style route annotations
 
+## Installation
+
+Since Tapak is still in development and the API is being designed,
+it's not yet published to Opam. You can still install it using one of the following methods:
+
+### Using Opam Pin
+
+Pin the repository directly from GitHub:
+
+```bash
+# Pin from the main branch
+opam pin add tapak https://github.com/syaiful6/tapak.git
+
+# Or pin from a specific branch
+opam pin add tapak https://github.com/syaiful6/tapak.git#branch-name
+
+# Install dependencies and build
+opam install tapak --deps-only
+```
+
+### Using Nix Flakes
+
+Add Tapak as a flake input in your `flake.nix`:
+
+```nix
+{
+  inputs = {
+    tapak.url = "github:syaiful6/tapak";
+    # Or specify a branch:
+    # tapak.url = "github:syaiful6/tapak/main";
+  };
+
+  outputs = { self, tapak, ... }: {
+    # Use tapak in your development environment or package build
+    # you know how to do this, you use nix btw.
+  };
+}
+```
+
 ## Quick Start
 
 Here's a simple example demonstrating type-safe routing, middleware composition, and EIO integration:

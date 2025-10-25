@@ -72,16 +72,13 @@ let logger next request =
 let logger_mw = Middleware.create ~filter:logger ~name:"logger"
 ]}
 
-{b Module-based (with state):}
+{b Module-based (with configuration):}
 {[
 module Logger = struct
-  type args = { prefix : string }
-  type state = { prefix : string }
+  type t = { prefix : string }
 
-  let init args = args
-
-  let call state next request =
-    Printf.printf "%s: %s\n" state.prefix (Request.target request);
+  let call { prefix } next request =
+    Printf.printf "%s: %s\n" prefix (Request.target request);
     next request
 end
 
@@ -315,10 +312,7 @@ EIO's effect handlers provide:
 
 {[
 module Auth = struct
-  type args = { token_key : string }
-  type state = args
-
-  let init args = args
+  type t = { token_key : string }
 
   let call { token_key } next request =
     match Request.header "Authorization" request with
@@ -350,10 +344,7 @@ let error_mw = Middleware.create ~filter:error_handler ~name:"errors"
 
 {[
 module Logger = struct
-  type args = { clock : Eio.Time.clock }
-  type state = args
-
-  let init args = args
+  type t = { clock : Eio.Time.clock }
 
   let call { clock } next request =
     let start = Eio.Time.now clock in
@@ -372,16 +363,20 @@ end
 {2 Composition Example}
 
 {[
+open Router
+
 let app =
-  Router.router
-    [ Router.scope "/api"
+  App.routes
+    [ scope
         ~middlewares:[ rate_limiter; auth ]
-        [ Router.get "/users" list_users
-        ; Router.post "/users" create_user
+        (s "api")
+        [ get (s "users") @-> list_users
+        ; post (s "users") @-> create_user
         ]
-    ; Router.scope "/public"
-        [ Router.get "/health" health_check ]
+    ; scope (s "public")
+        [ get (s "health") @-> health_check ]
     ]
+    ()
   <++> [ logger
        ; error_handler
        ; compression

@@ -14,7 +14,6 @@ let decompress body =
       cleanup ();
       None
     | Some { Piaf.IOVec.buffer; off; len } ->
-      (* Convert IOVec to string for Zstd *)
       let chunk = Bigstringaf.substring buffer ~off ~len in
       (try
          let status, _consumed, output =

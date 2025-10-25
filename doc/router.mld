@@ -2,14 +2,23 @@
 
 {1 Introduction}
 
-The Tapak router provides type-safe, composable routing for HTTP requests using GADTs (Generalized Algebraic Data Types). Unlike traditional string-based routers, Tapak's router ensures that route parameters are properly typed and extracted at compile time.
+The Tapak router is a {b GADT-based} (Generalized Algebraic Data Types) routing system that provides compile-time type safety for HTTP request routing. Unlike traditional string-based routers that parse route parameters at runtime, Tapak's router validates parameter types at compile time and ensures handlers receive correctly typed arguments.
+
+{b Why GADTs?}
+
+GADTs allow the type system to encode the structure of routes and their parameters. This means:
+- Route patterns like [(s "users" / int64)] encode both the URL structure and parameter types
+- The compiler ensures handler signatures match route parameter types
+- Invalid routes and type mismatches are caught at compile time, not runtime
+- URL generation is type-safe - [sprintf] requires the exact types the route expects
 
 Key features:
-- Type-safe parameter extraction (int, int32, int64, string, bool)
-- Compile-time route validation
-- Clean, composable syntax
-- Scoped routes with middleware isolation
-- Type-safe URL generation
+- {b Compile-time type safety}: Parameter types validated when routes are defined
+- {b No runtime parsing errors}: Invalid parameter values result in non-matching routes (404)
+- {b Type-safe URL generation}: Generate URLs with compile-time parameter type checking
+- {b Clean, composable syntax}: Routes look like the URLs they match
+- {b Scoped routes}: Group routes with shared prefixes and middleware
+- {b Multiple parameter types}: int, int32, int64, string, bool, slug, custom validators, and splat
 
 {1 Basic Routing}
 
@@ -945,40 +954,129 @@ let routes =
     ]
 ]}
 
-{1 Comparison with String-Based Routers}
+{1 How GADTs Enable Type-Safe Routing}
 
-{2 Traditional String-Based Router}
+{2 The Problem with String-Based Routers}
+
+Traditional web frameworks use string patterns for routing, which leads to several issues:
 
 {[
 (* String-based: runtime parsing, no type safety *)
 Router.get "/users/:id" (fun req ->
   match Router.route_params req with
   | Some params ->
-    let id_str = List.assoc "id" params in
-    begin match int_of_string_opt id_str with
+    let id_str = List.assoc "id" params in  (* String lookup - can fail *)
+    begin match int_of_string_opt id_str with  (* Runtime parsing - can fail *)
     | Some id -> (* handle with int id *)
     | None -> Response.create `Bad_request (* invalid id *)
     end
   | None -> Response.create `Not_found)
 ]}
 
-{2 Type-Safe GADT Router}
+Problems:
+- {b Parameter names are strings}: Typos like ["user_id"] vs ["userId"] cause runtime errors
+- {b Types are unknown}: The router doesn't know [":id"] should be an integer
+- {b Parsing happens at request time}: Every request pays the cost of string→int conversion
+- {b Error handling is manual}: You must handle parse failures yourself
+- {b No compile-time validation}: Handler signature mismatches aren't caught
+
+{2 The GADT Solution}
+
+Tapak uses GADTs to encode route structure and parameter types in the type system:
 
 {[
-(* GADT-based: compile-time types, guaranteed valid *)
-Router.get (Router.s "users" / Router.int64)
-  @-> fun id req ->
-    (* id is already int64, no parsing needed *)
-    (* Invalid ids result in 404, not 400 *)
-    Response.of_html ~status:`OK (render_user id)
+(* GADT-based: compile-time types, guaranteed correctness *)
+let user_path = Router.(s "users" / int64)
+
+let handler (user_id : int64) (req : Request.t) : Response.t =
+  (* user_id is ALWAYS int64 - guaranteed by the type system *)
+  Response.of_html ~status:`OK (render_user user_id)
+
+let routes = Router.[ get user_path @-> handler ]
+
+(* The compiler verifies:
+   - Pattern is (s "users" / int64)
+   - Handler takes (int64 -> Request.t -> Response.t)
+   - They match! ✓
+*)
 ]}
 
-Benefits:
-- No manual parameter parsing
-- No runtime parsing errors
-- Compiler ensures handler signatures match routes
-- Type-safe URL generation
-- Better IDE support (autocomplete, type hints)
+{b Type Error Example:}
+
+{[
+(* This WON'T compile - type mismatch caught at compile time *)
+let wrong_handler (user_id : int) (req : Request.t) : Response.t =
+  Response.of_html ~status:`OK (render_user user_id)
+
+let routes = Router.[ get user_path @-> wrong_handler ]
+(*                                        ^^^^^^^^^^^^
+   Error: This expression has type int -> Request.t -> Response.t
+          but an expression was expected of type int64 -> Request.t -> Response.t
+*)
+]}
+
+{2 GADT Benefits in Practice}
+
+{b 1. Type-Safe URL Generation}
+
+{[
+(* Define the pattern once *)
+let user_post_path = Router.(s "users" / int64 / s "posts" / str)
+
+(* Use for routing *)
+let routes = Router.[ get user_post_path @-> post_handler ]
+
+(* Use for URL generation - types are enforced *)
+let url = Router.sprintf user_post_path 42L "hello-world"
+(* Result: "/users/42/posts/hello-world" *)
+
+(* This WON'T compile - wrong types *)
+let bad_url = Router.sprintf user_post_path "not-a-number" 123
+(*                                          ^^^^^^^^^^^^^^
+   Error: Expected int64, got string
+*)
+]}
+
+{b 2. Zero Runtime Parsing Overhead}
+
+GADTs allow the router to parse parameters once during route matching:
+
+{[
+(* Traditional router: parse on EVERY request *)
+Request → Match route → Extract "42" → Parse to int64 → Call handler
+
+(* GADT router: parse during matching *)
+Request → Match route + parse "42" to 42L → Call handler with 42L
+]}
+
+The handler receives typed values directly - no [int_of_string] needed.
+
+{b 3. Impossible States Are Unrepresentable}
+
+{[
+(* With string-based routing, these errors are possible: *)
+- Forgetting to parse a parameter
+- Parsing with the wrong type (int vs int64)
+- Typo in parameter name
+- Missing parameter in handler signature
+
+(* With GADT routing, the compiler prevents all of these *)
+]}
+
+{2 Comparison Summary}
+
+{table
+  {tr {th Aspect} {th String-Based} {th GADT-Based}}
+  {tr {td Parameter types} {td Unknown until runtime} {td Known at compile time}}
+  {tr {td Parsing errors} {td Handled at request time} {td Impossible - won't compile}}
+  {tr {td Handler signature} {td Not validated} {td Validated by compiler}}
+  {tr {td URL generation} {td String concatenation} {td Type-safe [sprintf]}}
+  {tr {td IDE support} {td Limited} {td Full autocomplete & type hints}}
+  {tr {td Performance} {td Parse every request} {td Parse during route matching}}
+  {tr {td Refactoring} {td Runtime errors} {td Compile-time errors}}
+}
+
+The GADT approach trades a bit of initial complexity (learning the combinators) for {b guaranteed correctness} and {b better developer experience}.
 
 {1 See Also}
 

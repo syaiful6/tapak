@@ -6,7 +6,6 @@ let test_brotli_basic_compression () =
   in
 
   Brotli.Encoder.with_encoder (fun encoder ->
-    (* Compress the data with Finish operation *)
     let success, consumed, compressed, is_finished =
       Brotli.Encoder.compress_stream encoder original Brotli.Finish
     in
@@ -18,7 +17,6 @@ let test_brotli_basic_compression () =
       consumed;
     Alcotest.(check bool) "should be finished" true is_finished;
 
-    (* Decompress and verify *)
     Brotli.Decoder.with_decoder (fun decoder ->
       let rec decompress_all acc input =
         if String.length input = 0
@@ -55,7 +53,6 @@ let test_brotli_empty_string () =
     Alcotest.(check int) "should consume all input" 0 consumed;
     Alcotest.(check bool) "should be finished" true is_finished;
 
-    (* Decompress empty compressed data *)
     Brotli.Decoder.with_decoder (fun decoder ->
       let rec decompress_all acc input =
         if String.length input = 0
@@ -81,12 +78,10 @@ let test_brotli_empty_string () =
         decompressed))
 
 let test_brotli_large_data () =
-  (* Create a large string with repetitive data (compresses well) *)
   let chunk = "The quick brown fox jumps over the lazy dog. " in
   let original = String.concat "" (List.init 1000 (fun _ -> chunk)) in
 
   Brotli.Encoder.with_encoder ~quality:6 (fun encoder ->
-    (* Process the data first *)
     let success1, consumed1, compressed1, _is_finished1 =
       Brotli.Encoder.compress_stream encoder original Brotli.Process
     in
@@ -97,7 +92,6 @@ let test_brotli_large_data () =
       (String.length original)
       consumed1;
 
-    (* Finish the stream *)
     let success2, _consumed2, compressed2, is_finished2 =
       Brotli.Encoder.compress_stream encoder "" Brotli.Finish
     in
@@ -107,16 +101,13 @@ let test_brotli_large_data () =
 
     let compressed = compressed1 ^ compressed2 in
 
-    (* Check that compression actually reduced the size *)
     Alcotest.(check bool)
       "compressed should be smaller"
       true
       (String.length compressed < String.length original);
 
-    (* Decompress and verify *)
     Brotli.Decoder.with_decoder (fun decoder ->
       let rec decompress_all acc input prev_acc_len iterations =
-        (* Safety: bail if too many iterations *)
         if iterations > 10000
         then Alcotest.fail "Too many decompression iterations";
         if String.length input = 0
@@ -139,7 +130,6 @@ let test_brotli_large_data () =
               (String.length new_acc)
               (iterations + 1)
           | Brotli.Needs_more_output ->
-            (* Safety check: if we're not making progress, fail *)
             if
               consumed = 0
               && String.length output = 0
@@ -155,7 +145,6 @@ let test_brotli_large_data () =
         decompressed))
 
 let test_brotli_streaming () =
-  (* Test streaming compression with multiple chunks using Process and Finish *)
   let chunks =
     [ "First chunk of data. "
     ; "Second chunk of data. "
@@ -168,7 +157,6 @@ let test_brotli_streaming () =
   Brotli.Encoder.with_encoder (fun encoder ->
     let compressed_parts = ref [] in
 
-    (* Compress each chunk *)
     List.iteri
       (fun i chunk ->
          let is_last = i = List.length chunks - 1 in
@@ -192,7 +180,6 @@ let test_brotli_streaming () =
 
     let full_compressed = String.concat "" (List.rev !compressed_parts) in
 
-    (* Decompress *)
     Brotli.Decoder.with_decoder (fun decoder ->
       let rec decompress_all acc input =
         if String.length input = 0
@@ -218,7 +205,6 @@ let test_brotli_streaming () =
         decompressed))
 
 let test_brotli_flush_operation () =
-  (* Test the Flush operation which forces output without finishing *)
   let original = "Data that needs flushing." in
 
   Brotli.Encoder.with_encoder (fun encoder ->
@@ -237,7 +223,6 @@ let test_brotli_flush_operation () =
       false
       is_finished1;
 
-    (* Finish the stream *)
     let success2, _consumed2, compressed2, is_finished2 =
       Brotli.Encoder.compress_stream encoder "" Brotli.Finish
     in
@@ -247,7 +232,6 @@ let test_brotli_flush_operation () =
 
     let full_compressed = compressed1 ^ compressed2 in
 
-    (* Decompress and verify *)
     Brotli.Decoder.with_decoder (fun decoder ->
       let rec decompress_all acc input =
         if String.length input = 0
@@ -275,7 +259,6 @@ let test_brotli_flush_operation () =
 let test_brotli_quality_levels () =
   let original = "Testing different quality levels with Brotli!" in
 
-  (* Test with different quality levels (0-11 for Brotli) *)
   List.iter
     (fun quality ->
        Brotli.Encoder.with_encoder ~quality (fun encoder ->
@@ -293,7 +276,6 @@ let test_brotli_quality_levels () =
            consumed;
          Alcotest.(check bool) "should be finished" true is_finished;
 
-         (* Verify decompression *)
          Brotli.Decoder.with_decoder (fun decoder ->
            let rec decompress_all acc input =
              if String.length input = 0

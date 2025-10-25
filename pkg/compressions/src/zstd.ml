@@ -61,7 +61,6 @@ module Decompress = struct
     Fun.protect ~finally:(fun () -> destroy dctx) (fun () -> f dctx)
 end
 
-(* High-level compression API *)
 module Compress = struct
   type t = cctx
 

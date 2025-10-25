@@ -90,17 +90,15 @@ let logger_filter next request =
 let logger_middleware = Middleware.create ~filter:logger_filter ~name:"logger"
 ]}
 
-{3 Module-based Middleware (For Complex State)}
+{3 Module-based Middleware (For Configuration or State)}
 
-For middleware that needs initialization or state management, use the module interface:
+For middleware that needs configuration or state, use the module interface:
 
 {[
 module type Intf = sig
-  type args
-  type state
+  type t
 
-  val init : args -> state
-  val call : state -> (Request.t, Response.t) Filter.simple
+  val call : t -> (Request.t, Response.t) Filter.simple
 end
 ]}
 
@@ -108,14 +106,11 @@ Example:
 
 {[
 module Logger = struct
-  type args = { prefix : string }
-  type state = { prefix : string }
+  type t = { prefix : string }
 
-  let init args = args
-
-  let call state next request =
+  let call { prefix } next request =
     let path = Request.target request in
-    Printf.printf "%s: %s\n" state.prefix path;
+    Printf.printf "%s: %s\n" prefix path;
     next request
 end
 
@@ -147,25 +142,28 @@ let response = App.call app request
 
 {2 Router}
 
-The {!module:Tapak_kernel.Router} module provides pattern-based routing with:
+The {!module:Tapak_kernel.Router} module provides GADT-based type-safe routing with:
 
-- Path parameter extraction: [/users/:id]
-- Single splat matching: [/users/*] (matches one segment)
-- Full splat matching: [/admin/**] (matches all sub-paths)
+- Typed path parameters: [int64], [str], [bool], etc.
+- Splat matching: capture remaining path segments as [string list]
 - Scoped routes with middleware isolation
 - RESTful resource routing
+- Type-safe URL generation via [sprintf]
 
 {[
+open Router
+
 let routes =
-  Router.router
-    [ Router.scope "/api"
-        [ Router.get "/users" list_users
-        ; Router.get "/users/:id" get_user
-        ; Router.post "/users" create_user
+  App.routes
+    [ scope (s "api")
+        [ get (s "users") @-> list_users
+        ; get (s "users" / int64) @-> get_user
+        ; post (s "users") @-> create_user
         ]
-    ; Router.scope "/admin"
-        [ Router.get "/**" serve_admin_spa ]
+    ; scope (s "admin")
+        [ get (s "spa" / splat) @-> serve_admin_spa ]
     ]
+    ()
 ]}
 
 See {!page-router} for detailed routing documentation.
@@ -223,26 +221,27 @@ let logger_filter next request =
 
 let logger = Middleware.create ~filter:logger_filter ~name:"logger"
 
-(* Define handlers *)
+(* Define handlers with typed parameters *)
 let home_handler _request =
-  Response.create ~body:(Piaf.Body.of_string "Home") `OK
+  Response.of_html ~status:`OK "<h1>Home</h1>"
 
-let user_handler request =
-  match Router.route_params request with
-  | Some params ->
-    let id = List.assoc "id" params in
-    let body = Printf.sprintf "User %s" id in
-    Response.create ~body:(Piaf.Body.of_string body) `OK
-  | None -> Response.create `Not_found
+let user_handler (user_id : int64) _request =
+  (* user_id is automatically parsed and typed as int64 *)
+  let body = Printf.sprintf "<h1>User %Ld</h1>" user_id in
+  Response.of_html ~status:`OK body
 
 (* Combine into application *)
 let app =
-  Router.router
-    [ Router.scope ~middlewares:[logger] "/"
-        [ Router.get "/" home_handler
-        ; Router.get "/users/:id" user_handler
+  let open Router in
+  App.routes
+    [ scope
+        ~middlewares:[logger]
+        (s "")
+        [ get (s "") @-> home_handler
+        ; get (s "users" / int64) @-> user_handler
         ]
     ]
+    ()
 ]}
 
 {1 Next Steps}
