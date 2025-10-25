@@ -52,6 +52,7 @@
   yojson
   mirage-crypto
   mirage-crypto-rng
+  (reason :with-dev)
   (alcotest :with-test)
   (odoc :with-doc))
  (tags

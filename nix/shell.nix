@@ -12,6 +12,7 @@ pkgs.mkShell {
     alcotest
     utop
     odoc
+    reason
     pkgs.openssl
     pkgs.postgresql
     pkgs.pkg-config

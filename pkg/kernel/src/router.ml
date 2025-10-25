@@ -90,6 +90,7 @@ let put pattern = Method (`PUT, pattern)
 let patch pattern = Method (`Other "PATCH", pattern)
 let delete pattern = Method (`DELETE, pattern)
 let head pattern = Method (`HEAD, pattern)
+let any pattern = Method (`Other "*", pattern)
 let parse_int s = try Some (int_of_string s) with Failure _ -> None
 let parse_int32 s = try Some (Int32.of_string s) with Failure _ -> None
 let parse_int64 s = try Some (Int64.of_string s) with Failure _ -> None
@@ -116,6 +117,7 @@ let rec match_pattern : type a b. (a, b) path -> string list -> a -> b option =
  fun pattern segments k ->
   match pattern, segments with
   | Nil, [] -> Some k
+  | Nil, _ :: _ -> None (* Reject trailing segments *)
   | Literal ("", rest), [] -> match_pattern rest [] k
   | Literal (expected, rest), seg :: segs when String.equal expected seg ->
     match_pattern rest segs k
@@ -165,8 +167,11 @@ let rec match_route ?(middlewares = []) route request =
   match route with
   | Route route ->
     let method_matches =
-      Piaf.Method.to_string route.method_
-      = Piaf.Method.to_string (Request.meth request)
+      match route.method_ with
+      | `Other "*" -> true (* Match any HTTP method *)
+      | _ ->
+        Piaf.Method.to_string route.method_
+        = Piaf.Method.to_string (Request.meth request)
     in
     if not method_matches
     then None
