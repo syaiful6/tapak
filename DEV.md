@@ -15,7 +15,6 @@ cargo install systemfd
 Use `Server.run_dev` instead of `Server.run_with` in your main entry point:
 
 ```ocaml
-(* bin/main.ml *)
 let () =
   Eio_main.run @@ fun env ->
   let config = Piaf.Server.Config.create (`Tcp (Eio.Net.Ipaddr.V4.loopback, 3000)) in
@@ -89,32 +88,6 @@ let () =
   Server.run_with ~config ~env app
 ```
 
-## Creating a Development Script
-
-You can create a `bin/dev` script for convenience:
-
-```bash
-#!/usr/bin/env bash
-# bin/dev
-set -euo pipefail
-
-PORT="${PORT:-3000}"
-
-echo "Starting Tapak development server on port $PORT"
-echo "Hot reload enabled - save files to trigger rebuild"
-echo ""
-
-exec systemfd --no-pid -s "http::$PORT" -- \
-  watchexec -r -e ml,mli --ignore _build -- dune exec ./bin/main.exe
-```
-
-Make it executable:
-
-```bash
-chmod +x bin/dev
-./bin/dev
-```
-
 ## Troubleshooting
 
 ### "Address already in use" error
@@ -123,17 +96,6 @@ If you see this error, another process is using the port. Either:
 
 - Kill the other process: `lsof -ti:3000 | xargs kill`
 - Use a different port: `PORT=3001 ./bin/dev`
-
-### systemfd or watchexec not found
-
-Install them with cargo:
-
-```bash
-cargo install systemfd
-cargo install watchexec-cli
-```
-
-Or use your system's package manager if available.
 
 ### Hot reload not working
 
