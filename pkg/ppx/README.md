@@ -97,8 +97,6 @@ let get_user_route =
 
 ## Roadmap
 
-See [PPX_TAPAK_DESIGN.md](../../PPX_TAPAK_DESIGN.md) for the complete design.
-
 - [ ] Type inference from function signatures (currently defaults to `int`)
 - [ ] Parameter type annotations with `[@param type]`
 - [ ] Multiple parameter types (int32, int64, string, bool, slug, custom)

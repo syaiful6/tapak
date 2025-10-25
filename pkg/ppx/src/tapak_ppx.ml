@@ -70,12 +70,12 @@ let extract_handler_name ~loc:_ pat =
 
 let validate_http_method ~loc method_str =
   match method_str with
-  | "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "HEAD" -> ()
+  | "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "HEAD" | "ANY" -> ()
   | _ ->
     Location.raise_errorf
       ~loc
       "Invalid HTTP method '%s'. Supported methods: GET, POST, PUT, DELETE, \
-       PATCH, HEAD"
+       PATCH, HEAD, ANY"
       method_str
 
 let parse_route_pattern ~loc pattern =
@@ -204,7 +204,8 @@ let generate_route_binding ~loc ~handler_name ~method_str ~route_pattern =
 let expand_str_item str_item =
   match str_item.pstr_desc with
   | Pstr_value (_rec_flag, bindings) ->
-    let generated_routes =
+    (* Generate routes for bindings with @route attribute *)
+    let routes_and_handlers =
       List.concat_map
         (fun vb ->
            match Attribute.get route_attr vb with
@@ -212,16 +213,143 @@ let expand_str_item str_item =
            | Some (method_str, route_pattern) ->
              let loc = vb.pvb_loc in
              let handler_name = extract_handler_name ~loc vb.pvb_pat in
-             generate_route_binding
-               ~loc
-               ~handler_name
-               ~method_str
-               ~route_pattern)
+             let generated =
+               generate_route_binding
+                 ~loc
+                 ~handler_name
+                 ~method_str
+                 ~route_pattern
+             in
+             (* Return (path_binding, route_binding) *)
+             (match generated with
+             | [ path_binding; route_binding ] ->
+               [ path_binding, Some route_binding ]
+             | _ -> []))
         bindings
     in
-    str_item :: generated_routes
+    (* If we have generated routes, reorder: paths, original, routes *)
+    if List.length routes_and_handlers > 0
+    then
+      let paths = List.map fst routes_and_handlers in
+      let routes =
+        List.filter_map (fun (_, route) -> route) routes_and_handlers
+      in
+      paths @ [ str_item ] @ routes
+    else [ str_item ]
   | _ -> [ str_item ]
 
-let () =
-  Driver.register_transformation "tapak_ppx" ~impl:(fun structure ->
-    List.concat_map expand_str_item structure)
+(* Two-pass transformation to support forward references:
+   Pass 1: Collect all @route attributes and generate _path variables
+   Pass 2: Keep original handlers, then generate _route variables *)
+let transform_structure structure =
+  (* Pass 1: Collect all route information from the entire structure *)
+  let route_infos_and_items =
+    List.map
+      (fun str_item ->
+         match str_item.pstr_desc with
+         | Pstr_value (_rec_flag, bindings) ->
+           let infos =
+             List.filter_map
+               (fun vb ->
+                  match Attribute.get route_attr vb with
+                  | None -> None
+                  | Some (method_str, route_pattern) ->
+                    let loc = vb.pvb_loc in
+                    let handler_name = extract_handler_name ~loc vb.pvb_pat in
+                    Some (loc, handler_name, method_str, route_pattern))
+               bindings
+           in
+           infos, str_item
+         | _ -> [], str_item)
+      structure
+  in
+  let all_route_infos = List.concat_map fst route_infos_and_items in
+  (* Generate all _path variables first *)
+  let all_paths =
+    List.map
+      (fun (loc, handler_name, _method_str, route_pattern) ->
+         let segments = parse_route_pattern ~loc route_pattern in
+         let path_expr = generate_path_expr ~loc segments in
+         let path_var_name = handler_name ^ "_path" in
+         let open Ast_builder.Default in
+         [%stri let [%p pvar ~loc path_var_name] = [%e path_expr]])
+      all_route_infos
+  in
+  (* Keep all original structure items unchanged *)
+  let original_structure = List.map snd route_infos_and_items in
+  (* Generate all _route variables *)
+  let all_routes =
+    List.map
+      (fun (loc, handler_name, method_str, route_pattern) ->
+         validate_http_method ~loc method_str;
+         let segments = parse_route_pattern ~loc route_pattern in
+         let path_expr = generate_path_expr ~loc segments in
+         let method_expr = method_to_expr ~loc method_str in
+         let route_var_name = handler_name ^ "_route" in
+         let param_names = extract_param_names segments in
+         let open Ast_builder.Default in
+         let handler_expr =
+           if List.length param_names = 0
+           then evar ~loc handler_name
+           else
+             let params_pattern =
+               List.map (fun name -> pvar ~loc name) param_names
+             in
+             let request_pattern = pvar ~loc "request" in
+             let all_patterns = params_pattern @ [ request_pattern ] in
+             let handler_call =
+               let base_call = evar ~loc handler_name in
+               let call_with_params =
+                 List.fold_left
+                   (fun acc param_name ->
+                      pexp_apply
+                        ~loc
+                        acc
+                        [ Labelled param_name, evar ~loc param_name ])
+                   base_call
+                   param_names
+               in
+               pexp_apply ~loc call_with_params [ Nolabel, evar ~loc "request" ]
+             in
+             List.fold_right
+               (fun pattern acc -> [%expr fun [%p pattern] -> [%e acc]])
+               all_patterns
+               handler_call
+         in
+         [%stri
+         let [%p pvar ~loc route_var_name] =
+           Tapak.Router.( @-> )
+             ([%e method_expr] [%e path_expr])
+             [%e handler_expr]])
+      all_route_infos
+  in
+  (* Find the last handler definition position
+     We want to insert routes right after all handlers but before any other code *)
+  let rec find_last_handler_index items index last_handler_index =
+    match items with
+    | [] -> last_handler_index
+    | (infos, _) :: rest ->
+      let new_last =
+        if List.length infos > 0 then index else last_handler_index
+      in
+      find_last_handler_index rest (index + 1) new_last
+  in
+  let last_handler_idx = find_last_handler_index route_infos_and_items 0 (-1) in
+  (* Insert: paths at start, then original structure with routes inserted after last handler *)
+  if last_handler_idx >= 0
+  then
+    let before_routes, after_routes =
+      let rec split lst idx acc =
+        match lst with
+        | [] -> List.rev acc, []
+        | hd :: tl ->
+          if idx = 0 then List.rev acc, lst else split tl (idx - 1) (hd :: acc)
+      in
+      split original_structure (last_handler_idx + 1) []
+    in
+    all_paths @ before_routes @ all_routes @ after_routes
+  else
+    (* No routes found, return original structure *)
+    original_structure
+
+let () = Driver.register_transformation "tapak_ppx" ~impl:transform_structure

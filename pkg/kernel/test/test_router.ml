@@ -504,6 +504,102 @@ let test_scoped_with_trailing_route () =
   | Some _ -> ()
   | None -> Alcotest.fail "/users/new should match"
 
+let test_exact_path_matching () =
+  let open Router in
+  let route =
+    get (s "users" / int64) @-> fun id _request ->
+    Response.of_string ~body:(Printf.sprintf "User %Ld" id) `OK
+  in
+  let request1 = make_request "/users/123" in
+  (match match' [ route ] request1 with
+  | Some response ->
+    Alcotest.(check bool)
+      "/users/123 should match"
+      true
+      (Response.status response = `OK)
+  | None -> Alcotest.fail "/users/123 should have matched");
+
+  let request2 = make_request "/users/123/" in
+  (match match' [ route ] request2 with
+  | Some response ->
+    Alcotest.(check bool)
+      "/users/123/ should match (trailing slash normalized)"
+      true
+      (Response.status response = `OK)
+  | None ->
+    Alcotest.fail "/users/123/ should have matched (trailing slash normalized)");
+
+  let request3 = make_request "/users/123/posts" in
+  match match' [ route ] request3 with
+  | Some _ -> Alcotest.fail "/users/123/posts should not match (extra segments)"
+  | None -> ()
+
+let test_any_method () =
+  let open Router in
+  let route =
+    any (s "api" / s "webhook") @-> fun _request ->
+    Response.of_string ~body:"webhook received" `OK
+  in
+  let request1 = make_request ~meth:`GET "/api/webhook" in
+  (match match' [ route ] request1 with
+  | Some response ->
+    Alcotest.(check bool)
+      "GET should match 'any' route"
+      true
+      (Response.status response = `OK)
+  | None -> Alcotest.fail "GET should have matched 'any' route");
+
+  let request2 = make_request ~meth:`POST "/api/webhook" in
+  (match match' [ route ] request2 with
+  | Some response ->
+    Alcotest.(check bool)
+      "POST should match 'any' route"
+      true
+      (Response.status response = `OK)
+  | None -> Alcotest.fail "POST should have matched 'any' route");
+
+  let request3 = make_request ~meth:`PUT "/api/webhook" in
+  (match match' [ route ] request3 with
+  | Some response ->
+    Alcotest.(check bool)
+      "PUT should match 'any' route"
+      true
+      (Response.status response = `OK)
+  | None -> Alcotest.fail "PUT should have matched 'any' route");
+
+  let request4 = make_request ~meth:`DELETE "/api/webhook" in
+  match match' [ route ] request4 with
+  | Some response ->
+    Alcotest.(check bool)
+      "DELETE should match 'any' route"
+      true
+      (Response.status response = `OK)
+  | None -> Alcotest.fail "DELETE should have matched 'any' route"
+
+let test_any_method_with_params () =
+  let open Router in
+  let route =
+    any (s "resources" / int64) @-> fun id _request ->
+    Response.of_string ~body:(Printf.sprintf "Resource %Ld" id) `OK
+  in
+  let request1 = make_request ~meth:`GET "/resources/42" in
+  (match match' [ route ] request1 with
+  | Some response ->
+    Alcotest.(check bool)
+      "GET should match 'any' with params"
+      true
+      (Response.status response = `OK)
+  | None -> Alcotest.fail "GET should have matched 'any' with params");
+
+  let request2 = make_request ~meth:`POST "/resources/42" in
+  match match' [ route ] request2 with
+  | Some response ->
+    Alcotest.(check bool)
+      "POST should match 'any' with params"
+      true
+      (Response.status response = `OK)
+  | None -> Alcotest.fail "POST should have matched 'any' with params"
+
 let tests =
   [ "Simple route", `Quick, test_simple_route
   ; "Int64 parameter", `Quick, test_int64_param
@@ -542,6 +638,9 @@ let tests =
     , `Quick
     , test_scoped_empty_literal_no_trailing_slash )
   ; "Scoped with multiple routes", `Quick, test_scoped_with_trailing_route
+  ; "Exact path matching", `Quick, test_exact_path_matching
+  ; "Any method matches all HTTP methods", `Quick, test_any_method
+  ; "Any method with parameters", `Quick, test_any_method_with_params
   ]
   |> List.map (fun (name, speed, fn) -> Alcotest.test_case name speed fn)
   |> fun tests -> "Router", tests

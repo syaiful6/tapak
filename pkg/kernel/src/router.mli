@@ -140,6 +140,14 @@ val delete : ('a, 'b) path -> ('a, 'b) path
 val head : ('a, 'b) path -> ('a, 'b) path
 (** [head pattern] creates a HEAD route with the given pattern. *)
 
+val any : ('a, 'b) path -> ('a, 'b) path
+(** [any pattern] creates a route that matches any HTTP method.
+    This is useful for catch-all endpoints like webhooks.
+    {[
+      (* Matches GET, POST, PUT, DELETE, etc. on /api/webhook *)
+      any (s "api" / s "webhook") @-> fun req -> ...
+    ]} *)
+
 (** {1 Routing} *)
 
 val match' : route list -> Request.t -> Response.t option
