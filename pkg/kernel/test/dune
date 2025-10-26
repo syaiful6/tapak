@@ -1,0 +1,4 @@
+(test
+ (name test)
+ (modules test test_form test_router)
+ (libraries alcotest fmt tapak.kernel))

@@ -1,0 +1,54 @@
+module Logging = struct
+  include Logs
+
+  let setup ~src ~doc =
+    let src = Src.create src ~doc in
+    (module (val src_log src) : LOG)
+end
+
+module String = struct
+  include StringLabels
+
+  let rec check_prefix s ~prefix len i =
+    i = len || (s.[i] = prefix.[i] && check_prefix s ~prefix len (i + 1))
+
+  let is_prefix s ~prefix =
+    let len = length s in
+    let prefix_len = length prefix in
+    len >= prefix_len && check_prefix s ~prefix prefix_len 0
+
+  let strip_prefix ~prefix s =
+    let prefix_len = length prefix in
+    if is_prefix s ~prefix
+    then Some (sub s ~pos:prefix_len ~len:(length s - prefix_len))
+    else None
+end
+
+module Option = struct
+  include Option
+
+  module Syntax = struct
+    let ( let+ ) result f = map f result
+    let ( let* ) = bind
+
+    let ( and* ) o1 o2 =
+      match o1, o2 with Some v1, Some v2 -> Some (v1, v2) | _ -> None
+  end
+end
+
+module Result = struct
+  include Result
+
+  module Syntax = struct
+    let ( let+ ) result f = map f result
+    let ( let* ) = bind
+
+    let ( and+ ) r1 r2 =
+      match r1, r2 with
+      | Ok v1, Ok v2 -> Ok (v1, v2)
+      | Error e, _ -> Error e
+      | _, Error e -> Error e
+
+    let ( and* ) = ( and+ )
+  end
+end

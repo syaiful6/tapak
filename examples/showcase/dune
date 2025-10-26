@@ -1,0 +1,15 @@
+(executable
+ (name main)
+ (public_name tapak-showcase)
+ (package tapak)
+ (enabled_if
+  (= %{profile} dev))
+ (libraries
+  tapak
+  tapak-compressions
+  piaf
+  eio_main
+  logs
+  logs.fmt
+  fmt.tty
+  logs.threaded))

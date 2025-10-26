@@ -1,0 +1,16 @@
+(library
+ (name tapak)
+ (public_name tapak)
+ (libraries
+  piaf
+  eio
+  ipaddr
+  yojson
+  logs
+  ptime
+  mirage-crypto
+  mirage-crypto-rng
+  mirage-crypto-rng.unix
+  tapak.kernel))
+
+(include_subdirs unqualified)

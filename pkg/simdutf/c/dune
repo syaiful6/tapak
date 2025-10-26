@@ -1,0 +1,24 @@
+(rule
+ (targets simdutf.h simdutf.cpp)
+ (deps download_simdutf.sh)
+ (enabled_if
+  (= true %{env:DOWNLOAD_SIMDUTF=true}))
+ (action
+  (progn
+   (chdir
+    %{project_root}/pkg/simdutf/c
+    (ignore-outputs
+     (run bash download_simdutf.sh))))))
+
+(library
+ (name simdutf_c)
+ (public_name simdutf.c)
+ (preprocess no_preprocessing)
+ (foreign_archives simdutf))
+
+(foreign_library
+ (archive_name simdutf)
+ (language cxx)
+ (flags
+  (:standard -fPIC))
+ (names simdutf simdutf_capi))

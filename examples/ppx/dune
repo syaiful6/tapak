@@ -1,0 +1,12 @@
+(executable
+ (name main)
+ (modules main)
+ (public_name tapak-ppx-examples)
+ (libraries tapak eio_main piaf logs logs.fmt fmt.tty logs.threaded)
+ (package tapak)
+ (enabled_if
+  (= %{profile} dev))
+ (preprocess
+  (pps tapak-ppx))
+ (flags
+  (:standard -w -27-32)))

@@ -1,0 +1,503 @@
+{0 Middleware Guide}
+
+{1 Introduction}
+
+Middlewares (also called filters in Finagle) are composable functions that wrap handlers to add cross-cutting functionality. They allow you to intercept, modify, or enhance request processing without cluttering your business logic.
+
+{1 Middleware Basics}
+
+{2 What is a Middleware?}
+
+A middleware is a function that:
+1. Receives the next handler in the chain
+2. Returns a new handler that wraps it
+3. Can execute code before, after, or around the next handler
+
+At its core, a middleware wraps a filter function of type [Handler.t -> Handler.t], which is equivalent to [(Request.t -> Response.t) -> (Request.t -> Response.t)].
+
+{2 Two Ways to Create Middlewares}
+
+{3 Function-based (Simple)}
+
+For simple cases, use {!val:Tapak_kernel.Middleware.create}:
+
+{[
+let logger_filter next request =
+  Logs.info (fun m -> m "Request: %s" (Request.target request));
+  next request
+
+let logger = Middleware.create ~filter:logger_filter ~name:"logger"
+]}
+
+{3 Module-based (Complex)}
+
+For middleware requiring configuration or state, use {!val:Tapak_kernel.Middleware.use} with the [Intf] signature:
+
+{[
+module type Intf = sig
+  type t    (* Configuration/parameters or state *)
+
+  val call : t -> (Request.t, Response.t) Filter.simple
+end
+]}
+
+- [t]: Configuration, parameters, or state for the middleware
+- [call]: Takes configuration/state and returns a filter function that wraps handlers
+
+{1 Creating Middlewares}
+
+{2 Simple Logger (Function-based)}
+
+For simple middleware without state, use [Middleware.create]:
+
+{[
+let logger_filter next request =
+  let method_ = Piaf.Method.to_string (Request.meth request) in
+  let path = Request.target request in
+  Logs.info (fun m -> m "HTTP: %s %s" method_ path);
+  next request
+
+let logger = Middleware.create ~filter:logger_filter ~name:"logger"
+]}
+
+{2 Configurable Logger (Module-based)}
+
+When you need configuration, use [Middleware.use]:
+
+{[
+module Logger = struct
+  type t = { prefix : string }
+
+  let call { prefix } next request =
+    let method_ = Piaf.Method.to_string (Request.meth request) in
+    let path = Request.target request in
+    Logs.info (fun m ->
+      m "%s: %s %s" prefix method_ path);
+    next request
+end
+
+let logger = Middleware.use ~name:"logger" (module Logger) { prefix = "HTTP" }
+]}
+
+{2 Timing Middleware}
+
+{[
+module Timer = struct
+  type t = unit
+
+  let call _unit next request =
+    let start = Ptime_clock.now () in
+    let response = next request in
+    let finish = Ptime_clock.now () in
+    let duration = Ptime.diff finish start |> Ptime.Span.to_float_s in
+    Logs.info (fun m ->
+      m "Request took %.3fs" duration);
+    response
+end
+
+let timer = Middleware.use ~name:"timer" (module Timer) ()
+]}
+
+{2 Authentication Middleware}
+
+{[
+(* Define a context key for the authenticated user *)
+let user_key : User.t Context.key =
+  Context.Key.create
+    { name = Some "auth.user"
+    ; show = Some (fun u -> u.User.id)
+    }
+
+module Auth = struct
+  type t = { secret : string }
+
+  let call { secret } next request =
+    match Request.header "Authorization" request with
+    | Some token when verify_token secret token ->
+      let user = decode_user token in
+      let ctx = Request.context request in
+      let request' = Request.with_context (Context.add user_key user ctx) request in
+      next request'
+    | _ ->
+      Response.create
+        ~body:(Piaf.Body.of_string "Unauthorized")
+        `Unauthorized
+end
+
+let auth = Middleware.use ~name:"auth" (module Auth) { secret = "..." }
+
+(* Access the user in handlers *)
+let protected_handler request =
+  match Context.find user_key (Request.context request) with
+  | Some user -> (* user is authenticated *)
+  | None -> (* shouldn't happen if auth middleware works correctly *)
+]}
+
+{1 Middleware Patterns}
+
+{2 Before Hook}
+
+Execute code before the handler:
+
+{[
+let before_filter next request =
+  (* Do something before *)
+  Logs.debug (fun m -> m "Before handler");
+  next request
+
+let before = Middleware.create ~filter:before_filter ~name:"before"
+]}
+
+{2 After Hook}
+
+Execute code after the handler:
+
+{[
+let after_filter next request =
+  let response = next request in
+  (* Do something after *)
+  Logs.debug (fun m -> m "After handler");
+  response
+
+let after = Middleware.create ~filter:after_filter ~name:"after"
+]}
+
+{2 Around Hook}
+
+Execute code before and after:
+
+{[
+let around_filter next request =
+  (* Before *)
+  Logs.debug (fun m -> m "Before");
+  let response = next request in
+  (* After *)
+  Logs.debug (fun m -> m "After");
+  response
+
+let around = Middleware.create ~filter:around_filter ~name:"around"
+]}
+
+{2 Request Modification}
+
+Modify the request before passing it down:
+
+{[
+(* Simple version *)
+let add_header_filter next request =
+  let request' = Request.add_header "X-Custom-Header" "value" request in
+  next request'
+
+let add_header = Middleware.create ~filter:add_header_filter ~name:"add_header"
+
+(* Configurable version *)
+module AddHeader = struct
+  type t = { name : string; value : string }
+
+  let call { name; value } next request =
+    let request' = Request.add_header name value request in
+    next request'
+end
+
+let custom_header = Middleware.use ~name:"add_header" (module AddHeader) { name = "X-API-Key"; value = "..." }
+]}
+
+{2 Response Modification}
+
+Modify the response before returning it:
+
+{[
+(* Simple version *)
+let cors_filter next request =
+  let response = next request in
+  Response.add_header "Access-Control-Allow-Origin" "*" response
+
+let cors = Middleware.create ~filter:cors_filter ~name:"cors"
+
+(* Configurable version *)
+module AddCorsHeaders = struct
+  type t = { origin : string }
+
+  let call { origin } next request =
+    let response = next request in
+    Response.add_header "Access-Control-Allow-Origin" origin response
+end
+
+let cors = Middleware.use ~name:"cors" (module AddCorsHeaders) { origin = "https://example.com" }
+]}
+
+{2 Conditional Execution}
+
+Execute handler only under certain conditions (uses mutable state in [t]):
+
+{[
+module RateLimiter = struct
+  type t = { max_requests : int; mutable count : int }
+
+  let call ({ max_requests; _ } as state) next request =
+    if state.count >= max_requests then
+      Response.create
+        ~body:(Piaf.Body.of_string "Rate limit exceeded")
+        `Too_many_requests
+    else begin
+      state.count <- state.count + 1;
+      next request
+    end
+end
+
+let rate_limiter =
+  let state = { max_requests = 100; count = 0 } in
+  Middleware.use ~name:"rate_limiter" (module RateLimiter) state
+]}
+
+{2 Error Handling}
+
+Catch and handle exceptions:
+
+{[
+(* Simple version *)
+let error_handler_filter next request =
+  try
+    next request
+  with
+  | Not_found ->
+    Response.create
+      ~body:(Piaf.Body.of_string "Not found")
+      `Not_found
+  | Invalid_argument msg ->
+    Response.create
+      ~body:(Piaf.Body.of_string ("Bad request: " ^ msg))
+      `Bad_request
+  | exn ->
+    Logs.err (fun m -> m "Unexpected error: %s" (Printexc.to_string exn));
+    Response.create
+      ~body:(Piaf.Body.of_string "Internal server error")
+      `Internal_server_error
+
+let error_handler = Middleware.create ~filter:error_handler_filter ~name:"error_handler"
+]}
+
+{1 Using Middlewares}
+
+{2 With Apps}
+
+{[
+let app =
+  App.create
+    ~middlewares:[logger; timer; auth]
+    ~handler:my_handler
+    ()
+]}
+
+{2 With Routers}
+
+Apply to all routes:
+
+{[
+let routes =
+  Router.scope
+    ~middlewares:[logger; timer]
+    "/"
+    [ Router.get "/" home
+    ; Router.get "/about" about
+    ]
+]}
+
+Apply to specific scopes:
+
+{[
+let routes =
+  Router.router
+    [ (* Public routes - no auth *)
+      Router.scope "/" public_routes
+      (* Protected routes - with auth *)
+    ; Router.scope
+        ~middlewares:[auth]
+        "/admin"
+        admin_routes
+    ]
+]}
+
+{1 Execution Order}
+
+Middlewares execute in the order they're defined:
+
+{[
+let app =
+  App.create
+    ~middlewares:[mw1; mw2; mw3]
+    ~handler
+    ()
+
+(* Execution order:
+   mw1 (before) ->
+     mw2 (before) ->
+       mw3 (before) ->
+         handler ->
+       mw3 (after) ->
+     mw2 (after) ->
+   mw1 (after)
+*)
+]}
+
+In nested scopes, parent middlewares execute before child middlewares:
+
+{[
+let routes =
+  Router.scope
+    ~middlewares:[parent_mw]
+    "/"
+    [ Router.scope
+        ~middlewares:[child_mw]
+        "/api"
+        [ Router.get "/data" handler ]
+    ]
+
+(* Execution order:
+   parent_mw (before) ->
+     child_mw (before) ->
+       handler ->
+     child_mw (after) ->
+   parent_mw (after)
+*)
+]}
+
+{1 Common Middlewares}
+
+{2 Request Logging}
+
+{[
+let request_logger_filter next request =
+  let meth = Piaf.Method.to_string (Request.meth request) in
+  let path = Request.target request in
+  Logs.info (fun m -> m "%s %s" meth path);
+  let response = next request in
+  let status = Response.status response in
+  Logs.info (fun m ->
+    m "%s %s -> %d" meth path (Piaf.Status.to_code status));
+  response
+
+let request_logger = Middleware.create ~filter:request_logger_filter ~name:"request_logger"
+]}
+
+{2 CORS}
+
+{[
+module Cors = struct
+  type t =
+    { allowed_origins : string list
+    ; allowed_methods : string list
+    ; allowed_headers : string list
+    }
+
+  let call { allowed_origins; allowed_methods; allowed_headers } next request =
+    let response = next request in
+    response
+    |> Response.add_header "Access-Control-Allow-Origin"
+         (String.concat ", " allowed_origins)
+    |> Response.add_header "Access-Control-Allow-Methods"
+         (String.concat ", " allowed_methods)
+    |> Response.add_header "Access-Control-Allow-Headers"
+         (String.concat ", " allowed_headers)
+end
+]}
+
+{2 Compression}
+
+{[
+module Gzip = struct
+  type t = { threshold : int }
+
+  let call { threshold } next request =
+    let response = next request in
+    (* Check if client accepts gzip *)
+    match Request.header "Accept-Encoding" request with
+    | Some encoding when String.contains encoding "gzip" ->
+      (* Compress response body if it's large enough *)
+      compress_response ~threshold response
+    | _ -> response
+end
+]}
+
+{1 Best Practices}
+
+{2 Keep Middlewares Focused}
+
+Each middleware should do one thing well:
+
+{[
+(* Good - focused *)
+let logger = Middleware.create ~filter:logger_filter ~name:"logger"
+let auth = Middleware.use ~name:"auth" (module Auth) config
+
+(* Bad - doing too much *)
+module LoggerAndAuthAndCompression = struct
+  (* ... *)
+end
+]}
+
+{2 Use Context for Sharing Data}
+
+Pass data between middlewares using the Context:
+
+{[
+(* Middleware 1: extracts user *)
+module Auth = struct
+  type t = unit
+
+  let call () next request =
+    let user = authenticate request in
+    let ctx = Context.add user_key user (Request.context request) in
+    next (Request.with_context ctx request)
+end
+
+(* Middleware 2: uses user data *)
+module Authorize = struct
+  type t = unit
+
+  let call () next request =
+    match Context.find user_key (Request.context request) with
+    | Some user when has_permission user ->
+      next request
+    | _ -> Response.create `Forbidden
+end
+]}
+
+{2 Handle Errors Gracefully}
+
+Always consider error cases:
+
+{[
+let safe_filter next request =
+  try
+    next request
+  with exn ->
+    Logs.err (fun m -> m "Middleware error: %s" (Printexc.to_string exn));
+    Response.create `Internal_server_error
+
+let safe = Middleware.create ~filter:safe_filter ~name:"safe"
+]}
+
+{2 Document Middleware Behavior}
+
+Make it clear what your middleware does:
+
+{[
+(** Rate limiting middleware.
+    
+    Limits requests per IP address to [max_requests] per [window] seconds.
+    Returns 429 Too Many Requests when limit is exceeded.
+    
+    @param max_requests Maximum number of requests allowed
+    @param window Time window in seconds
+*)
+module RateLimiter = struct
+  (* ... *)
+end
+]}
+
+{1 See Also}
+
+- {!module:Tapak_kernel.Middleware} - Middleware API documentation
+- {!page-kernel} - Kernel overview
+- {!page-router} - Router guide
