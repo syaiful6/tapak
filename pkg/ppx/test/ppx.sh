@@ -1,7 +1,5 @@
-#!/bin/bash
+#!/bin/sh
 
-set -eo pipefail
+set -e
 
-tapak-ppx --impl "$1" -o temp.ml
-
-cat temp.ml
+tapak-ppx --impl "$1" | ocamlformat - --enable-outside-detected-project --impl

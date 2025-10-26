@@ -4,6 +4,8 @@
 
 (generate_opam_files true)
 
+(cram enable)
+
 (source
  (github syaiful6/tapak))
 
@@ -52,7 +54,9 @@
   yojson
   mirage-crypto
   mirage-crypto-rng
-  (reason :with-dev)
+  (reason (and (>= 3.12) :with-dev-setup))
+  (ocaml-lsp-server :with-dev-setup)
+  (ocamlformat (and (= 0.27.0) :with-dev-setup))
   (alcotest :with-test)
   (odoc :with-doc))
  (tags
@@ -68,6 +72,7 @@
    (>= 5.2.0))
   dune
   dune-configurator
+  (tapak (= :version))
   (piaf
    (>= 0.2.0))
   (camlzip
@@ -86,8 +91,10 @@
   (ocaml
    (>= 5.2.0))
   dune
+  (tapak (= :version))
   (ppxlib
    (>= 0.32.0))
+  (ocamlformat (and (= 0.27.0) :with-test))
   angstrom
   (odoc :with-doc))
  (tags

@@ -7,7 +7,6 @@
   ipaddr
   yojson
   logs
-  ptime
   mirage-crypto
   mirage-crypto-rng
   mirage-crypto-rng.unix

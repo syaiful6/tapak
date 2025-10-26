@@ -8,7 +8,7 @@ _build
 .DS_Store
 
 # Nix
-result
+result*
 
 .envrc.local
 .direnv
