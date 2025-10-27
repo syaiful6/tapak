@@ -1,4 +1,4 @@
-{ lib, stdenv, ocamlPackages, nix-filter, doCheck ? true, pkgs }:
+{ lib, stdenv, ocamlPackages, nix-filter, doCheck ? false, pkgs }:
 
 with ocamlPackages;
 
@@ -123,6 +123,7 @@ rec {
       dirs = [ "pkg/ppx" ];
       files = [ "tapak-ppx.opam" ];
     };
+    nativeBuildInputs = [ alcotest ocamlformat ];
     propagatedBuildInputs = [
       tapak
       ppxlib

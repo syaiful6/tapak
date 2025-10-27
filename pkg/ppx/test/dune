@@ -1,7 +1,10 @@
 (cram
  (package tapak-ppx)
+ (enabled_if
+  (>= %{ocaml_version} 5.2.0))
  (deps
   (package tapak-ppx)
   %{bin:tapak-ppx}
+  %{bin:ocamlformat}
   %{bin:dune}
   ppx.sh))

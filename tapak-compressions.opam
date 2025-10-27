@@ -14,10 +14,9 @@ depends: [
   "ocaml" {>= "5.2.0"}
   "dune" {>= "3.19"}
   "dune-configurator"
+  "tapak" {= version}
   "piaf" {>= "0.2.0"}
   "camlzip" {>= "1.11"}
-  "conf-brotli"
-  "conf-zstd"
   "alcotest" {with-test}
   "odoc" {with-doc}
 ]

@@ -14,7 +14,9 @@
  (name simdutf_c)
  (public_name simdutf.c)
  (preprocess no_preprocessing)
- (foreign_archives simdutf))
+ (foreign_archives simdutf)
+ (c_library_flags
+  (:include ../config/c_library_flags.sexp)))
 
 (foreign_library
  (archive_name simdutf)

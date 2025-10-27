@@ -1,4 +1,4 @@
 (library
  (name tapak_kernel)
  (public_name tapak.kernel)
- (libraries piaf uri hmap eio logs ptime))
+ (libraries piaf uri hmap eio logs))
