@@ -6,7 +6,7 @@ module Route_parser = struct
   type segment =
     | Literal of string
     | Parameter of string * string option (* name, optional type *)
-    | Splat of string
+    | Splat
 
   let literal_chars =
     take_while1 (fun c ->
@@ -27,7 +27,7 @@ module Route_parser = struct
   let simple_parameter =
     char ':' *> identifier >>| fun name -> Parameter (name, None)
 
-  let splat = char '*' *> identifier >>| fun name -> Splat name
+  let splat = char '*' *> char '*' >>| fun _ -> Splat
 
   let segment =
     choice
@@ -115,7 +115,7 @@ let generate_path_expr ~loc segments =
       (match type_opt with
       | Some type_name -> type_to_path_expr ~loc type_name
       | None -> [%expr Tapak.Router.int] (* Default to int for now *))
-    | [ Splat _p ] -> [%expr Tapak.Router.splat]
+    | [ Splat ] -> [%expr Tapak.Router.splat]
     | Literal s :: rest ->
       let rest_expr = build_path rest in
       [%expr
@@ -129,7 +129,7 @@ let generate_path_expr ~loc segments =
       in
       let rest_expr = build_path rest in
       [%expr Tapak.Router.( / ) [%e param_expr] [%e rest_expr]]
-    | Splat _p :: rest ->
+    | Splat :: rest ->
       let rest_expr = build_path rest in
       [%expr Tapak.Router.( / ) Tapak.Router.splat [%e rest_expr]]
   in
@@ -146,7 +146,7 @@ let extract_param_names segments =
   List.filter_map
     (function
       | Parameter (name, _type_opt) -> Some name
-      | Splat name -> Some name
+      | Splat -> Some "splat"
       | Literal _ -> None)
     segments
 
@@ -204,7 +204,6 @@ let generate_route_binding ~loc ~handler_name ~method_str ~route_pattern =
 let expand_str_item str_item =
   match str_item.pstr_desc with
   | Pstr_value (_rec_flag, bindings) ->
-    (* Generate routes for bindings with @route attribute *)
     let routes_and_handlers =
       List.concat_map
         (fun vb ->
@@ -220,14 +219,12 @@ let expand_str_item str_item =
                  ~method_str
                  ~route_pattern
              in
-             (* Return (path_binding, route_binding) *)
              (match generated with
              | [ path_binding; route_binding ] ->
                [ path_binding, Some route_binding ]
              | _ -> []))
         bindings
     in
-    (* If we have generated routes, reorder: paths, original, routes *)
     if List.length routes_and_handlers > 0
     then
       let paths = List.map fst routes_and_handlers in
@@ -238,11 +235,7 @@ let expand_str_item str_item =
     else [ str_item ]
   | _ -> [ str_item ]
 
-(* Two-pass transformation to support forward references:
-   Pass 1: Collect all @route attributes and generate _path variables
-   Pass 2: Keep original handlers, then generate _route variables *)
 let transform_structure structure =
-  (* Pass 1: Collect all route information from the entire structure *)
   let route_infos_and_items =
     List.map
       (fun str_item ->
@@ -264,7 +257,6 @@ let transform_structure structure =
       structure
   in
   let all_route_infos = List.concat_map fst route_infos_and_items in
-  (* Generate all _path variables first *)
   let all_paths =
     List.map
       (fun (loc, handler_name, _method_str, route_pattern) ->
@@ -275,9 +267,7 @@ let transform_structure structure =
          [%stri let [%p pvar ~loc path_var_name] = [%e path_expr]])
       all_route_infos
   in
-  (* Keep all original structure items unchanged *)
   let original_structure = List.map snd route_infos_and_items in
-  (* Generate all _route variables *)
   let all_routes =
     List.map
       (fun (loc, handler_name, method_str, route_pattern) ->
@@ -323,8 +313,6 @@ let transform_structure structure =
              [%e handler_expr]])
       all_route_infos
   in
-  (* Find the last handler definition position
-     We want to insert routes right after all handlers but before any other code *)
   let rec find_last_handler_index items index last_handler_index =
     match items with
     | [] -> last_handler_index
@@ -335,7 +323,6 @@ let transform_structure structure =
       find_last_handler_index rest (index + 1) new_last
   in
   let last_handler_idx = find_last_handler_index route_infos_and_items 0 (-1) in
-  (* Insert: paths at start, then original structure with routes inserted after last handler *)
   if last_handler_idx >= 0
   then
     let before_routes, after_routes =
@@ -348,8 +335,6 @@ let transform_structure structure =
       split original_structure (last_handler_idx + 1) []
     in
     all_paths @ before_routes @ all_routes @ after_routes
-  else
-    (* No routes found, return original structure *)
-    original_structure
+  else original_structure
 
 let () = Driver.register_transformation "tapak_ppx" ~impl:transform_structure

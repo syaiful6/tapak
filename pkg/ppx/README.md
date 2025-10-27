@@ -93,7 +93,7 @@ let get_user_route =
 ✅ Path variable generation for URL generation
 ✅ Handler wrapper generation with named parameters
 ✅ Parameter extraction (`:param` syntax)
-✅ Splat support (`*path` syntax)
+✅ Splat support (`**` syntax)
 
 ## Roadmap
 
