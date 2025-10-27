@@ -88,9 +88,9 @@ let search = (~query, request) => {
   Response.of_string(~body, `OK);
 };
 
-[@route (GET, "/files/*path")]
-let serve_file = (~path, request) => {
-  let file_path = String.concat("/", path);
+[@route (GET, "/files/**")]
+let serve_file = (~splat, request) => {
+  let file_path = String.concat("/", splat);
   let body = Printf.sprintf("Serving file: %s", file_path);
   Response.of_string(~body, `OK);
 };
