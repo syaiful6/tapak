@@ -6,12 +6,16 @@ module Log = (val Logging.setup ~src:"tapak.server" ~doc:"Tapak Server module")
     Returns the Unix file descriptor for FD 3 (first listening socket).
     See: https://www.freedesktop.org/software/systemd/man/sd_listen_fds.html *)
 let get_systemd_listen_fd () =
-  match Sys.getenv_opt "LISTEN_FDS" with
-  | Some n when int_of_string n > 0 ->
-    (* systemd passes listening sockets starting at FD 3
-       (after stdin=0, stdout=1, stderr=2) *)
-    let fd_num = 3 in
-    Some (Obj.magic fd_num : Unix.file_descr)
+  match
+    Sys.getenv_opt "LISTEN_FDS" |> Fun.flip Option.bind int_of_string_opt
+  with
+  | Some n when n > 0 ->
+    let first_fd =
+      Sys.getenv_opt "LISTEN_FDS_FIRST_FD"
+      |> Fun.flip Option.bind int_of_string_opt
+      |> Option.value ~default:3
+    in
+    Some (Obj.magic first_fd : Unix.file_descr)
   | _ -> None
 
 let port_of_address = function `Tcp (_, port) -> port | `Unix _ -> 0
