@@ -1,4 +1,8 @@
-{ inputs, lib, ... }:
+{
+  inputs,
+  lib,
+  ...
+}:
 
 let
   genSrc =
@@ -39,6 +43,7 @@ let
 in
 
 {
+  imports = [ inputs.process-compose-flake.flakeModule ];
 
   perSystem =
     {
@@ -72,10 +77,12 @@ in
           ocamlPackages = super.ocaml-ng.ocamlPackages_5_3;
         }
       );
+
       packages =
         with pkgs.ocamlPackages;
         with self'.packages;
         {
+          default = self'.packages.tapak;
           simdutf =
             let
               simdutf-h = pkgs.fetchurl {
@@ -166,11 +173,80 @@ in
               ppxlib
             ];
           };
+        };
+
+      devShells = {
+        default = pkgs.mkShell {
+          inputsFrom = with self'.packages; [
+            simdutf
+            tapak
+            tapak-compressions
+            tapak-ppx
+          ];
+          buildInputs = with pkgs.ocamlPackages; [
+            self'.packages.dev # it produce binary called `dev` for run process compose
+            ocaml
+            dune
+            ocaml-lsp
+            ocamlformat
+            alcotest
+            utop
+            odoc
+            reason
+            pkgs.openssl
+            pkgs.postgresql
+            pkgs.pkg-config
+            pkgs.systemfd
+            pkgs.watchexec
+          ];
 
         };
-      # defaultPackage = self'.packages.tapak;
-      devShells = {
-        default = pkgs.callPackage ./shell.nix { packages = self'.packages; };
+      };
+
+      # using process-compose for defining services 
+      # required import modules in line 46
+      process-compose."dev" = {
+        imports = [
+          inputs.services-flake.processComposeModules.default
+          # see custom service example at https://community.flake.parts/services-flake/custom-service#single-instance 
+          (
+            {
+              config,
+              lib,
+              pkgs,
+              ...
+            }:
+            {
+              options = {
+                services.hello = {
+                  enable = lib.mkEnableOption "Enable hello service";
+                  package = lib.mkPackageOption pkgs "hello" { };
+                  message = lib.mkOption {
+                    type = lib.types.str;
+                    default = "Hello, world!";
+                    description = "The message to be displayed";
+                  };
+                };
+              };
+              config =
+                let
+                  cfg = config.services.hello;
+                in
+                lib.mkIf cfg.enable {
+                  settings.processes.hello = {
+                    command = "${lib.getExe cfg.package} --greeting='${cfg.message}'";
+                  };
+                };
+            }
+          )
+        ];
+
+        # see https://community.flake.parts/services-flake/postgresql#getting-started
+        services.postgres."pg1".enable = true;
+        services.hello = {
+          enable = true;
+          message = "Hello, world!";
+        };
       };
     };
 }

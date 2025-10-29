@@ -19,3 +19,4 @@ pkg/simdutf/c/simdutf.cpp
 
 # Design ideas and sketches (not part of the project)
 ideas/
+data/
