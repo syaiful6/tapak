@@ -7,12 +7,14 @@ let
     inherit (lock.nodes.nixpkgs.locked) rev;
     allRefs = true;
   };
+
   nix-filter-src = fetchGit {
     url = with lock.nodes.nix-filter.locked; "https://github.com/${owner}/${repo}";
     inherit (lock.nodes.nix-filter.locked) rev;
     # inherit (lock.nodes.nixpkgs.original) ref;
     allRefs = true;
   };
+
   nix-filter = import "${nix-filter-src}";
 
   pkgs = import "${src}" {
@@ -26,6 +28,6 @@ in
 
 # Only test on OCaml 5.3+ due to ppxlib output formatting differences
 pkgs.callPackage ./.. {
-  inherit nix-filter;
+  inputs = { lib = pkgs.lib; nix-filter = nix-filter; };
   doCheck = if ocamlVersion == "5_3" then true else false;
 }
