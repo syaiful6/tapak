@@ -17,12 +17,14 @@ The OCaml ecosystem has several excellent web frameworks, each with different de
 
 | Framework | Async Runtime | Routing | Philosophy | Status |
 |-----------|---------------|---------|------------|--------|
-| **[Dream](https://camlworks.github.io/dream/)** | Lwt | String patterns | Batteries-included, tidy | Production-ready |
-| **[Opium](https://github.com/rgrinberg/opium)** | Lwt | String patterns | Sinatra-like micro-framework | Mature |
-| **[Eliom](https://ocsigen.org/eliom/)** | Lwt | Type-safe | Multi-tier, full-stack | Production-ready |
-| **[tiny_httpd](https://github.com/c-cube/tiny_httpd)** | Threads | Basic (Scanf) | Minimalist, zero dependencies | Stable |
+| **[Dream](https://camlworks.github.io/dream/)** | Lwt | String patterns | Batteries-included, tidy | Stable* |
+| **[Opium](https://github.com/rgrinberg/opium)** | Lwt | String patterns | Sinatra-like micro-framework | Stable |
+| **[Eliom](https://ocsigen.org/eliom/)** | Lwt | Type-safe | Multi-tier, full-stack | Stable |
+| **[tiny_httpd](https://github.com/c-cube/tiny_httpd)** | Threads | GADT type-safe | Minimalist, thin dependencies | Stable* |
 | **Tapak** | **EIO (OCaml 5)** | **GADT type-safe** | Composable Service/Filter | **Experimental** |
 
+- * Dream is stable but still evolving, it hasn't reached v1.0 yet.
+- * Tiny_httpd looks stable, but I haven't used it personally.
 
 ### Why Tapak?
 
