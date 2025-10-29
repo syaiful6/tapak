@@ -1,5 +1,6 @@
 module Context = Context
 module Request = Request
+module Request_guard = Request_guard
 module Response = Response
 module Headers = Headers
 module Body = Body

@@ -11,7 +11,7 @@
     {[
       (* In your form GET handler *)
       let form_get_handler req =
-        let token, secret = CSRF.csrf_input req in
+        let token, secret = CSRF.input req in
         let html = Printf.sprintf
           "<form method='POST'>
              <input type='hidden' name='csrf_token' value='%s'>
@@ -19,13 +19,13 @@
            </form>" token
         in
         Response.of_html ~status:`OK html
-        |> CSRF.with_csrf_cookie secret
+        |> CSRF.with_cookie secret
 
       (* In your form POST handler *)
       let form_post_handler req =
         let form_data = Form.Urlencoded.of_body (Request.body req) in
         match Result.map (Form.Urlencoded.get "csrf_token") form_data with
-        | Ok (Some token) when CSRF.verify_csrf_token ~token req ->
+        | Ok (Some token) when CSRF.verify_token ~token req ->
           Response.of_html ~status:`OK "Success!"
         | _ ->
           Response.of_html ~status:`Forbidden "Invalid CSRF token"
@@ -55,11 +55,8 @@ val generate_secret : unit -> string
     This is automatically called by {!csrf_input} if no existing secret is found
     in the request cookie. *)
 
-val csrf_input :
-   ?cookie_name:string
-  -> Tapak_kernel.Request.t
-  -> string * string
-(** [csrf_input req] generates or retrieves a CSRF token and secret for form rendering.
+val input : ?cookie_name:string -> Tapak_kernel.Request.t -> string * string
+(** [input req] generates or retrieves a CSRF token and secret for form rendering.
 
     Returns [(token, secret)] where:
     - [token] is a masked 64-byte token to embed in your form (safe to send to client)
@@ -74,8 +71,8 @@ val csrf_input :
     @param cookie_name The name of the cookie to check for existing secret.
                        Defaults to ["XSRF-TOKEN"]. *)
 
-val verify_csrf_token : ?cookie_name:string -> token:string -> Request.t -> bool
-(** [verify_csrf_token ~token req] verifies that a submitted CSRF token matches the
+val verify_token : ?cookie_name:string -> token:string -> Request.t -> bool
+(** [verify_token ~token req] verifies that a submitted CSRF token matches the
     secret stored in the request cookie.
 
     Returns [true] if:
@@ -89,10 +86,10 @@ val verify_csrf_token : ?cookie_name:string -> token:string -> Request.t -> bool
                        Defaults to ["XSRF-TOKEN"].
     @param token The CSRF token from the form submission (can be masked or unmasked). *)
 
-val with_csrf_cookie : ?settings:t -> string -> Response.t -> Response.t
-(** [with_csrf_cookie secret response] adds a Set-Cookie header to store the CSRF secret.
+val with_cookie : ?settings:t -> string -> Response.t -> Response.t
+(** [with_cookie secret response] adds a Set-Cookie header to store the CSRF secret.
 
-    This should be called after generating a token with {!csrf_input} to ensure the
+    This should be called after generating a token with {!input} to ensure the
     secret is stored in the client's cookie.
 
     @param settings Optional cookie settings. If not provided, uses secure defaults:
@@ -102,4 +99,4 @@ val with_csrf_cookie : ?settings:t -> string -> Response.t -> Response.t
                     - SameSite: [`Lax]
                     - Secure: [false] (set to [true] in production with HTTPS)
                     - HttpOnly: [false] (allows JavaScript to read for AJAX requests)
-    @param secret The 32-byte secret returned by {!csrf_input}. *)
+    @param secret The 32-byte secret returned by {!input}. *)

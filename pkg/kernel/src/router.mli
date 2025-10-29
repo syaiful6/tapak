@@ -148,6 +148,42 @@ val any : ('a, 'b) path -> ('a, 'b) path
       any (s "api" / s "webhook") @-> fun req -> ...
     ]} *)
 
+(** {1 Request Guards} *)
+
+val ( >=> ) : 'g Request_guard.t -> ('a, 'b) path -> ('g -> 'a, 'b) path
+(** [guard >=> pattern] composes a request guard with a route pattern.
+    The guard extracts a value from the request and adds it as the first parameter
+    to the handler, before any path parameters.
+
+    This reads naturally left-to-right: "guard then path pattern".
+
+    Guards provide type-safe request validation and data extraction:
+    - If the guard succeeds, the extracted value is passed to the handler
+    - If the guard fails, a [Request_guard.Failed] exception is raised
+
+    {[
+      (* Define a guard *)
+      let user_guard : User.t Request_guard.t = fun req ->
+        match get_auth_token req with
+        | Some token -> verify_user token  (* Returns Ok user or Error err *)
+        | None -> Error Request_guard.Invalid_bearer_token
+
+      (* Use with router - reads "user guard then users path" *)
+      get (user_guard >=> s "users" / int64) @-> fun user id req ->
+        (* user : User.t, id : int64, req : Request.t *)
+        Response.of_string ~body:(Printf.sprintf "User %s viewing %Ld" user.name id) `OK
+
+      (* Multiple guards - compose with &&& *)
+      let authenticated_json = Request_guard.(user_guard &&& json_guard) in
+      post (authenticated_json >=> s "posts") @-> fun (user, ()) req -> ...
+
+      (* Chain multiple guards *)
+      get (user_guard >=> admin_guard >=> s "admin" / str) @->
+        fun user admin_role path req -> ...
+    ]}
+
+    See {!Request_guard} module for guard combinators and common guards. *)
+
 (** {1 Routing} *)
 
 val match' : route list -> Request.t -> Response.t option
@@ -201,7 +237,7 @@ val scope :
       (* Example: Resource with int64 IDs *)
       module UserResource : Router.Resource = struct
         type id = int64
-        let id_path = Router.int64
+        let id_path () = Router.int64
 
         let index _req = Response.of_string ~body:"User list" `OK
         let new_ _req = Response.of_string ~body:"New user form" `OK
@@ -219,7 +255,7 @@ val scope :
       (* Example: Resource with UUID (string) IDs *)
       module ArticleResource : Router.Resource = struct
         type id = string
-        let id_path = Router.custom
+        let id_path () = Router.custom
           ~parse:(fun s -> if is_valid_uuid s then Some s else None)
           ~format:Fun.id
 
@@ -232,7 +268,7 @@ val scope :
       (* Example: Resource with slug IDs *)
       module PostResource : Router.Resource = struct
         type id = string
-        let id_path = Router.slug
+        let id_path () = Router.slug
 
         let index _req = Response.of_string ~body:"Post list" `OK
         let get slug _req =
@@ -244,9 +280,13 @@ module type Resource = sig
   type id
   (** The type of the resource identifier. *)
 
-  val id_path : (id -> 'a, 'a) path
+  val id_path : unit -> (id -> 'a, 'a) path
   (** The path pattern for extracting the resource ID.
-      This allows you to specify custom validation and formatting for IDs. *)
+      This allows you to specify custom validation and formatting for IDs.
+
+      {b Note:} Due to OCaml's value restriction, [id_path] must be a function
+      to allow reuse in both routing (within [resource]) and URL generation.
+      Define it as: [let id_path () = Router.int64] (note the [unit] parameter). *)
 
   val index : Handler.t
   (** GET /resource - List all resources *)
@@ -297,9 +337,9 @@ val resource :
       let routes = resource ~middlewares:[auth] (s "admin" / s "posts") (module PostResource)
 
       (* URL generation for resource routes *)
-      let user_path = s "users" / UserResource.id_path
+      let user_path = s "users" / UserResource.id_path ()
       let url = sprintf user_path 42L  (* "/users/42" *)
 
-      let edit_path = s "users" / UserResource.id_path / s "edit"
+      let edit_path = s "users" / UserResource.id_path () / s "edit"
       let edit_url = sprintf edit_path 42L  (* "/users/42/edit" *)
     ]} *)

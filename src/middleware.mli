@@ -77,3 +77,97 @@ module Limit_request_size : sig
 
   include Tapak_kernel.Middleware.Intf with type t := t
 end
+
+module CORS : sig
+  (** CORS (Cross-Origin Resource Sharing) middleware.
+
+      This middleware handles CORS preflight requests and adds appropriate
+      CORS headers to responses according to the W3C CORS specification. *)
+
+  type origin_policy =
+    [ `Allow_all
+    | `Allow_list of string list
+    | `Allow_predicate of string -> bool
+    ]
+
+  type t =
+    { origins : origin_policy
+      (** Origin validation policy. Default: [Allow_all] *)
+    ; methods : Piaf.Method.t list
+      (** Allowed HTTP methods. Default: GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS *)
+    ; headers : string list
+      (** Allowed request headers. Default: Accept, Content-Type, Authorization, etc. *)
+    ; exposed_headers : string list
+      (** Headers exposed to JavaScript. Default: empty *)
+    ; credentials : bool
+      (** Allow cookies and authentication. Default: false *)
+    ; max_age : int option
+      (** Preflight cache duration in seconds. Default: None *)
+    ; send_preflight : bool
+      (** Automatically handle OPTIONS preflight requests. Default: true *)
+    }
+
+  val args :
+     ?origins:origin_policy
+    -> ?methods:Piaf.Method.t list
+    -> ?headers:string list
+    -> ?exposed_headers:string list
+    -> ?credentials:bool
+    -> ?max_age:int
+    -> ?send_preflight:bool
+    -> unit
+    -> t
+  (** [args ()] creates a CORS configuration with sensible defaults.
+
+      Example:
+      {[
+        (* Development - allow all origins *)
+        use ~name:"CORS" (module CORS) (CORS.args ())
+
+        (* Production - specific origins with credentials *)
+        use ~name:"CORS" (module CORS)
+          (CORS.args
+            ~origins:(Allow_list ["https://example.com"; "https://app.example.com"])
+            ~credentials:true
+            ~max_age:86400
+            ())
+      ]} *)
+
+  val permissive : unit -> t
+  (** [permissive ()] creates a permissive CORS policy suitable for development.
+      Allows all origins, all common methods, and any headers. *)
+
+  val strict : origins:string list -> t
+  (** [strict ~origins] creates a strict CORS policy suitable for production.
+      Only allows specified origins with GET/POST methods and standard headers. *)
+
+  include Tapak_kernel.Middleware.Intf with type t := t
+end
+
+module Head : sig
+  (** HEAD request auto-handler middleware.
+
+      This middleware automatically handles HEAD requests by converting them
+      to GET requests, processing through the service, then removing the
+      response body while preserving headers.
+
+      According to RFC 7231, HEAD is identical to GET except the server
+      MUST NOT send a message body. This middleware implements that behavior
+      automatically so you don't need to define separate HEAD handlers.
+
+      Usage:
+      {[
+        App.(
+          routes [...] ()
+          <++> [ use ~name:"Head" (module Head) (Head.args ()) ]
+        )
+      ]}
+
+      With this middleware, all GET routes automatically support HEAD requests. *)
+
+  type t = unit
+
+  val args : unit -> t
+
+  include Tapak_kernel.Middleware.Intf with type t := t
+end

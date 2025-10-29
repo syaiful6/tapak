@@ -79,12 +79,12 @@ type t =
   ; same_site : Cookies.same_site option
   }
 
-let verify_csrf_token ?(cookie_name = cookie_name) ~token request =
+let verify_token ?(cookie_name = cookie_name) ~token request =
   match get_secret_from_request ~cookie_name request with
   | Some secret -> is_token_match ~token ~secret
   | None -> false
 
-let csrf_input ?(cookie_name = cookie_name) request =
+let input ?(cookie_name = cookie_name) request =
   let secret =
     match get_secret_from_request ~cookie_name request with
     | Some secret -> secret
@@ -93,7 +93,7 @@ let csrf_input ?(cookie_name = cookie_name) request =
   let token = mask_chiper_secret secret in
   token, secret
 
-let with_csrf_cookie ?settings secret response =
+let with_cookie ?settings secret response =
   let open Cookies in
   let settings =
     match settings with

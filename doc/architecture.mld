@@ -383,33 +383,6 @@ let app =
        ]
 ]}
 
-{1 Future Directions}
-
-{2 Rate Limiting with Multi-Domain Support}
-
-EIO's multi-domain parallelism presents challenges for rate limiting. Potential approaches:
-
-- {b Per-domain limits}: Each domain tracks its own rate limits
-- {b Shared atomic counters}: Use [Atomic.t] for cross-domain coordination
-- {b External rate limiter}: Delegate to Redis/Memcached
-- {b Token bucket per domain}: Distribute quota across domains
-
-{2 Streaming Responses}
-
-Enhanced support for streaming:
-- Server-sent events (SSE)
-- WebSocket upgrade protocol
-- Chunked transfer encoding
-- Backpressure-aware streaming
-
-{2 Client as Service}
-
-Implement HTTP client as a service, enabling:
-- Client middleware (retry, circuit breaker)
-- Service mesh patterns
-- Transparent load balancing
-- Same composition as server-side
-
 {1 Related Reading}
 
 - {{:https://monkey.org/~marius/funsrv.pdf} Your Server as a Function} (Marius Eriksen)

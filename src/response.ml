@@ -36,6 +36,10 @@ let remove_header key t =
   let headers = headers t in
   with_ ~headers:(Headers.remove headers key) t
 
+let add_to_list_header (k, v) t =
+  let headers = Headers.add_to_list_header (headers t) k v in
+  with_ ~headers t
+
 let of_string'
       ?(content_type = "text/plain")
       ?version

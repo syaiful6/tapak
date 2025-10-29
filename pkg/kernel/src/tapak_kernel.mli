@@ -6,6 +6,7 @@ module Form = Form
 module Handler = Handler
 module Middleware = Middleware
 module Request = Request
+module Request_guard = Request_guard
 module Request_info = Request_info
 module Response = Response
 module Router = Router

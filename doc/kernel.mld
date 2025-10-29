@@ -2,7 +2,7 @@
 
 {1 Introduction}
 
-The [tapak.kernel] module provides the core request-response processing infrastructure for Tapak. Inspired by {{:https://twitter.github.io/finagle/} Twitter's Finagle}, it implements a composable architecture based on services and filters (middlewares).
+The {!module:Tapak_kernel} module provides the core request-response processing infrastructure for Tapak. Inspired by {{:https://twitter.github.io/finagle/} Twitter's Finagle}, it implements a composable architecture based on services and filters (middlewares).
 
 {1 Architecture}
 
@@ -15,7 +15,6 @@ The {!module:Tapak_kernel.Request} and {!module:Tapak_kernel.Response} modules p
 {[
 open Tapak_kernel
 
-(* Create a request *)
 let request =
   Request.create
     ~scheme:`HTTP
@@ -23,7 +22,6 @@ let request =
     ~meth:`GET
     "/hello"
 
-(* Create a response *)
 let response =
   Response.create
     ~body:(Piaf.Body.of_string "Hello!")
@@ -214,14 +212,12 @@ For those familiar with Finagle, here's how Tapak's concepts map:
 {[
 open Tapak_kernel
 
-(* Define middleware *)
 let logger_filter next request =
   Logs.info (fun m -> m "Request: %s" (Request.target request));
   next request
 
 let logger = Middleware.create ~filter:logger_filter ~name:"logger"
 
-(* Define handlers with typed parameters *)
 let home_handler _request =
   Response.of_html ~status:`OK "<h1>Home</h1>"
 
@@ -230,7 +226,6 @@ let user_handler (user_id : int64) _request =
   let body = Printf.sprintf "<h1>User %Ld</h1>" user_id in
   Response.of_html ~status:`OK body
 
-(* Combine into application *)
 let app =
   let open Router in
   App.routes

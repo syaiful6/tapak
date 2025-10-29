@@ -16,6 +16,7 @@ type (_, _) path =
       }
       -> ('param -> 'a, 'b) path
   | Method : Piaf.Method.t * ('a, 'b) path -> ('a, 'b) path
+  | Guard : 'g Request_guard.t * ('a, 'b) path -> ('g -> 'a, 'b) path
 
 let int = Int Nil
 let int32 = Int32 Nil
@@ -83,6 +84,10 @@ let rec ( / ) : type a b c. (a, c) path -> (c, b) path -> (a, b) path =
   | Custom { parse; format; rest } ->
     Custom { parse; format; rest = rest / right }
   | Method (m, rest) -> Method (m, rest / right)
+  | Guard _ ->
+    failwith
+      "Guards cannot be composed with / - apply guards to complete paths \
+       instead"
 
 let get pattern = Method (`GET, pattern)
 let post pattern = Method (`POST, pattern)
@@ -91,6 +96,10 @@ let patch pattern = Method (`Other "PATCH", pattern)
 let delete pattern = Method (`DELETE, pattern)
 let head pattern = Method (`HEAD, pattern)
 let any pattern = Method (`Other "*", pattern)
+
+let ( >=> ) : type a b g. g Request_guard.t -> (a, b) path -> (g -> a, b) path =
+ fun guard pattern -> Guard (guard, pattern)
+
 let parse_int s = try Some (int_of_string s) with Failure _ -> None
 let parse_int32 s = try Some (Int32.of_string s) with Failure _ -> None
 let parse_int64 s = try Some (Int64.of_string s) with Failure _ -> None
@@ -101,7 +110,12 @@ let parse_bool = function
   | _ -> None
 
 let split_path path =
-  let segments = String.split_on_char '/' path in
+  let only_path =
+    match String.index_opt path '?' with
+    | Some idx -> String.sub path 0 idx
+    | None -> path
+  in
+  let segments = String.split_on_char '/' only_path in
   List.filter (fun s -> s <> "") segments
 
 let rec prepend_path : type a b c. (a, a) path -> (b, c) path -> (b, c) path =
@@ -110,40 +124,83 @@ let rec prepend_path : type a b c. (a, a) path -> (b, c) path -> (b, c) path =
   | Nil -> pattern
   | Literal (s, rest) -> Literal (s, prepend_path rest pattern)
   | Method (m, rest) -> Method (m, prepend_path rest pattern)
-  | Int _ | Int32 _ | Int64 _ | String _ | Bool _ | Splat _ | Custom _ ->
-    failwith "Scope prefix cannot contain parameter extractors"
+  | Int _ | Int32 _ | Int64 _ | String _ | Bool _ | Splat _ | Custom _ | Guard _
+    ->
+    failwith "Scope prefix cannot contain parameter extractors or guards"
 
-let rec match_pattern : type a b. (a, b) path -> string list -> a -> b option =
- fun pattern segments k ->
+(* Check if a path pattern can match given segments without executing guards *)
+let rec can_match_path : type a b. (a, b) path -> string list -> bool =
+ fun pattern segments ->
+  match pattern, segments with
+  | Nil, [] -> true
+  | Nil, _ :: _ -> false
+  | Literal ("", rest), [] -> can_match_path rest []
+  | Literal (expected, rest), seg :: segs when String.equal expected seg ->
+    can_match_path rest segs
+  | Int rest, seg :: segs ->
+    (match parse_int seg with
+    | Some _ -> can_match_path rest segs
+    | None -> false)
+  | Int32 rest, seg :: segs ->
+    (match parse_int32 seg with
+    | Some _ -> can_match_path rest segs
+    | None -> false)
+  | Int64 rest, seg :: segs ->
+    (match parse_int64 seg with
+    | Some _ -> can_match_path rest segs
+    | None -> false)
+  | String rest, _ :: segs -> can_match_path rest segs
+  | Bool rest, seg :: segs ->
+    (match parse_bool seg with
+    | Some _ -> can_match_path rest segs
+    | None -> false)
+  | Splat rest, _ -> can_match_path rest []
+  | Custom { parse; rest; _ }, seg :: segs ->
+    (match parse seg with Some _ -> can_match_path rest segs | None -> false)
+  | Method (_, rest), segs -> can_match_path rest segs
+  | Guard (_, rest), segs -> can_match_path rest segs
+  | _ -> false
+
+let rec match_pattern : type a b.
+  (a, b) path -> string list -> Request.t -> a -> b option
+  =
+ fun pattern segments request k ->
   match pattern, segments with
   | Nil, [] -> Some k
   | Nil, _ :: _ -> None (* Reject trailing segments *)
-  | Literal ("", rest), [] -> match_pattern rest [] k
+  | Literal ("", rest), [] -> match_pattern rest [] request k
   | Literal (expected, rest), seg :: segs when String.equal expected seg ->
-    match_pattern rest segs k
+    match_pattern rest segs request k
   | Int rest, seg :: segs ->
     (match parse_int seg with
-    | Some n -> match_pattern rest segs (k n)
+    | Some n -> match_pattern rest segs request (k n)
     | None -> None)
   | Int32 rest, seg :: segs ->
     (match parse_int32 seg with
-    | Some n -> match_pattern rest segs (k n)
+    | Some n -> match_pattern rest segs request (k n)
     | None -> None)
   | Int64 rest, seg :: segs ->
     (match parse_int64 seg with
-    | Some n -> match_pattern rest segs (k n)
+    | Some n -> match_pattern rest segs request (k n)
     | None -> None)
-  | String rest, seg :: segs -> match_pattern rest segs (k seg)
+  | String rest, seg :: segs -> match_pattern rest segs request (k seg)
   | Bool rest, seg :: segs ->
     (match parse_bool seg with
-    | Some b -> match_pattern rest segs (k b)
+    | Some b -> match_pattern rest segs request (k b)
     | None -> None)
-  | Splat rest, segs -> match_pattern rest [] (k segs)
+  | Splat rest, segs -> match_pattern rest [] request (k segs)
   | Custom { parse; rest; _ }, seg :: segs ->
     (match parse seg with
-    | Some v -> match_pattern rest segs (k v)
+    | Some v -> match_pattern rest segs request (k v)
     | None -> None)
-  | Method (_, rest), segs -> match_pattern rest segs k
+  | Method (_, rest), segs -> match_pattern rest segs request k
+  | Guard (guard, rest), segs ->
+    if can_match_path rest segs
+    then
+      match guard request with
+      | Ok value -> match_pattern rest segs request (k value)
+      | Error err -> raise (Request_guard.Failed err)
+    else None
   | _ -> None
 
 let rec get_method : type a b. (a, b) path -> Piaf.Method.t option = function
@@ -156,6 +213,7 @@ let rec get_method : type a b. (a, b) path -> Piaf.Method.t option = function
   | Bool rest -> get_method rest
   | Splat rest -> get_method rest
   | Custom { rest; _ } -> get_method rest
+  | Guard (_, rest) -> get_method rest
   | Nil -> None
 
 let ( @-> ) : type a. (a, Request.t -> Response.t) path -> a -> route =
@@ -168,7 +226,7 @@ let rec match_route ?(middlewares = []) route request =
   | Route route ->
     let method_matches =
       match route.method_ with
-      | `Other "*" -> true (* Match any HTTP method *)
+      | `Other "*" -> true
       | _ ->
         Piaf.Method.to_string route.method_
         = Piaf.Method.to_string (Request.meth request)
@@ -177,7 +235,7 @@ let rec match_route ?(middlewares = []) route request =
     then None
     else
       let segments = split_path (Request.target request) in
-      (match match_pattern route.pattern segments route.handler with
+      (match match_pattern route.pattern segments request route.handler with
       | Some handler ->
         let service =
           Middleware.apply_all middlewares (fun req -> handler req)
@@ -230,6 +288,7 @@ let rec sprintf' : type a. (a, string) path -> string -> a =
       sprintf' rest (if splat_path = "" then acc else acc ^ "/" ^ splat_path)
   | Custom { format; rest; _ } -> fun v -> sprintf' rest (acc ^ "/" ^ format v)
   | Method (_, rest) -> sprintf' rest acc
+  | Guard (_, rest) -> fun _ -> sprintf' rest acc
 
 let sprintf pattern = sprintf' pattern ""
 
@@ -239,7 +298,7 @@ let scope ?(middlewares = []) prefix routes =
 module type Resource = sig
   type id
 
-  val id_path : (id -> 'a, 'a) path
+  val id_path : unit -> (id -> 'a, 'a) path
   val index : Handler.t
   val new_ : Handler.t
   val create : Handler.t
@@ -256,8 +315,8 @@ let resource ?(middlewares = []) prefix_builder (module R : Resource) =
     [ get (s "") @-> R.index
     ; get (s "new") @-> R.new_
     ; post (s "") @-> R.create
-    ; get R.id_path @-> R.get
-    ; get (R.id_path / s "edit") @-> R.edit
-    ; put R.id_path @-> R.update
-    ; delete R.id_path @-> R.delete
+    ; get (R.id_path ()) @-> R.get
+    ; get (R.id_path () / s "edit") @-> R.edit
+    ; put (R.id_path ()) @-> R.update
+    ; delete (R.id_path ()) @-> R.delete
     ]
