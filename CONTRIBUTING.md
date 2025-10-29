@@ -36,10 +36,6 @@ dune test
 ### Locally
 
 ```bash
-# Build documentation
-./scripts/build-docs.sh
-
-# Or manually
 dune build @doc
 
 # View documentation
@@ -77,27 +73,6 @@ odoc uses a variant of Markdown. Key syntax:
 - `{{:url} Link text}` - External link
 - `{b bold}` - Bold text
 - `{i italic}` - Italic text
-
-## GitHub Pages Deployment
-
-Documentation is automatically built and deployed to GitHub Pages when changes are pushed to the `main` branch.
-
-To enable GitHub Pages:
-
-1. Go to repository Settings → Pages
-2. Set Source to "GitHub Actions"
-3. Push changes to `main` branch
-4. The workflow will build and deploy documentation to `https://syaiful6.github.io/tapak/`
-
-## Testing
-
-```bash
-# Run all tests
-dune test
-
-# Run specific test suite
-dune exec pkg/kernel/test/test.exe
-```
 
 ## Code Style
 

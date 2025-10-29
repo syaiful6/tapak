@@ -1,0 +1,9 @@
+(executable
+ (name main)
+ (public_name tapak-request-guard)
+ (package tapak)
+ (enabled_if
+  (= %{profile} dev))
+ (preprocess
+  (pps tapak-ppx))
+ (libraries tapak piaf eio_main logs logs.fmt fmt.tty))

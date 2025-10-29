@@ -20,6 +20,25 @@ Key features:
 - {b Scoped routes}: Group routes with shared prefixes and middleware
 - {b Multiple parameter types}: int, int32, int64, string, bool, slug, custom validators, and splat
 
+{b Important Note on Pattern Reusability:}
+
+Due to OCaml's value restriction, path patterns intended for use in both routing and URL generation must be defined as {e functions}, not values. For example:
+
+{[
+(* Correct: Define as function for reusability *)
+let user_path () = Router.(s "users" / int64)
+
+let routes = Router.[ get (user_path ()) @-> handler ]
+let url = Router.sprintf (user_path ()) 42L
+
+(* Won't work: Value gets specialized on first use *)
+let user_path = Router.(s "users" / int64)
+let routes = Router.[ get user_path @-> handler ]  (* Specializes path *)
+let url = Router.sprintf user_path 42L  (* Type error! *)
+]}
+
+See the {!section-pattern_reuse} section for more details.
+
 {1 Basic Routing}
 
 {2 Simple Routes}
@@ -46,6 +65,9 @@ The [s] combinator creates a literal path segment. Use [@->] to attach a handler
 - [Router.put pattern @-> handler] - PUT requests
 - [Router.delete pattern @-> handler] - DELETE requests
 - [Router.head pattern @-> handler] - HEAD requests
+- [Router.any pattern @-> handler] - Matches any HTTP method
+
+{1 Path Parameters}
 
 {1 Type-Safe Path Parameters}
 
@@ -215,7 +237,9 @@ let is_uuid s =
   (* Add your UUID validation logic here *)
   true
 
-let uuid =
+(** Due to OCaml's value restriction, custom types must be defined as 
+    functions to be usable for both routing and URL generation. *)
+let uuid () =
   custom
     ~parse:(fun s -> if is_uuid s then Some s else None)
     ~format:Fun.id
@@ -227,7 +251,7 @@ let is_hex_color s =
     (c >= 'a' && c <= 'f') ||
     (c >= 'A' && c <= 'F')) s
 
-let hex_color =
+let hex_color () =
   custom
     ~parse:(fun s -> if is_hex_color s then Some s else None)
     ~format:String.lowercase_ascii
@@ -235,8 +259,8 @@ let hex_color =
 (* Use in routes *)
 let routes =
   router
-    [ get (s "users" / uuid) @-> user_handler
-    ; get (s "theme" / hex_color) @-> theme_handler
+    [ get (s "users" / uuid ()) @-> user_handler
+    ; get (s "theme" / hex_color ()) @-> theme_handler
     ]
 
 (* Matches: /users/550e8400-e29b-41d4-a716-446655440000 *)
@@ -247,10 +271,10 @@ let routes =
 Custom parameters work with sprintf for URL generation:
 
 {[
-let user_url = sprintf (s "users" / uuid) "550e8400-e29b-41d4-a716-446655440000"
+let user_url = sprintf (s "users" / uuid ()) "550e8400-e29b-41d4-a716-446655440000"
 (* Result: "/users/550e8400-e29b-41d4-a716-446655440000" *)
 
-let color_url = sprintf (s "theme" / hex_color) "ff5733"
+let color_url = sprintf (s "theme" / hex_color ()) "ff5733"
 (* Result: "/theme/ff5733" (formatted via format function) *)
 ]}
 
@@ -371,28 +395,42 @@ let routes =
 
 {2 Type-Safe URL Building}
 
-Generate URLs from the same patterns used for routing:
+Generate URLs using the same pattern definitions as routing. {b Note:} Due to OCaml's value restriction, path patterns must be defined as functions (not values) to be reusable in both routing and URL generation contexts.
 
 {[
 open Router
 
-(* Define reusable patterns *)
-let user_path = s "users" / int64
-let user_post_path = s "users" / int64 / s "posts" / str
+(* Define reusable patterns as functions *)
+let user_path () = s "users" / int64
+let user_post_path () = s "users" / int64 / s "posts" / str
 
 (* Use for routing *)
 let routes =
   router
-    [ get user_path @-> user_handler
-    ; get user_post_path @-> post_handler
+    [ get (user_path ()) @-> user_handler
+    ; get (user_post_path ()) @-> post_handler
     ]
 
 (* Use for URL generation *)
-let user_url = sprintf user_path 42L
+let user_url = sprintf (user_path ()) 42L
 (* Result: "/users/42" *)
 
-let post_url = sprintf user_post_path 42L "hello-world"
+let post_url = sprintf (user_post_path ()) 42L "hello-world"
 (* Result: "/users/42/posts/hello-world" *)
+]}
+
+{b Why functions?} Path patterns have polymorphic types that get specialized on first use. If defined as values, they become monomorphic after first use and can't be reused in different contexts. Defining them as functions creates a fresh pattern on each call.
+
+{b Alternative:} If a pattern is only used for routing {e or} URL generation (not both), it can be defined as a value:
+
+{[
+(* Only used for routing - value is fine *)
+let admin_path = s "admin" / s "dashboard"
+let routes = router [ get admin_path @-> admin_handler ]
+
+(* Only used for URL generation - value is fine *)
+let api_path = s "api" / s "v1"
+let url = sprintf api_path ""
 ]}
 
 {2 Sprintf for All Parameter Types}
@@ -424,81 +462,82 @@ The [sprintf] function is type-safe: it requires the exact parameter types that 
 
 When routes are registered under a scope, the scope prefix is {e not automatically included} in URL generation. This design maintains the composability principle - you explicitly compose the full path when generating URLs.
 
-{b Important:} To generate URLs for scoped routes, you must include the scope prefix when calling [sprintf].
+{b Important:} To generate URLs for scoped routes, you must include the scope prefix when calling [sprintf]. Due to the value restriction, define patterns as functions if they're used in multiple contexts.
 
 {[
 open Router
 
-(* Define patterns *)
-let user_path = s "users" / int64
-let api_prefix = s "api" / s "v1"
+(* Define patterns as functions for reusability *)
+let user_path () = s "users" / int64
+let api_prefix () = s "api" / s "v1"
 
 (* Register routes with scope *)
 let routes =
-  scope api_prefix
-    [ get user_path @-> user_handler
-    ; get (user_path / s "posts") @-> user_posts_handler
+  scope (api_prefix ())
+    [ get (user_path ()) @-> user_handler
+    ; get (user_path () / s "posts") @-> user_posts_handler
     ]
 
 (* Routes match: /api/v1/users/:id and /api/v1/users/:id/posts *)
 
 (* URL generation: Include the scope prefix manually *)
-let user_url = sprintf (api_prefix / user_path) 42L
+let user_url = sprintf (api_prefix () / user_path ()) 42L
 (* Result: "/api/v1/users/42" *)
 
-let user_posts_url = sprintf (api_prefix / user_path / s "posts") 42L
+let user_posts_url = sprintf (api_prefix () / user_path () / s "posts") 42L
 (* Result: "/api/v1/users/42/posts" *)
 ]}
 
-{b Best Practice:} Define both the prefix and full paths as reusable values:
+{b Best Practice:} Define both the prefix and full paths as reusable functions:
 
 {[
-(* Define base patterns *)
-let user_path = s "users" / int64
-let post_path = s "users" / int64 / s "posts" / str
+(* Define base patterns as functions *)
+let user_path () = s "users" / int64
+let post_path () = s "users" / int64 / s "posts" / str
 
-(* Define scope prefix *)
-let api_v1 = s "api" / s "v1"
+(* Define scope prefix as function *)
+let api_v1 () = s "api" / s "v1"
 
-(* Define full paths for URL generation *)
-let api_user_path = api_v1 / user_path
-let api_post_path = api_v1 / post_path
+(* Define full path functions for URL generation *)
+let api_user_path () = api_v1 () / user_path ()
+let api_post_path () = api_v1 () / post_path ()
 
 (* Register routes *)
-let routes = scope api_v1
-  [ get user_path @-> user_handler
-  ; get post_path @-> post_handler
+let routes = scope (api_v1 ())
+  [ get (user_path ()) @-> user_handler
+  ; get (post_path ()) @-> post_handler
   ]
 
 (* Generate URLs using full paths *)
-let user_url = sprintf api_user_path 42L
-let post_url = sprintf api_post_path 42L "hello-world"
+let user_url = sprintf (api_user_path ()) 42L
+let post_url = sprintf (api_post_path ()) 42L "hello-world"
 ]}
 
 {b Nested Scopes:} Compose all prefixes when generating URLs:
 
 {[
-let api = s "api"
-let v1 = s "v1"
-let admin = s "admin"
-let users = s "users" / int64
+(* Define as functions for reusability *)
+let api () = s "api"
+let v1 () = s "v1"
+let admin () = s "admin"
+let users () = s "users" / int64
 
 (* Register with nested scopes *)
 let routes =
-  scope api
-    [ scope v1
-        [ scope admin
-            [ get users @-> admin_user_handler ]
+  scope (api ())
+    [ scope (v1 ())
+        [ scope (admin ())
+            [ get (users ()) @-> admin_user_handler ]
         ]
     ]
 
-(* Full path for URL generation *)
-let admin_user_path = api / v1 / admin / users
-let url = sprintf admin_user_path 42L
+(* Full path function for URL generation *)
+let admin_user_path () = api () / v1 () / admin () / users ()
+let url = sprintf (admin_user_path ()) 42L
 (* Result: "/api/v1/admin/users/42" *)
 ]}
 
-This explicit composition ensures you always know the complete path structure and maintains the DRY principle - patterns are defined once and composed as needed.
+This explicit composition ensures you always know the complete path structure and maintains the DRY principle - patterns are defined once as functions and composed as needed.
 
 {1 RESTful Resources}
 
@@ -515,7 +554,7 @@ open Router
 (* Resource with int64 IDs *)
 module UserResource : Router.Resource = struct
   type id = int64
-  let id_path = Router.int64
+  let id_path () = Router.int64
 
   let index _req =
     Response.of_html ~status:`OK "<h1>User List</h1>"
@@ -568,7 +607,7 @@ module ArticleResource : Router.Resource = struct
   type id = string
 
   (* Custom UUID validator *)
-  let id_path = Router.custom
+  let id_path () = Router.custom
     ~parse:(fun s ->
       if String.length s = 36 && (* basic UUID check *)
          String.contains s '-'
@@ -591,7 +630,7 @@ let routes = resource (s "articles") (module ArticleResource)
 {[
 module PostResource : Router.Resource = struct
   type id = string
-  let id_path = Router.slug  (* Built-in slug validator *)
+  let id_path () = Router.slug  (* Built-in slug validator *)
 
   let index _req = (* ... *)
   let get slug _req =
@@ -608,7 +647,7 @@ let routes = resource (s "posts") (module PostResource)
 {[
 module CommentResource : Router.Resource = struct
   type id = int
-  let id_path = Router.int
+  let id_path () = Router.int
 
   let index _req = (* ... *)
   let get comment_id _req = (* ... *)
@@ -634,29 +673,27 @@ let routes =
 
 {2 URL Generation for Resources}
 
-To generate URLs for resource routes, compose the resource prefix with the [id_path]:
+To generate URLs for resource routes, compose the resource prefix with the [id_path]. Due to the value restriction, define path helpers as functions if used multiple times:
 
 {[
 (* Define the resource *)
 module UserResource : Router.Resource = struct
   type id = int64
-  let id_path = Router.int64
+  let id_path () = Router.int64
   (* ... handlers ... *)
 end
 
 (* Register routes *)
 let routes = resource (s "users") (module UserResource)
 
-(* URL generation: Compose patterns manually *)
+(* URL generation: Can use inline patterns for single use *)
 let user_list_url = sprintf (s "users") ""
 (* Result: "/users" *)
 
-let user_show_path = s "users" / UserResource.id_path
-let user_show_url = sprintf user_show_path 42L
+let user_show_url = sprintf (s "users" / UserResource.id_path ()) 42L
 (* Result: "/users/42" *)
 
-let user_edit_path = s "users" / UserResource.id_path / s "edit"
-let user_edit_url = sprintf user_edit_path 42L
+let user_edit_url = sprintf (s "users" / UserResource.id_path () / s "edit") 42L
 (* Result: "/users/42/edit" *)
 
 let user_new_url = sprintf (s "users" / s "new") ""
@@ -667,46 +704,44 @@ let user_new_url = sprintf (s "users" / s "new") ""
 
 {[
 (* Resource under API scope *)
-let api_v1 = s "api" / s "v1"
-let routes = scope api_v1
+let api_v1 () = s "api" / s "v1"
+let routes = scope (api_v1 ())
   [ resource (s "users") (module UserResource) ]
 
 (* URL generation: Include the scope prefix *)
-let api_user_show = api_v1 / s "users" / UserResource.id_path
-let url = sprintf api_user_show 42L
+let url = sprintf (api_v1 () / s "users" / UserResource.id_path ()) 42L
 (* Result: "/api/v1/users/42" *)
 
-let api_user_edit = api_v1 / s "users" / UserResource.id_path / s "edit"
-let edit_url = sprintf api_user_edit 42L
+let edit_url = sprintf (api_v1 () / s "users" / UserResource.id_path () / s "edit") 42L
 (* Result: "/api/v1/users/42/edit" *)
 ]}
 
 {b Best Practice for Resource URLs:}
 
-Define reusable path helpers alongside your resource:
+Define reusable path helper functions alongside your resource:
 
 {[
 module Users = struct
   module Resource : Router.Resource = struct
     type id = int64
-    let id_path = Router.int64
+    let id_path () = Router.int64
     (* ... handlers ... *)
   end
 
-  (* Path helpers for URL generation *)
-  let base = s "users"
-  let list_path = base
-  let new_path = base / s "new"
-  let show_path = base / Resource.id_path
-  let edit_path = base / Resource.id_path / s "edit"
+  (* Path helper functions for URL generation *)
+  let base () = s "users"
+  let list_path () = base ()
+  let new_path () = base () / s "new"
+  let show_path () = base () / Resource.id_path ()
+  let edit_path () = base () / Resource.id_path () / s "edit"
 
   (* Routes *)
-  let routes = resource base (module Resource)
+  let routes = resource (base ()) (module Resource)
 end
 
 (* Use in your application *)
-let user_url = sprintf Users.show_path 42L
-let edit_url = sprintf Users.edit_path 42L
+let user_url = sprintf (Users.show_path ()) 42L
+let edit_url = sprintf (Users.edit_path ()) 42L
 ]}
 
 This pattern keeps URL generation DRY and type-safe while maintaining the flexibility of manual composition.
@@ -738,25 +773,25 @@ let post_handler user_id post_slug _request =
   in
   Response.of_html ~status:`OK html
 
-(* Define reusable patterns *)
-let user_path = s "users" / int64
-let user_posts_path = s "users" / int64 / s "posts"
-let post_path = s "users" / int64 / s "posts" / str
+(* Define reusable patterns as functions *)
+let user_path () = s "users" / int64
+let user_posts_path () = s "users" / int64 / s "posts"
+let post_path () = s "users" / int64 / s "posts" / str
 
 (* Create routes *)
 let routes =
   router
     [ get (s "") @-> home_handler
-    ; get user_path @-> user_handler
-    ; get user_posts_path @-> user_posts_handler
-    ; get post_path @-> post_handler
+    ; get (user_path ()) @-> user_handler
+    ; get (user_posts_path ()) @-> user_posts_handler
+    ; get (post_path ()) @-> post_handler
     ]
 
 (* Generate URLs *)
-let user_url = sprintf user_path 42L
+let user_url = sprintf (user_path ()) 42L
 (* "/users/42" *)
 
-let post_url = sprintf post_path 42L "hello-world"
+let post_url = sprintf (post_path ()) 42L "hello-world"
 (* "/users/42/posts/hello-world" *)
 ]}
 
@@ -865,20 +900,29 @@ let app =
 
 {1 Best Practices}
 
-{2 Pattern Reuse}
+{2:pattern_reuse Pattern Reuse}
 
-Define patterns once, use them for both routing and URL generation:
+Define patterns as functions to reuse them for both routing and URL generation:
 
 {[
-(* Good: DRY principle *)
-let user_path = s "users" / int64
+(* Good: Define as function for reusability *)
+let user_path () = s "users" / int64
 
-let routes = router [ get user_path @-> handler ]
-let url = sprintf user_path 42L
+let routes = router [ get (user_path ()) @-> handler ]
+let url = sprintf (user_path ()) 42L
 
-(* Bad: Duplication *)
+(* Also acceptable: Inline if only used once or twice *)
 let routes = router [ get (s "users" / int64) @-> handler ]
-let url = "/users/" ^ Int64.to_string 42L (* manual, error-prone *)
+let url = sprintf (s "users" / int64) 42L
+
+(* Bad: Manual string concatenation *)
+let routes = router [ get (s "users" / int64) @-> handler ]
+let url = "/users/" ^ Int64.to_string 42L (* error-prone, no type safety *)
+
+(* Won't work: Value gets specialized on first use *)
+let user_path = s "users" / int64  (* polymorphic type restricted *)
+let routes = router [ get user_path @-> handler ]  (* specializes to routing *)
+let url = sprintf user_path 42L  (* type error: already specialized! *)
 ]}
 
 {2 Type Safety}
@@ -1020,19 +1064,19 @@ let routes = Router.[ get user_path @-> wrong_handler ]
 {b 1. Type-Safe URL Generation}
 
 {[
-(* Define the pattern once *)
-let user_post_path = Router.(s "users" / int64 / s "posts" / str)
+(* Define the pattern as a function for reusability *)
+let user_post_path () = Router.(s "users" / int64 / s "posts" / str)
 
 (* Use for routing *)
-let routes = Router.[ get user_post_path @-> post_handler ]
+let routes = Router.[ get (user_post_path ()) @-> post_handler ]
 
 (* Use for URL generation - types are enforced *)
-let url = Router.sprintf user_post_path 42L "hello-world"
+let url = Router.sprintf (user_post_path ()) 42L "hello-world"
 (* Result: "/users/42/posts/hello-world" *)
 
 (* This WON'T compile - wrong types *)
-let bad_url = Router.sprintf user_post_path "not-a-number" 123
-(*                                          ^^^^^^^^^^^^^^
+let bad_url = Router.sprintf (user_post_path ()) "not-a-number" 123
+(*                                                ^^^^^^^^^^^^^^
    Error: Expected int64, got string
 *)
 ]}
