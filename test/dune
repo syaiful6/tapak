@@ -1,4 +1,4 @@
 (test
  (name test)
  (package tapak)
- (libraries tapak alcotest))
+ (libraries tapak alcotest eio_main))

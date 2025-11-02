@@ -91,6 +91,7 @@ rec {
       hmap
       logs
       piaf
+      magic-mime
       uri
       ptime
       yojson

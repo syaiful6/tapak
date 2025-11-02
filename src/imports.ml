@@ -28,12 +28,20 @@ module Option = struct
   include Option
 
   module Syntax = struct
+    let ( <|> ) o1 o2 = match o1 with Some _ -> o1 | None -> o2
     let ( let+ ) result f = map f result
     let ( let* ) = bind
 
     let ( and* ) o1 o2 =
       match o1, o2 with Some v1, Some v2 -> Some (v1, v2) | _ -> None
   end
+
+  let traverse_list f xs =
+    let rec aux acc = function
+      | [] -> Some (List.rev acc)
+      | x :: xs -> (match f x with None -> None | Some y -> aux (y :: acc) xs)
+    in
+    aux [] xs
 end
 
 module Result = struct
@@ -42,6 +50,7 @@ module Result = struct
   module Syntax = struct
     let ( let+ ) result f = map f result
     let ( let* ) = bind
+    let ( <|> ) r1 r2 = match r1 with Ok _ -> r1 | Error _ -> r2
 
     let ( and+ ) r1 r2 =
       match r1, r2 with

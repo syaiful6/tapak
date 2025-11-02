@@ -14,3 +14,4 @@ module Header_parser = Header_parser
 module Cookies = Cookies
 module CSRF = Csrf
 module Versions = Versions
+module Static = Static

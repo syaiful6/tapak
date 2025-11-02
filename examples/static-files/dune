@@ -1,0 +1,7 @@
+(executable
+ (name main)
+ (public_name tapak-static-files)
+ (package tapak)
+ (enabled_if
+  (= %{profile} dev))
+ (libraries tapak eio_main ptime ptime.clock.os fmt.tty logs.fmt))

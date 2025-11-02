@@ -43,6 +43,7 @@
   dune
   angstrom
   hmap
+  ptime
   ipaddr
   logs
   (eio
@@ -52,11 +53,18 @@
   (uri
    (>= 4.4.0))
   yojson
+  magic-mime
   mirage-crypto
   mirage-crypto-rng
-  (reason (and (>= 3.12) :with-dev-setup))
+  (reason
+   (and
+    (>= 3.12)
+    :with-dev-setup))
   (ocaml-lsp-server :with-dev-setup)
-  (ocamlformat (and (= 0.27.0) :with-dev-setup))
+  (ocamlformat
+   (and
+    (= 0.27.0)
+    :with-dev-setup))
   (alcotest :with-test)
   (odoc :with-doc))
  (tags
@@ -72,7 +80,8 @@
    (>= 5.2.0))
   dune
   dune-configurator
-  (tapak (= :version))
+  (tapak
+   (= :version))
   (piaf
    (>= 0.2.0))
   (camlzip
@@ -91,10 +100,14 @@
   (ocaml
    (>= 5.2.0))
   dune
-  (tapak (= :version))
+  (tapak
+   (= :version))
   (ppxlib
    (>= 0.32.0))
-  (ocamlformat (and (= 0.27.0) :with-test))
+  (ocamlformat
+   (and
+    (= 0.27.0)
+    :with-test))
   angstrom
   (odoc :with-doc))
  (tags
