@@ -118,16 +118,6 @@ let split_path path =
   let segments = String.split_on_char '/' only_path in
   List.filter (fun s -> s <> "") segments
 
-let rec prepend_path : type a b c. (a, a) path -> (b, c) path -> (b, c) path =
- fun prefix pattern ->
-  match prefix with
-  | Nil -> pattern
-  | Literal (s, rest) -> Literal (s, prepend_path rest pattern)
-  | Method (m, rest) -> Method (m, prepend_path rest pattern)
-  | Int _ | Int32 _ | Int64 _ | String _ | Bool _ | Splat _ | Custom _ | Guard _
-    ->
-    failwith "Scope prefix cannot contain parameter extractors or guards"
-
 (* Check if a path pattern can match given segments without executing guards *)
 let rec can_match_path : type a b. (a, b) path -> string list -> bool =
  fun pattern segments ->
@@ -221,7 +211,17 @@ let ( @-> ) : type a. (a, Request.t -> Response.t) path -> a -> route =
   let method_ = get_method pattern |> Option.value ~default:`GET in
   Route { method_; pattern; handler = handler_fn }
 
-let rec match_route ?(middlewares = []) route request =
+let rec match_prefix : type a. (a, a) path -> string list -> string list option =
+ fun pattern segments ->
+  match pattern, segments with
+  | Nil, segs -> Some segs
+  | Literal ("", rest), segs -> match_prefix rest segs
+  | Literal (expected, rest), seg :: segs when String.equal expected seg ->
+    match_prefix rest segs
+  | Method (_, rest), segs -> match_prefix rest segs
+  | _ -> None
+
+let rec match_route ?(middlewares = []) route segments request =
   match route with
   | Route route ->
     let method_matches =
@@ -233,9 +233,8 @@ let rec match_route ?(middlewares = []) route request =
     in
     if not method_matches
     then None
-    else
-      let segments = split_path (Request.target request) in
-      (match match_pattern route.pattern segments request route.handler with
+    else (
+      match match_pattern route.pattern segments request route.handler with
       | Some handler ->
         let service =
           Middleware.apply_all middlewares (fun req -> handler req)
@@ -243,28 +242,22 @@ let rec match_route ?(middlewares = []) route request =
         Some (service request)
       | None -> None)
   | Scope scope ->
-    let accumulated_middlewares = middlewares @ scope.middlewares in
-    let expanded_routes =
-      List.map
-        (fun r ->
-           match r with
-           | Route route ->
-             Route
-               { route with pattern = prepend_path scope.prefix route.pattern }
-           | Scope inner_scope ->
-             Scope
-               { inner_scope with
-                 prefix = prepend_path scope.prefix inner_scope.prefix
-               })
-        scope.routes
-    in
-    List.find_map
-      (fun route ->
-         match_route ~middlewares:accumulated_middlewares route request)
-      expanded_routes
+    (match match_prefix scope.prefix segments with
+    | None -> None
+    | Some remaining_segments ->
+      let accumulated_middlewares = middlewares @ scope.middlewares in
+      List.find_map
+        (fun route ->
+           match_route
+             ~middlewares:accumulated_middlewares
+             route
+             remaining_segments
+             request)
+        scope.routes)
 
 let match' routes request =
-  List.find_map (fun route -> match_route route request) routes
+  let segments = split_path (Request.target request) in
+  List.find_map (fun route -> match_route route segments request) routes
 
 let router routes request =
   match match' routes request with
