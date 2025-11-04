@@ -38,11 +38,12 @@ module Compression : sig
 end
 
 module Request_logger : sig
-  type request_info =
+  type log_info =
     { client_ip : string
     ; request_method : string
     ; request_uri : string
     ; request_protocol : string
+    ; status : int
     ; response_bytes : int option
     ; referer : string option
     ; user_agent : string option
@@ -50,7 +51,7 @@ module Request_logger : sig
     ; duration_ms : float
     }
 
-  type formatter = request_info -> string
+  type formatter = log_info -> string
 
   val apache_common_log_format : formatter
 
