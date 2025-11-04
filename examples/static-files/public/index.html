@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tapak Static File Server Example</title>
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+
+<body>
+  <div class="container">
+    <header>
+      <h1>🎯 Tapak Static File Server</h1>
+      <p class="subtitle">A demonstration of Tapak's static file serving capabilities</p>
+    </header>
+
+    <main>
+      <section class="card">
+        <h2>Welcome!</h2>
+        <p>
+          This is a working example of Tapak's static file handler.
+          The server is serving this HTML file, along with CSS, JavaScript,
+          and other static assets.
+        </p>
+      </section>
+
+      <section class="card">
+        <h2>Features Demonstrated</h2>
+        <ul>
+          <li>✅ Serving HTML, CSS, and JavaScript files</li>
+          <li>✅ Automatic index.html serving for directories</li>
+          <li>✅ Custom cache control headers (1 hour cache)</li>
+          <li>✅ ETag support for conditional requests</li>
+          <li>✅ Proper MIME type detection</li>
+          <li>✅ Multiple route mounting (API + static files)</li>
+        </ul>
+      </section>
+
+      <section class="card">
+        <h2>Try These Links</h2>
+        <ul class="links">
+          <li><a href="/">Home (this page)</a></li>
+          <li><a href="/about.html">About page</a></li>
+          <li><a href="/assets/style.css">View CSS file</a></li>
+          <li><a href="/api/hello">API endpoint (JSON response)</a></li>
+        </ul>
+      </section>
+
+      <section class="card">
+        <h2>API Integration Test</h2>
+        <p>Click the button to fetch data from the API endpoint:</p>
+        <button id="api-test-btn">Fetch from API</button>
+        <pre id="api-response" class="code-block"></pre>
+      </section>
+
+      <section class="card">
+        <h2>Response Headers</h2>
+        <p>
+          Open your browser's Developer Tools (Network tab) to see the
+          HTTP headers, including:
+        </p>
+        <ul>
+          <li><code>Cache-Control: public, max-age=3600</code></li>
+          <li><code>ETag: W/"..."</code> (weak ETag)</li>
+          <li><code>Content-Type: text/html</code></li>
+          <li><code>Last-Modified</code></li>
+        </ul>
+        <p>
+          Try refreshing the page and watch for 304 Not Modified responses!
+        </p>
+      </section>
+    </main>
+
+    <footer>
+      <p>Built with <a href="https://github.com/syaiful6/tapak" target="_blank">Tapak</a> - A composable OCaml web
+        framework</p>
+    </footer>
+  </div>
+
+  <script src="/assets/app.js"></script>
+</body>
+
+</html>

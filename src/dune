@@ -3,6 +3,8 @@
  (public_name tapak)
  (libraries
   piaf
+  magic-mime
+  ptime
   eio
   ipaddr
   yojson

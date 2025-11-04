@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>About - Tapak Static File Server</title>
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+
+<body>
+  <div class="container">
+    <header>
+      <h1>📖 About This Example</h1>
+      <p class="subtitle">Understanding Tapak's static file serving</p>
+    </header>
+
+    <main>
+      <section class="card">
+        <h2>What is Tapak?</h2>
+        <p>
+          Tapak is a composable web framework for OCaml, inspired by Twitter's Finagle.
+          It provides a modular architecture based on Services and Filters (middlewares)
+          built on OCaml 5's effect-based I/O (EIO).
+        </p>
+      </section>
+
+      <section class="card">
+        <h2>Static File Handler</h2>
+        <p>
+          The static file handler in Tapak is backend-agnostic and supports:
+        </p>
+        <ul>
+          <li><strong>Multiple backends:</strong> Filesystem, S3, embedded files, or custom storage</li>
+          <li><strong>Conditional requests:</strong> If-Match, If-None-Match, If-Modified-Since</li>
+          <li><strong>Range requests:</strong> Partial content support (HTTP 206)</li>
+          <li><strong>Pre-compressed files:</strong> Automatic .gz, .br, .zst detection</li>
+          <li><strong>ETag support:</strong> Both weak and strong validators</li>
+          <li><strong>Security:</strong> Path sanitization and hidden file filtering</li>
+        </ul>
+      </section>
+
+      <section class="card">
+        <h2>Code Example</h2>
+        <p>Here's how this example is configured:</p>
+        <pre class="code-block"><code>let public_dir = Eio.Path.(cwd / "public") in
+            let fs_backend = Static.filesystem ~follow:false public_dir in
+
+            let static_config = {
+            Static.default_config with
+            max_age = `Seconds 3600;
+            use_weak_etags = true;
+            serve_hidden_files = false;
+            }
+
+            let routes = Router.[
+            get (s "assets" / splat) @->
+            Static.serve fs_backend ~config:static_config ()
+            ]</code></pre>
+      </section>
+
+      <section class="card">
+        <h2>Learn More</h2>
+        <ul class="links">
+          <li><a href="https://github.com/syaiful6/tapak" target="_blank">Tapak on GitHub</a></li>
+          <li><a href="/">Back to Home</a></li>
+        </ul>
+      </section>
+    </main>
+
+    <footer>
+      <p>Built with <a href="https://github.com/syaiful6/tapak" target="_blank">Tapak</a></p>
+    </footer>
+  </div>
+
+  <script src="/assets/app.js"></script>
+</body>
+
+</html>
