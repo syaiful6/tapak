@@ -671,9 +671,8 @@ let filesystem ?(follow = true) root =
     let hash (File { stat; _ }) =
       Some
         (Format.asprintf
-           "%Ld-%Ld-%d"
+           "%Lx-%x"
            (stat.File.Stat.size |> Optint.Int63.to_int64)
-           stat.File.Stat.ino
            (Float.to_int stat.File.Stat.mtime))
 
     let content ~sw:_ (File { path; stat }) =
