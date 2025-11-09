@@ -137,6 +137,9 @@ module Content_negotiation : sig
     ]
   (** Common content format types *)
 
+  val default_accept_formats : format list
+  (** default list of accepted formats *)
+
   val format_to_media_type : format -> string
   (** Convert format to media type string.
 

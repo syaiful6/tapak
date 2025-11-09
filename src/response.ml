@@ -86,26 +86,22 @@ let negotiate
       ?(status = `OK)
       ?(headers = Headers.empty)
       ?(context = Context.empty)
+      ?(available_formats =
+        Header_parser.Content_negotiation.default_accept_formats)
       request
-      handlers
+      render
   =
   let accept_header = Request.header "Accept" request in
-  let available_formats = List.map fst handlers in
   match
     Header_parser.Content_negotiation.negotiate_format
       accept_header
       available_formats
   with
   | Some format ->
-    (match List.assoc_opt format handlers with
-    | Some handler ->
-      let body_content = handler () in
-      let content_type =
-        Header_parser.Content_negotiation.format_to_media_type format
-      in
-      of_string' ?version ~status ~content_type ~headers ~context body_content
+    (match render format with
+    | Some (content_type, body) ->
+      of_string' ?version ~status ~content_type ~headers ~context body
     | None ->
-      (* This shouldn't happen if handlers are constructed correctly *)
       of_string'
         ?version
         ~status:`Not_acceptable
