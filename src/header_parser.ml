@@ -259,6 +259,8 @@ module Content_negotiation = struct
     | `Text -> Media_type.text
     | `Other s -> s
 
+  let default_accept_formats = [ `Json; `Html; `Xml; `Text ]
+
   let media_type_to_format = function
     | "application/json" -> `Json
     | "text/html" -> `Html

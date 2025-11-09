@@ -29,12 +29,15 @@ let user_handler id _req =
   Response.of_html ~status:`OK html
 
 let api_version_handler req =
-  Response.negotiate
-    req
-    [ (`Json, fun () -> {|{"message": "Hello from Tapak!", "version": "1.0"}|})
-    ; (`Html, fun () -> "<h1>Hello from Tapak!</h1><p>Version: 1.0</p>")
-    ; (`Text, fun () -> "Hello from Tapak!\nVersion: 1.0")
-    ]
+  Response.negotiate req (function
+    | `Json ->
+      Some
+        ( "application/json"
+        , {|{"message": "Hello from Tapak!", "version": "1.0"}|} )
+    | `Html ->
+      Some ("text/html", "<h1>Hello from Tapak!</h1><p>Version: 1.0</p>")
+    | `Text -> Some ("text/plain", "Hello from Tapak!\nVersion: 1.0")
+    | _ -> None)
 
 let files_handler path _req =
   let html =
