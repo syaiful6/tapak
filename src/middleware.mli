@@ -145,30 +145,11 @@ module CORS : sig
   include Tapak_kernel.Middleware.Intf with type t := t
 end
 
-module Head : sig
-  (** HEAD request auto-handler middleware.
+val head : t
+(** [head] is a middleware that automatically handles HEAD requests by converting
+    them to GET requests, processing them through the service, then removing the
+    response body. This follows the HTTP specification and Finagle's approach.
 
-      This middleware automatically handles HEAD requests by converting them
-      to GET requests, processing through the service, then removing the
-      response body while preserving headers.
-
-      According to RFC 7231, HEAD is identical to GET except the server
-      MUST NOT send a message body. This middleware implements that behavior
-      automatically so you don't need to define separate HEAD handlers.
-
-      Usage:
-      {[
-        App.(
-          routes [...] ()
-          <++> [ use ~name:"Head" (module Head) (Head.args ()) ]
-        )
-      ]}
-
-      With this middleware, all GET routes automatically support HEAD requests. *)
-
-  type t = unit
-
-  val args : unit -> t
-
-  include Tapak_kernel.Middleware.Intf with type t := t
-end
+    According to RFC 7231, a HEAD request is identical to GET except the
+    server MUST NOT send a message body. The server SHOULD send the same
+    headers as it would for a GET request. *)
