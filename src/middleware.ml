@@ -23,4 +23,5 @@ end
 module Request_logger = Middleware_logger
 module Limit_request_size = Middleware_limit_request_size
 module CORS = Middleware_cors
-module Head = Middleware_head
+
+let head = Middleware_head.m

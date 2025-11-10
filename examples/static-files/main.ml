@@ -46,7 +46,6 @@ let () =
   in
 
   let open Router in
-  let open Middleware in
   let app =
     App.(
       routes
@@ -54,11 +53,12 @@ let () =
         ; get splat @-> Static.serve fs_backend ~config:static_config ()
         ]
         ()
-      <++> [ use
-               ~name:"Request_logger"
-               (module Request_logger)
-               (Request_logger.args ~now ~trusted_proxies ())
-           ; use ~name:"Head_handler" (module Head) (Head.args ())
+      <++> [ Middleware.(
+               use
+                 ~name:"Request_logger"
+                 (module Request_logger)
+                 (Request_logger.args ~now ~trusted_proxies ()))
+           ; Middleware.head
            ])
   in
 
