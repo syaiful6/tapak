@@ -135,13 +135,13 @@ type folder_name = Piece.t
 (** Name of a folder. *)
 
 type 'a folder_or_file =
-  [ `Folder of folder_name * 'a folder
+  [ `Folder of folder_name * 'a folder_content
     (** A folder with its name and contents *)
   | `File of 'a  (** A file *)
   ]
 (** Either a folder (with contents) or a file. *)
 
-and 'a folder = 'a folder_or_file list
+and 'a folder_content = 'a folder_or_file list
 (** List of files and folders in a directory. *)
 
 type 'a optional_folder_or_file =
@@ -160,7 +160,7 @@ type lookup_error =
 
 (** {1 Backend Interface} *)
 
-(** Signature for file backend implementations.
+(** Signature for storage backend implementations.
 
     Backends can be implemented for:
     - Local filesystem
@@ -168,7 +168,7 @@ type lookup_error =
     - Embedded files (compiled into binary)
     - In-memory storage
     - Custom storage systems *)
-module type File_sig = sig
+module type Storage_sig = sig
   type t
   (** The file type for this backend. *)
 
@@ -442,7 +442,7 @@ end
 (** {1 Main API} *)
 
 val serve :
-   (module File_sig)
+   (module Storage_sig)
   -> ?config:config
   -> unit
   -> string list
@@ -535,7 +535,7 @@ val serve :
 
     @since 0.1.0 *)
 
-val filesystem : ?follow:bool -> _ Eio.Path.t -> (module File_sig)
+val filesystem : ?follow:bool -> _ Eio.Path.t -> (module Storage_sig)
 (** [filesystem ~follow root] creates a filesystem-based static
     file backend.
 
@@ -574,7 +574,11 @@ val filesystem : ?follow:bool -> _ Eio.Path.t -> (module File_sig)
 
     @since 0.1.0 *)
 
-val app : (module File_sig) -> ?config:config -> unit -> Tapak_kernel.Handler.t
+val app :
+   (module Storage_sig)
+  -> ?config:config
+  -> unit
+  -> Tapak_kernel.Handler.t
 (** [app (module Backend) ~config ()] creates a standalone
     static file handler.
 

@@ -40,11 +40,12 @@ end
 type folder_name = Piece.t
 
 type 'a folder_or_file =
-  [ `Folder of folder_name * 'a folder  (** Folder with its name and contents *)
+  [ `Folder of folder_name * 'a folder_content
+    (** Folder with its name and contents *)
   | `File of 'a
   ]
 
-and 'a folder = 'a folder_or_file list
+and 'a folder_content = 'a folder_or_file list
 (** List of files and folders in a directory *)
 
 type 'a optional_folder_or_file =
@@ -79,7 +80,7 @@ module Finfo = struct
     }
 end
 
-module type File_sig = sig
+module type Storage_sig = sig
   type t
 
   val available_encodings :
@@ -750,7 +751,7 @@ let filesystem ?(follow = true) root =
       | e -> Error (`IO_error (Printexc.to_string e))
   end
   in
-  (module File_system : File_sig)
+  (module File_system : Storage_sig)
 
 let make_etag ~use_weak_etags hash =
   match hash with
@@ -783,9 +784,10 @@ let should_serve_file config name =
   else String.length name = 0 || String.get name 0 <> '.'
 
 let rec find_index_file :
-  'a. (module File_sig with type t = 'a) -> config -> Piece.t list -> 'a option
+  'a.
+  (module Storage_sig with type t = 'a) -> config -> Piece.t list -> 'a option
   =
- fun (type a) (module F : File_sig with type t = a) config pieces ->
+ fun (type a) (module F : Storage_sig with type t = a) config pieces ->
   match config.index_files with
   | [] -> None
   | index :: rest ->
@@ -799,7 +801,13 @@ let rec find_index_file :
       | Ok (`Folder _ | `Missing) | Error _ ->
         find_index_file (module F) { config with index_files = rest } pieces))
 
-let serve (module F : File_sig) ?(config = default_config) () segments request =
+let serve
+      (module F : Storage_sig)
+      ?(config = default_config)
+      ()
+      segments
+      request
+  =
   let open Result.Syntax in
   let result =
     let* pieces =
@@ -929,7 +937,7 @@ let serve (module F : File_sig) ?(config = default_config) () segments request =
   in
   match result with Ok response -> response | Error response -> response
 
-let app (module F : File_sig) ?config () request =
+let app (module F : Storage_sig) ?config () request =
   let uri = Request.uri request in
   let path = Uri.path uri in
   let segments = String.split_on_char ~sep:'/' path in
