@@ -29,6 +29,8 @@ The OCaml ecosystem has several excellent web frameworks. Here's how Tapak compa
 - {b Request Guards}: Composable request validation and data extraction with extensible error types
 - {b Middleware Pipeline}: Chain middlewares to handle cross-cutting concerns (logging, compression, CSRF, etc.)
 - {b Request/Response Compression}: Built-in support for gzip, deflate, brotli, and zstd
+- {b Static File Serving}: Efficient static file handler with support for range requests and caching
+- {b Server-Sent Events (SSE)}: Built-in support for real-time server-to-client streaming
 - {b Built on EIO}: Uses OCaml 5's effect-based I/O for direct-style concurrent code
 - {b Powered by Piaf}: Uses {{:https://github.com/anmonteiro/piaf} Piaf} as the HTTP server (EIO-native, HTTP/1.1 & HTTP/2)
 - {b Finagle-Inspired}: Adopts proven patterns from Twitter's battle-tested framework
