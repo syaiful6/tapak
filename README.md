@@ -53,6 +53,8 @@ while keeping pragmatism and real-world usage in mind.
 - **Request Guards**: Composable request validation and data extraction with extensible error types
 - **Middleware Pipeline**: Composable middleware for cross-cutting concerns (logging, compression, CSRF, etc.)
 - **Request/Response Compression**: Built-in support for gzip, deflate, brotli, and zstd
+- **Static File Serving**: Efficient static file handler with support for range requests and caching
+- **Server-Sent Events (SSE)**: Built-in support for real-time server-to-client streaming
 - **Built on EIO**: Uses OCaml 5's effect-based I/O for direct-style concurrent code
 - **Powered by Piaf**: Currently uses [Piaf](https://github.com/anmonteiro/piaf) as the HTTP server (EIO-native, HTTP/1.1 & HTTP/2)
 - **Finagle-Inspired**: Adopts proven patterns from Twitter's battle-tested framework
@@ -60,8 +62,8 @@ while keeping pragmatism and real-world usage in mind.
 
 ### Roadmap
 
-- **Static middleware**: Static file serving with caching and range requests
 - **Backend abstraction**: Make the HTTP server pluggable (currently coupled to Piaf)
+- **WebSocket support**: Native WebSocket handling for bidirectional real-time communication
 - More built-in middleware and utilities as real-world usage demands emerge
 
 ## Installation

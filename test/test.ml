@@ -5,4 +5,5 @@ let () =
        [ Test_header_parser.tests
        ; Test_middleware_compression.tests
        ; Test_static.tests
+       ; Test_sse.tests
        ])

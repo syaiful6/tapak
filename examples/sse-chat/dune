@@ -1,0 +1,7 @@
+(executable
+ (name main)
+ (public_name tapak-sse-chat)
+ (package tapak)
+ (enabled_if
+  (= %{profile} dev))
+ (libraries tapak piaf eio_main logs logs.fmt fmt.tty logs.threaded))
