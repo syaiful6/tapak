@@ -168,7 +168,7 @@ type lookup_error =
     - Embedded files (compiled into binary)
     - In-memory storage
     - Custom storage systems *)
-module type Storage_sig = sig
+module type STORAGE = sig
   type t
   (** The file type for this backend. *)
 
@@ -442,7 +442,7 @@ end
 (** {1 Main API} *)
 
 val serve :
-   (module Storage_sig)
+   (module STORAGE)
   -> ?config:config
   -> unit
   -> string list
@@ -535,7 +535,7 @@ val serve :
 
     @since 0.1.0 *)
 
-val filesystem : ?follow:bool -> _ Eio.Path.t -> (module Storage_sig)
+val filesystem : ?follow:bool -> _ Eio.Path.t -> (module STORAGE)
 (** [filesystem ~follow root] creates a filesystem-based static
     file backend.
 
@@ -574,11 +574,7 @@ val filesystem : ?follow:bool -> _ Eio.Path.t -> (module Storage_sig)
 
     @since 0.1.0 *)
 
-val app :
-   (module Storage_sig)
-  -> ?config:config
-  -> unit
-  -> Tapak_kernel.Handler.t
+val app : (module STORAGE) -> ?config:config -> unit -> Tapak_kernel.Handler.t
 (** [app (module Backend) ~config ()] creates a standalone
     static file handler.
 
