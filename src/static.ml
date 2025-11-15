@@ -80,7 +80,7 @@ module Finfo = struct
     }
 end
 
-module type Storage_sig = sig
+module type STORAGE = sig
   type t
 
   val available_encodings :
@@ -751,7 +751,7 @@ let filesystem ?(follow = true) root =
       | e -> Error (`IO_error (Printexc.to_string e))
   end
   in
-  (module File_system : Storage_sig)
+  (module File_system : STORAGE)
 
 let make_etag ~use_weak_etags hash =
   match hash with
@@ -784,10 +784,9 @@ let should_serve_file config name =
   else String.length name = 0 || String.get name 0 <> '.'
 
 let rec find_index_file :
-  'a.
-  (module Storage_sig with type t = 'a) -> config -> Piece.t list -> 'a option
+  'a. (module STORAGE with type t = 'a) -> config -> Piece.t list -> 'a option
   =
- fun (type a) (module F : Storage_sig with type t = a) config pieces ->
+ fun (type a) (module F : STORAGE with type t = a) config pieces ->
   match config.index_files with
   | [] -> None
   | index :: rest ->
@@ -801,13 +800,7 @@ let rec find_index_file :
       | Ok (`Folder _ | `Missing) | Error _ ->
         find_index_file (module F) { config with index_files = rest } pieces))
 
-let serve
-      (module F : Storage_sig)
-      ?(config = default_config)
-      ()
-      segments
-      request
-  =
+let serve (module F : STORAGE) ?(config = default_config) () segments request =
   let open Result.Syntax in
   let result =
     let* pieces =
@@ -937,7 +930,7 @@ let serve
   in
   match result with Ok response -> response | Error response -> response
 
-let app (module F : Storage_sig) ?config () request =
+let app (module F : STORAGE) ?config () request =
   let uri = Request.uri request in
   let path = Uri.path uri in
   let segments = String.split_on_char ~sep:'/' path in

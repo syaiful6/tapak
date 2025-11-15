@@ -76,7 +76,7 @@ let echo_handler req =
       "Please POST or PUT data to this endpoint"
 
 let form_get_handler req =
-  let token, secret = CSRF.input req in
+  let token, secret = Csrf.input req in
   let html =
     Printf.sprintf
       {|<h1>CSRF-Protected Form</h1>
@@ -109,7 +109,7 @@ let form_get_handler req =
       token
       token
   in
-  Response.of_html ~status:`OK html |> CSRF.with_cookie secret
+  Response.of_html ~status:`OK html |> Csrf.with_cookie secret
 
 let form_post_handler req =
   let form_data =
@@ -117,7 +117,7 @@ let form_post_handler req =
     |> Result.map Form.Urlencoded.normalize
   in
   match Result.map (Form.Urlencoded.get "csrf_token") form_data with
-  | Ok (Some token) when CSRF.verify_token ~token req ->
+  | Ok (Some token) when Csrf.verify_token ~token req ->
     let form_data = Result.get_ok form_data in
     let message =
       Form.Urlencoded.get "message" form_data
