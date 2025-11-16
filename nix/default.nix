@@ -94,6 +94,7 @@ rec {
       magic-mime
       uri
       ptime
+      saturn
       yojson
       mirage-crypto
       mirage-crypto-rng
