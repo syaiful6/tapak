@@ -53,6 +53,7 @@
   (uri
    (>= 4.4.0))
   yojson
+  saturn
   magic-mime
   mirage-crypto
   mirage-crypto-rng
