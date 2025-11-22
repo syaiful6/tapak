@@ -1,3 +1,4 @@
 (test
  (name test)
+ (package tapak)
  (libraries tapak.channel alcotest eio_main))
