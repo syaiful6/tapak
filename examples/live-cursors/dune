@@ -1,0 +1,16 @@
+(executable
+ (name main)
+ (public_name tapak-live-cursors)
+ (package tapak)
+ (enabled_if
+  (= %{profile} dev))
+ (libraries
+  tapak
+  tapak.channel
+  piaf
+  eio_main
+  logs
+  logs.fmt
+  fmt.tty
+  logs.threaded
+  yojson))
