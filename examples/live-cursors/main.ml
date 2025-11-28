@@ -179,8 +179,8 @@ let () =
 
   let open Router in
   let all_routes =
-    [ (get (s "") @-> fun _req -> serve_static_file "index.html")
-    ; (get (s "static" / str) @-> fun file _req -> serve_static_file file)
+    [ get (s "") |> into (fun _req -> serve_static_file "index.html")
+    ; get (s "static" / str) |> into (fun file _req -> serve_static_file file)
     ; (* Mount WebSocket endpoint at /socket/websocket *)
       scope (s "socket") (Endpoint.routes ws_config)
     ]

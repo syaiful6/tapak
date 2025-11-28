@@ -1,13 +1,19 @@
 Django-style typed parameters
   $ ../ppx.sh input.ml
   let get_user_path =
-    Tapak.Router.( / ) (Tapak.Router.s "users") Tapak.Router.int64
+    Tapak.Router.( / ) (Tapak.Router.s "users")
+      (Tapak.Router.p "id" Tapak.Router.int64)
   
   let get_post_path =
-    Tapak.Router.( / ) (Tapak.Router.s "posts") Tapak.Router.slug
+    Tapak.Router.( / ) (Tapak.Router.s "posts")
+      (Tapak.Router.p "slug" Tapak.Router.slug)
   
-  let toggle_path = Tapak.Router.( / ) (Tapak.Router.s "toggle") Tapak.Router.bool
-  let get_article_path = Tapak.Router.( / ) (Tapak.Router.s "articles") (uuid ())
+  let toggle_path =
+    Tapak.Router.( / ) (Tapak.Router.s "toggle")
+      (Tapak.Router.p "enabled" Tapak.Router.bool)
+  
+  let get_article_path =
+    Tapak.Router.( / ) (Tapak.Router.s "articles") (Tapak.Router.p "id" (uuid ()))
   
   let get_user ~id request =
     Tapak.Response.of_string' (Format.sprintf "User ID: %Ld" id)
@@ -26,25 +32,26 @@ Django-style typed parameters
   [@@route GET, "/articles/<uuid:id>"]
   
   let get_user_route =
-    Tapak.Router.( @-> )
-      (Tapak.Router.get
-         (Tapak.Router.( / ) (Tapak.Router.s "users") Tapak.Router.int64))
-      (fun id request -> get_user ~id request)
+    Tapak.Router.get
+      (Tapak.Router.( / ) (Tapak.Router.s "users")
+         (Tapak.Router.p "id" Tapak.Router.int64))
+    |> Tapak.Router.into (fun id request -> get_user ~id request)
   
   let get_post_route =
-    Tapak.Router.( @-> )
-      (Tapak.Router.get
-         (Tapak.Router.( / ) (Tapak.Router.s "posts") Tapak.Router.slug))
-      (fun slug request -> get_post ~slug request)
+    Tapak.Router.get
+      (Tapak.Router.( / ) (Tapak.Router.s "posts")
+         (Tapak.Router.p "slug" Tapak.Router.slug))
+    |> Tapak.Router.into (fun slug request -> get_post ~slug request)
   
   let toggle_route =
-    Tapak.Router.( @-> )
-      (Tapak.Router.get
-         (Tapak.Router.( / ) (Tapak.Router.s "toggle") Tapak.Router.bool))
-      (fun enabled request -> toggle ~enabled request)
+    Tapak.Router.get
+      (Tapak.Router.( / ) (Tapak.Router.s "toggle")
+         (Tapak.Router.p "enabled" Tapak.Router.bool))
+    |> Tapak.Router.into (fun enabled request -> toggle ~enabled request)
   
   let get_article_route =
-    Tapak.Router.( @-> )
-      (Tapak.Router.get
-         (Tapak.Router.( / ) (Tapak.Router.s "articles") (uuid ())))
-      (fun id request -> get_article ~id request)
+    Tapak.Router.get
+      (Tapak.Router.( / )
+         (Tapak.Router.s "articles")
+         (Tapak.Router.p "id" (uuid ())))
+    |> Tapak.Router.into (fun id request -> get_article ~id request)

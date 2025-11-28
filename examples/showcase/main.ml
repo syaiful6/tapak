@@ -192,11 +192,11 @@ let setup_app env =
   App.(
     routes
       ~not_found
-      [ get (s "") @-> home_handler
-      ; get (s "users" / int64) @-> user_handler
+      [ get (s "") |> into home_handler
+      ; get (s "users" / int64) |> into user_handler
       ; scope
           (s "api")
-          [ get (s "version") @-> api_version_handler
+          [ get (s "version") |> into api_version_handler
           ; scope
               ~middlewares:
                 [ use
@@ -205,16 +205,16 @@ let setup_app env =
                     (Limit_request_size.args ~max_bytes)
                 ]
               (s "users")
-              [ get (s "") @-> api_users_handler
-              ; get int64 @-> api_detail_user_handler
-              ; post int64 @-> api_update_user_handler
+              [ get (s "") |> into api_users_handler
+              ; get int64 |> into api_detail_user_handler
+              ; post int64 |> into api_update_user_handler
               ]
           ]
-      ; get (s "files" / str) @-> files_handler
-      ; post (s "echo") @-> echo_handler
-      ; put (s "echo") @-> echo_handler
-      ; get (s "form") @-> form_get_handler
-      ; post (s "form") @-> form_post_handler
+      ; get (s "files" / str) |> into files_handler
+      ; post (s "echo") |> into echo_handler
+      ; put (s "echo") |> into echo_handler
+      ; get (s "form") |> into form_get_handler
+      ; post (s "form") |> into form_post_handler
       ]
       ()
     <++> [ use

@@ -92,16 +92,21 @@ let parse_route_pattern ~loc pattern =
   | Error msg ->
     Location.raise_errorf ~loc "Invalid route pattern \"%s\": %s" pattern msg
 
-let type_to_path_expr ~loc type_name =
+let type_to_path_expr ~loc ?param_name type_name =
   let open Ast_builder.Default in
-  match type_name with
-  | "int" -> [%expr Tapak.Router.int]
-  | "int32" -> [%expr Tapak.Router.int32]
-  | "int64" -> [%expr Tapak.Router.int64]
-  | "string" | "str" -> [%expr Tapak.Router.str]
-  | "slug" -> [%expr Tapak.Router.slug]
-  | "bool" -> [%expr Tapak.Router.bool]
-  | custom -> [%expr [%e evar ~loc custom] ()]
+  let base_expr =
+    match type_name with
+    | "int" -> [%expr Tapak.Router.int]
+    | "int32" -> [%expr Tapak.Router.int32]
+    | "int64" -> [%expr Tapak.Router.int64]
+    | "string" | "str" -> [%expr Tapak.Router.str]
+    | "slug" -> [%expr Tapak.Router.slug]
+    | "bool" -> [%expr Tapak.Router.bool]
+    | custom -> [%expr [%e evar ~loc custom] ()]
+  in
+  match param_name with
+  | Some name -> [%expr Tapak.Router.p [%e estring ~loc name] [%e base_expr]]
+  | None -> base_expr
 
 let generate_path_expr ~loc segments =
   let open Ast_builder.Default in
@@ -111,21 +116,20 @@ let generate_path_expr ~loc segments =
     | [] -> [%expr Tapak.Router.s ""]
     | [ Literal "" ] -> [%expr Tapak.Router.s ""]
     | [ Literal s ] -> [%expr Tapak.Router.s [%e estring ~loc s]]
-    | [ Parameter (_name, type_opt) ] ->
+    | [ Parameter (name, type_opt) ] ->
       (match type_opt with
-      | Some type_name -> type_to_path_expr ~loc type_name
-      | None -> [%expr Tapak.Router.int] (* Default to int for now *))
+      | Some type_name -> type_to_path_expr ~loc ~param_name:name type_name
+      | None -> type_to_path_expr ~loc ~param_name:name "int")
     | [ Splat ] -> [%expr Tapak.Router.splat]
     | Literal s :: rest ->
       let rest_expr = build_path rest in
       [%expr
         Tapak.Router.( / ) (Tapak.Router.s [%e estring ~loc s]) [%e rest_expr]]
-    | Parameter (_name, type_opt) :: rest ->
+    | Parameter (name, type_opt) :: rest ->
       let param_expr =
         match type_opt with
-        | Some type_name -> type_to_path_expr ~loc type_name
-        | None -> [%expr Tapak.Router.int]
-        (* Default to int for now *)
+        | Some type_name -> type_to_path_expr ~loc ~param_name:name type_name
+        | None -> type_to_path_expr ~loc ~param_name:name "int"
       in
       let rest_expr = build_path rest in
       [%expr Tapak.Router.( / ) [%e param_expr] [%e rest_expr]]
@@ -198,7 +202,7 @@ let generate_route_binding ~loc ~handler_name ~method_str ~route_pattern =
   [ [%stri let [%p pvar ~loc path_var_name] = [%e path_expr]]
   ; [%stri
     let [%p pvar ~loc route_var_name] =
-      Tapak.Router.( @-> ) ([%e method_expr] [%e path_expr]) [%e handler_expr]]
+      [%e method_expr] [%e path_expr] |> Tapak.Router.handle [%e handler_expr]]
   ]
 
 let expand_str_item str_item =
@@ -308,9 +312,8 @@ let transform_structure structure =
          in
          [%stri
          let [%p pvar ~loc route_var_name] =
-           Tapak.Router.( @-> )
-             ([%e method_expr] [%e path_expr])
-             [%e handler_expr]])
+           [%e method_expr] [%e path_expr]
+           |> Tapak.Router.into [%e handler_expr]])
       all_route_infos
   in
   let rec find_last_handler_index items index last_handler_index =

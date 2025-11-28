@@ -1,42 +1,153 @@
 exception Not_found
+exception Bad_request of string
+
+type _ content_type =
+  | Json : Yojson.Safe.t content_type
+  | Urlencoded : Form.Urlencoded.t content_type
+  | Multipart : Form.Multipart.t content_type
 
 type (_, _) path =
   | Nil : ('a, 'a) path
   | Literal : string * ('a, 'b) path -> ('a, 'b) path
-  | Int : ('a, 'b) path -> (int -> 'a, 'b) path
-  | Int32 : ('a, 'b) path -> (int32 -> 'a, 'b) path
-  | Int64 : ('a, 'b) path -> (int64 -> 'a, 'b) path
-  | String : ('a, 'b) path -> (string -> 'a, 'b) path
-  | Bool : ('a, 'b) path -> (bool -> 'a, 'b) path
-  | Splat : ('a, 'b) path -> (string list -> 'a, 'b) path
-  | Custom :
+  | Capture :
       { parse : string -> 'param option
       ; format : 'param -> string
+      ; type_name : string
+      ; format_name : string option
       ; rest : ('a, 'b) path
       }
       -> ('param -> 'a, 'b) path
-  | Method : Piaf.Method.t * ('a, 'b) path -> ('a, 'b) path
-  | Guard : 'g Request_guard.t * ('a, 'b) path -> ('g -> 'a, 'b) path
+  | Enum :
+      { parse : string -> 'param option
+      ; format : 'param -> string
+      ; type_name : string
+      ; format_name : string option
+      ; values : 'param list
+      ; rest : ('a, 'b) path
+      }
+      -> ('param -> 'a, 'b) path
+  | Annotated :
+      { segment : ('a, 'b) path
+      ; name : string
+      ; description : string option
+      }
+      -> ('a, 'b) path
+  | Splat : ('a, 'b) path -> (string list -> 'a, 'b) path
 
-let int = Int Nil
-let int32 = Int32 Nil
-let int64 = Int64 Nil
-let str = String Nil
-let bool = Bool Nil
-let splat = Splat Nil
-let s literal = Literal (literal, Nil)
+type metadata =
+  { operation_id : string option
+  ; summary : string option
+  ; description : string option
+  ; tags : string list
+  ; body_description : string option
+  }
+
+type (_, _) schema =
+  | Method : Piaf.Method.t * ('a, 'b) path -> ('a, 'b) schema
+  | Response_model :
+      { encoder : 'resp -> Response.t
+      ; rest : ('a, Request.t -> 'resp) schema
+      }
+      -> ('a, Request.t -> Response.t) schema
+  | Request_body :
+      { content_type : 'body content_type
+      ; rest : ('a, 'b) schema
+      }
+      -> ('body -> 'a, 'b) schema
+  | Guard :
+      { guard : 'g Request_guard.t
+      ; rest : ('a, 'b) schema
+      }
+      -> ('g -> 'a, 'b) schema
+  | Meta :
+      { meta : metadata
+      ; rest : ('a, 'b) schema
+      }
+      -> ('a, 'b) schema
+
+let parse_int s = try Some (int_of_string s) with Failure _ -> None
+let parse_int32 s = try Some (Int32.of_string s) with Failure _ -> None
+let parse_int64 s = try Some (Int64.of_string s) with Failure _ -> None
+
+let parse_bool = function
+  | "true" -> Some true
+  | "false" -> Some false
+  | _ -> None
+
+let int : (int -> 'a, 'a) path =
+  Capture
+    { parse = parse_int
+    ; format = string_of_int
+    ; type_name = "integer"
+    ; format_name = Some "int32"
+    ; rest = Nil
+    }
+
+let int32 : (int32 -> 'a, 'a) path =
+  Capture
+    { parse = parse_int32
+    ; format = Int32.to_string
+    ; type_name = "integer"
+    ; format_name = Some "int32"
+    ; rest = Nil
+    }
+
+let int64 : (int64 -> 'a, 'a) path =
+  Capture
+    { parse = parse_int64
+    ; format = Int64.to_string
+    ; type_name = "integer"
+    ; format_name = Some "int64"
+    ; rest = Nil
+    }
+
+let str : (string -> 'a, 'a) path =
+  Capture
+    { parse = Option.some
+    ; format = Fun.id
+    ; type_name = "string"
+    ; format_name = None
+    ; rest = Nil
+    }
+
+let bool : (bool -> 'a, 'a) path =
+  Capture
+    { parse = parse_bool
+    ; format = string_of_bool
+    ; type_name = "boolean"
+    ; format_name = None
+    ; rest = Nil
+    }
+
+let splat : (string list -> 'a, 'a) path = Splat Nil
+let s literal : ('a, 'a) path = Literal (literal, Nil)
 
 let custom : type a.
   parse:(string -> 'param option)
   -> format:('param -> string)
+  -> type_name:string
+  -> ?format_name:string
+  -> unit
   -> ('param -> a, a) path
   =
- fun ~parse ~format -> Custom { parse; format; rest = Nil }
+ fun ~parse ~format ~type_name ?format_name () ->
+  Capture { parse; format; type_name; format_name; rest = Nil }
+
+let enum : type a.
+  parse:(string -> 'param option)
+  -> format:('param -> string)
+  -> type_name:string
+  -> ?format_name:string
+  -> values:'param list
+  -> unit
+  -> ('param -> a, a) path
+  =
+ fun ~parse ~format ~type_name ?format_name ~values () ->
+  Enum { parse; format; type_name; format_name; values; rest = Nil }
 
 type route =
   | Route :
-      { method_ : Piaf.Method.t
-      ; pattern : ('a, Request.t -> Response.t) path
+      { schema : ('a, Request.t -> Response.t) schema
       ; handler : 'a
       }
       -> route
@@ -63,10 +174,12 @@ let is_slug s =
     in
     check 0
 
-let slug =
-  Custom
+let slug : (string -> 'a, 'a) path =
+  Capture
     { parse = (fun s -> if is_slug s then Some s else None)
     ; format = Fun.id
+    ; type_name = "string"
+    ; format_name = Some "slug"
     ; rest = Nil
     }
 
@@ -75,39 +188,82 @@ let rec ( / ) : type a b c. (a, c) path -> (c, b) path -> (a, b) path =
   match left with
   | Nil -> right
   | Literal (lit, rest) -> Literal (lit, rest / right)
-  | Int rest -> Int (rest / right)
-  | Int32 rest -> Int32 (rest / right)
-  | Int64 rest -> Int64 (rest / right)
-  | String rest -> String (rest / right)
-  | Bool rest -> Bool (rest / right)
   | Splat rest -> Splat (rest / right)
-  | Custom { parse; format; rest } ->
-    Custom { parse; format; rest = rest / right }
-  | Method (m, rest) -> Method (m, rest / right)
-  | Guard _ ->
-    failwith
-      "Guards cannot be composed with / - apply guards to complete paths \
-       instead"
+  | Capture { parse; format; type_name; format_name; rest } ->
+    Capture { parse; format; type_name; format_name; rest = rest / right }
+  | Enum { parse; format; type_name; format_name; values; rest } ->
+    Enum { parse; format; type_name; format_name; values; rest = rest / right }
+  | Annotated { segment; name; description } ->
+    Annotated { segment = segment / right; name; description }
 
-let get pattern = Method (`GET, pattern)
-let post pattern = Method (`POST, pattern)
-let put pattern = Method (`PUT, pattern)
-let patch pattern = Method (`Other "PATCH", pattern)
-let delete pattern = Method (`DELETE, pattern)
-let head pattern = Method (`HEAD, pattern)
-let any pattern = Method (`Other "*", pattern)
+let get : ('a, 'b) path -> ('a, 'b) schema =
+ fun pattern -> Method (`GET, pattern)
 
-let ( >=> ) : type a b g. g Request_guard.t -> (a, b) path -> (g -> a, b) path =
- fun guard pattern -> Guard (guard, pattern)
+let head : ('a, 'b) path -> ('a, 'b) schema =
+ fun pattern -> Method (`HEAD, pattern)
 
-let parse_int s = try Some (int_of_string s) with Failure _ -> None
-let parse_int32 s = try Some (Int32.of_string s) with Failure _ -> None
-let parse_int64 s = try Some (Int64.of_string s) with Failure _ -> None
+let post : ('a, 'b) path -> ('a, 'b) schema =
+ fun pattern -> Method (`POST, pattern)
 
-let parse_bool = function
-  | "true" -> Some true
-  | "false" -> Some false
-  | _ -> None
+let put : ('a, 'b) path -> ('a, 'b) schema =
+ fun pattern -> Method (`PUT, pattern)
+
+let patch : ('a, 'b) path -> ('a, 'b) schema =
+ fun pattern -> Method (`Other "PATCH", pattern)
+
+let delete : ('a, 'b) path -> ('a, 'b) schema =
+ fun pattern -> Method (`DELETE, pattern)
+
+let any : ('a, 'b) path -> ('a, 'b) schema =
+ fun pattern -> Method (`Other "*", pattern)
+
+let req_body : type a b body_type.
+  body_type content_type -> (a, b) schema -> (body_type -> a, b) schema
+  =
+ fun content_type schema -> Request_body { content_type; rest = schema }
+
+let guard : type a b g. g Request_guard.t -> (a, b) schema -> (g -> a, b) schema
+  =
+ fun guard schema -> Guard { guard; rest = schema }
+
+let response_model : type a resp.
+  (resp -> Response.t)
+  -> (a, Request.t -> resp) schema
+  -> (a, Request.t -> Response.t) schema
+  =
+ fun encoder rest -> Response_model { encoder; rest }
+
+let empty_metadata =
+  { operation_id = None
+  ; summary = None
+  ; description = None
+  ; tags = []
+  ; body_description = None
+  }
+
+let operation_id : type a b. string -> (a, b) schema -> (a, b) schema =
+ fun id rest ->
+  Meta { meta = { empty_metadata with operation_id = Some id }; rest }
+
+let summary : type a b. string -> (a, b) schema -> (a, b) schema =
+ fun s rest -> Meta { meta = { empty_metadata with summary = Some s }; rest }
+
+let description : type a b. string -> (a, b) schema -> (a, b) schema =
+ fun d rest ->
+  Meta { meta = { empty_metadata with description = Some d }; rest }
+
+let tags : type a b. string list -> (a, b) schema -> (a, b) schema =
+ fun ts rest -> Meta { meta = { empty_metadata with tags = ts }; rest }
+
+let tag : type a b. string -> (a, b) schema -> (a, b) schema =
+ fun t rest -> Meta { meta = { empty_metadata with tags = [ t ] }; rest }
+
+let p : type a b. string -> (a, b) path -> (a, b) path =
+ fun name segment -> Annotated { segment; name; description = None }
+
+let ann : type a b. string * string -> (a, b) path -> (a, b) path =
+ fun (name, desc) segment ->
+  Annotated { segment; name; description = Some desc }
 
 let split_path path =
   let only_path =
@@ -118,7 +274,6 @@ let split_path path =
   let segments = String.split_on_char '/' only_path in
   List.filter (fun s -> s <> "") segments
 
-(* Check if a path pattern can match given segments without executing guards *)
 let rec can_match_path : type a b. (a, b) path -> string list -> bool =
  fun pattern segments ->
   match pattern, segments with
@@ -127,29 +282,33 @@ let rec can_match_path : type a b. (a, b) path -> string list -> bool =
   | Literal ("", rest), [] -> can_match_path rest []
   | Literal (expected, rest), seg :: segs when String.equal expected seg ->
     can_match_path rest segs
-  | Int rest, seg :: segs ->
-    (match parse_int seg with
-    | Some _ -> can_match_path rest segs
-    | None -> false)
-  | Int32 rest, seg :: segs ->
-    (match parse_int32 seg with
-    | Some _ -> can_match_path rest segs
-    | None -> false)
-  | Int64 rest, seg :: segs ->
-    (match parse_int64 seg with
-    | Some _ -> can_match_path rest segs
-    | None -> false)
-  | String rest, _ :: segs -> can_match_path rest segs
-  | Bool rest, seg :: segs ->
-    (match parse_bool seg with
-    | Some _ -> can_match_path rest segs
-    | None -> false)
   | Splat rest, _ -> can_match_path rest []
-  | Custom { parse; rest; _ }, seg :: segs ->
+  | Capture { parse; rest; _ }, seg :: segs ->
     (match parse seg with Some _ -> can_match_path rest segs | None -> false)
-  | Method (_, rest), segs -> can_match_path rest segs
-  | Guard (_, rest), segs -> can_match_path rest segs
+  | Enum { parse; rest; _ }, seg :: segs ->
+    (match parse seg with Some _ -> can_match_path rest segs | None -> false)
+  | Annotated { segment; _ }, segs -> can_match_path segment segs
   | _ -> false
+
+let parse_body : type body.
+  body content_type -> Request.t -> (body, string) result
+  =
+ fun content_type request ->
+  let body = Request.body request in
+  match content_type with
+  | Json ->
+    (match Body.to_string body with
+    | Ok body_str ->
+      (try Ok (Yojson.Safe.from_string body_str) with _ -> Error body_str)
+    | Error _ -> Error "Can't read request body")
+  | Urlencoded ->
+    (match Form.Urlencoded.of_body body with
+    | Ok form -> Ok form
+    | Error _ -> Error "Invalid urlencoded body")
+  | Multipart ->
+    (match Form.Multipart.parse request with
+    | Ok form -> Ok form
+    | Error _ -> Error "Invalid multipart body")
 
 let rec match_pattern : type a b.
   (a, b) path -> string list -> Request.t -> a -> b option
@@ -161,86 +320,103 @@ let rec match_pattern : type a b.
   | Literal ("", rest), [] -> match_pattern rest [] request k
   | Literal (expected, rest), seg :: segs when String.equal expected seg ->
     match_pattern rest segs request k
-  | Int rest, seg :: segs ->
-    (match parse_int seg with
-    | Some n -> match_pattern rest segs request (k n)
-    | None -> None)
-  | Int32 rest, seg :: segs ->
-    (match parse_int32 seg with
-    | Some n -> match_pattern rest segs request (k n)
-    | None -> None)
-  | Int64 rest, seg :: segs ->
-    (match parse_int64 seg with
-    | Some n -> match_pattern rest segs request (k n)
-    | None -> None)
-  | String rest, seg :: segs -> match_pattern rest segs request (k seg)
-  | Bool rest, seg :: segs ->
-    (match parse_bool seg with
-    | Some b -> match_pattern rest segs request (k b)
-    | None -> None)
   | Splat rest, segs -> match_pattern rest [] request (k segs)
-  | Custom { parse; rest; _ }, seg :: segs ->
+  | Capture { parse; rest; _ }, seg :: segs ->
     (match parse seg with
     | Some v -> match_pattern rest segs request (k v)
     | None -> None)
-  | Method (_, rest), segs -> match_pattern rest segs request k
-  | Guard (guard, rest), segs ->
-    if can_match_path rest segs
-    then
-      match guard request with
-      | Ok value -> match_pattern rest segs request (k value)
-      | Error err -> raise (Request_guard.Failed err)
-    else None
+  | Enum { parse; rest; _ }, seg :: segs ->
+    (match parse seg with
+    | Some v -> match_pattern rest segs request (k v)
+    | None -> None)
+  | Annotated { segment; _ }, segs -> match_pattern segment segs request k
   | _ -> None
 
-let rec get_method : type a b. (a, b) path -> Piaf.Method.t option = function
-  | Method (m, _) -> Some m
-  | Literal (_, rest) -> get_method rest
-  | Int rest -> get_method rest
-  | Int32 rest -> get_method rest
-  | Int64 rest -> get_method rest
-  | String rest -> get_method rest
-  | Bool rest -> get_method rest
-  | Splat rest -> get_method rest
-  | Custom { rest; _ } -> get_method rest
-  | Guard (_, rest) -> get_method rest
-  | Nil -> None
+let rec get_method : type a b. (a, b) schema -> Piaf.Method.t = function
+  | Method (m, _) -> m
+  | Request_body { rest; _ } -> get_method rest
+  | Guard { rest; _ } -> get_method rest
+  | Meta { rest; _ } -> get_method rest
+  | Response_model { rest; _ } -> get_method rest
 
-let ( @-> ) : type a. (a, Request.t -> Response.t) path -> a -> route =
- fun pattern handler_fn ->
-  let method_ = get_method pattern |> Option.value ~default:`GET in
-  Route { method_; pattern; handler = handler_fn }
+let into : type a. a -> (a, Request.t -> Response.t) schema -> route =
+ fun handler schema -> Route { schema; handler }
 
-let rec match_prefix : type a. (a, a) path -> string list -> string list option =
+let rec match_prefix : type a b.
+  (a, b) path -> string list -> string list option
+  =
  fun pattern segments ->
   match pattern, segments with
   | Nil, segs -> Some segs
   | Literal ("", rest), segs -> match_prefix rest segs
   | Literal (expected, rest), seg :: segs when String.equal expected seg ->
     match_prefix rest segs
-  | Method (_, rest), segs -> match_prefix rest segs
+  | Annotated { segment; _ }, segs -> match_prefix segment segs
   | _ -> None
 
-let rec match_route ?(middlewares = []) route segments request =
-  match route with
-  | Route route ->
+let rec can_match_schema : type a b.
+  (a, b) schema -> string list -> Request.t -> bool
+  =
+ fun schema segments request ->
+  match schema with
+  | Method (meth, pattern) ->
     let method_matches =
-      match route.method_ with
+      match meth with
       | `Other "*" -> true
       | _ ->
-        Piaf.Method.to_string route.method_
+        Piaf.Method.to_string meth
+        = Piaf.Method.to_string (Request.meth request)
+    in
+    method_matches && can_match_path pattern segments
+  | Request_body { rest; _ } -> can_match_schema rest segments request
+  | Guard { rest; _ } -> can_match_schema rest segments request
+  | Response_model { rest; _ } -> can_match_schema rest segments request
+  | Meta { rest; _ } -> can_match_schema rest segments request
+
+let rec match_schema : type a b.
+  (a, b) schema -> string list -> Request.t -> a -> b option
+  =
+ fun schema segments request k ->
+  match schema with
+  | Method (meth, pattern) ->
+    let method_matches =
+      match meth with
+      | `Other "*" -> true
+      | _ ->
+        Piaf.Method.to_string meth
         = Piaf.Method.to_string (Request.meth request)
     in
     if not method_matches
     then None
+    else match_pattern pattern segments request k
+  | Request_body { content_type; rest } ->
+    if not (can_match_schema rest segments request)
+    then None
     else (
-      match match_pattern route.pattern segments request route.handler with
-      | Some handler ->
-        let service =
-          Middleware.apply_all middlewares (fun req -> handler req)
-        in
-        Some (service request)
-      | None -> None)
+      match parse_body content_type request with
+      | Ok body -> match_schema rest segments request (k body)
+      | Error msg -> raise (Bad_request msg))
+  | Response_model { encoder; rest } ->
+    (match match_schema rest segments request k with
+    | Some data_fn -> Some (fun request -> data_fn request |> encoder)
+    | None -> None)
+  | Guard { guard; rest } ->
+    if not (can_match_schema rest segments request)
+    then None
+    else (
+      match guard request with
+      | Ok g -> match_schema rest segments request (k g)
+      | Error e -> raise (Request_guard.Failed e))
+  | Meta { rest; _ } -> match_schema rest segments request k
+
+let rec match_route ?(middlewares = []) route segments request =
+  match route with
+  | Route route ->
+    (match match_schema route.schema segments request route.handler with
+    | Some handler ->
+      let service = Middleware.apply_all middlewares handler in
+      Some (service request)
+    | None -> None)
   | Scope scope ->
     (match match_prefix scope.prefix segments with
     | None -> None
@@ -270,18 +446,13 @@ let rec sprintf' : type a. (a, string) path -> string -> a =
   | Nil -> acc
   | Literal ("", rest) -> sprintf' rest (if acc = "" then "/" else acc)
   | Literal (s, rest) -> sprintf' rest (acc ^ "/" ^ s)
-  | Int rest -> fun n -> sprintf' rest (acc ^ "/" ^ string_of_int n)
-  | Int32 rest -> fun n -> sprintf' rest (acc ^ "/" ^ Int32.to_string n)
-  | Int64 rest -> fun n -> sprintf' rest (acc ^ "/" ^ Int64.to_string n)
-  | String rest -> fun s -> sprintf' rest (acc ^ "/" ^ s)
-  | Bool rest -> fun b -> sprintf' rest (acc ^ "/" ^ string_of_bool b)
   | Splat rest ->
     fun segments ->
       let splat_path = String.concat "/" segments in
       sprintf' rest (if splat_path = "" then acc else acc ^ "/" ^ splat_path)
-  | Custom { format; rest; _ } -> fun v -> sprintf' rest (acc ^ "/" ^ format v)
-  | Method (_, rest) -> sprintf' rest acc
-  | Guard (_, rest) -> fun _ -> sprintf' rest acc
+  | Capture { format; rest; _ } -> fun v -> sprintf' rest (acc ^ "/" ^ format v)
+  | Enum { format; rest; _ } -> fun v -> sprintf' rest (acc ^ "/" ^ format v)
+  | Annotated { segment; _ } -> sprintf' segment acc
 
 let sprintf pattern = sprintf' pattern ""
 
@@ -305,11 +476,11 @@ let resource ?(middlewares = []) prefix_builder (module R : Resource) =
   scope
     ~middlewares
     prefix_builder
-    [ get (s "") @-> R.index
-    ; get (s "new") @-> R.new_
-    ; post (s "") @-> R.create
-    ; get (R.id_path ()) @-> R.get
-    ; get (R.id_path () / s "edit") @-> R.edit
-    ; put (R.id_path ()) @-> R.update
-    ; delete (R.id_path ()) @-> R.delete
+    [ get (s "") |> into R.index
+    ; get (s "new") |> into R.new_
+    ; post (s "") |> into R.create
+    ; get (R.id_path ()) |> into R.get
+    ; get (R.id_path () / s "edit") |> into R.edit
+    ; put (R.id_path ()) |> into R.update
+    ; delete (R.id_path ()) |> into R.delete
     ]

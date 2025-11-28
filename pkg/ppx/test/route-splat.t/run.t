@@ -8,7 +8,6 @@ Splat syntax is "**" and passed as ~splat argument
   [@@route GET, "/static/**"]
   
   let static_handler_route =
-    Tapak.Router.( @-> )
-      (Tapak.Router.get
-         (Tapak.Router.( / ) (Tapak.Router.s "static") Tapak.Router.splat))
-      (fun splat request -> static_handler ~splat request)
+    Tapak.Router.get
+      (Tapak.Router.( / ) (Tapak.Router.s "static") Tapak.Router.splat)
+    |> Tapak.Router.into (fun splat request -> static_handler ~splat request)

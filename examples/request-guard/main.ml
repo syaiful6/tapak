@@ -312,19 +312,24 @@ let setup_app () =
   App.(
     routes
       ~not_found
-      [ get (s "") @-> home_handler
+      [ get (s "") |> into home_handler
       ; (* Examples using request guard with >=> operator *)
         scope
           (s "manual")
-          [ get (api_key_guard >=> s "api-info") @-> api_info_handler
-          ; get (user_guard >=> s "profile") @-> profile_handler
-          ; get (admin_guard >=> s "admin") @-> admin_handler
-          ; post (authenticated_json_guard >=> s "posts")
-            @-> create_post_handler
-          ; put (user_guard >=> s "users" / int64) @-> update_user_handler
+          [ get (s "api-info") |> guard api_key_guard |> into api_info_handler
+          ; get (s "profile") |> guard user_guard |> into profile_handler
+          ; get (s "admin") |> guard admin_guard |> into admin_handler
+          ; post (s "posts")
+            |> guard authenticated_json_guard
+            |> into create_post_handler
+          ; put (s "users" / int64)
+            |> guard user_guard
+            |> into update_user_handler
           ; (* Multiple guards chained *)
-            get (admin_guard >=> (pagination_guard >=> s "users" / s "list"))
-            @-> user_list_handler
+            get (s "users" / s "list")
+            |> guard pagination_guard
+            |> guard admin_guard
+            |> into user_list_handler
           ]
       ]
       ()
