@@ -1,8 +1,8 @@
 # Tapak
 
 > ⚠️ **Under Heavy Development**: This library is in active development and
-the API is not yet stable. Breaking changes may occur between releases.
-Not recommended for production use at this time.
+> the API is not yet stable. Breaking changes may occur between releases.
+> Not recommended for production use at this time.
 
 Tapak is a composable web framework for OCaml 5, built on EIO (effect-based I/O)
 and inspired by [Twitter's Finagle](https://twitter.github.io/finagle/) architecture.
@@ -15,16 +15,16 @@ and inspired by [Twitter's Finagle](https://twitter.github.io/finagle/) architec
 
 The OCaml ecosystem has several excellent web frameworks, each with different design philosophies:
 
-| Framework | Async Runtime | Routing | Philosophy | Status |
-|-----------|---------------|---------|------------|--------|
-| **[Dream](https://camlworks.github.io/dream/)** | Lwt | String patterns | Batteries-included, tidy | Stable* |
-| **[Opium](https://github.com/rgrinberg/opium)** | Lwt | String patterns | Sinatra-like micro-framework | Stable |
-| **[Eliom](https://ocsigen.org/eliom/)** | Lwt | Type-safe | Multi-tier, full-stack | Stable |
-| **[tiny_httpd](https://github.com/c-cube/tiny_httpd)** | Threads | GADT type-safe | Minimalist, thin dependencies | Stable* |
-| **Tapak** | **EIO (OCaml 5)** | **GADT type-safe** | Composable Service/Filter | **Experimental** |
+| Framework                                              | Async Runtime     | Routing            | Philosophy                    | Status           |
+| ------------------------------------------------------ | ----------------- | ------------------ | ----------------------------- | ---------------- |
+| **[Dream](https://camlworks.github.io/dream/)**        | Lwt               | String patterns    | Batteries-included, tidy      | Stable\*         |
+| **[Opium](https://github.com/rgrinberg/opium)**        | Lwt               | String patterns    | Sinatra-like micro-framework  | Stable           |
+| **[Eliom](https://ocsigen.org/eliom/)**                | Lwt               | Type-safe          | Multi-tier, full-stack        | Stable           |
+| **[tiny_httpd](https://github.com/c-cube/tiny_httpd)** | Threads           | GADT type-safe     | Minimalist, thin dependencies | Stable\*         |
+| **Tapak**                                              | **EIO (OCaml 5)** | **GADT type-safe** | Composable Service/Filter     | **Experimental** |
 
-- * Dream is stable but still evolving, it hasn't reached v1.0 yet.
-- * Tiny_httpd looks stable, but I haven't used it personally.
+- - Dream is stable but still evolving, it hasn't reached v1.0 yet.
+- - Tiny_httpd looks stable, but I haven't used it personally.
 
 ### Why Tapak?
 
@@ -133,9 +133,9 @@ let app env =
   let open Router in
   App.(
     routes
-      [ get (s "") @-> home_handler
-      ; get (s "users" / int64) @-> user_handler
-      ; get (s "api" / s "users" / int64 / str) @-> api_handler
+      [ get (s "") |> into home_handler
+      ; get (s "users" / int64) |> into user_handler
+      ; get (s "api" / s "users" / int64 / str) |> into api_handler
       ]
       ()
     <++> [ use ~name:"Logger" (module Request_logger)

@@ -49,8 +49,8 @@ let () =
   let app =
     App.(
       routes
-        [ get (s "api" / s "hello") @-> api_handler
-        ; get splat @-> Static.serve fs_backend ~config:static_config ()
+        [ get (s "api" / s "hello") |> into api_handler
+        ; get splat |> into (Static.serve fs_backend ~config:static_config ())
         ]
         ()
       <++> [ Middleware.(

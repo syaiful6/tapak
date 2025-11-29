@@ -317,10 +317,10 @@ let () =
   let app =
     App.(
       routes
-        [ get (s "") @-> home_handler
-        ; get (s "chat") @-> chat_stream_handler ~clock room
-        ; ( post (s "chat" / int) @-> fun user_id req ->
-            post_message_handler room user_id req )
+        [ get (s "") |> into home_handler
+        ; get (s "chat") |> into (chat_stream_handler ~clock room)
+        ; post (s "chat" / int)
+          |> into (fun user_id req -> post_message_handler room user_id req)
         ]
         ())
   in

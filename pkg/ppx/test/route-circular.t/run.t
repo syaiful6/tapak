@@ -1,11 +1,14 @@
 Circular dependencies between routes
   $ ../ppx.sh input.ml
   let get_user_path =
-    Tapak.Router.( / ) (Tapak.Router.s "users") Tapak.Router.int64
+    Tapak.Router.( / ) (Tapak.Router.s "users")
+      (Tapak.Router.p "id" Tapak.Router.int64)
   
   let edit_user_path =
     Tapak.Router.( / ) (Tapak.Router.s "users")
-      (Tapak.Router.( / ) Tapak.Router.int64 (Tapak.Router.s "edit"))
+      (Tapak.Router.( / )
+         (Tapak.Router.p "id" Tapak.Router.int64)
+         (Tapak.Router.s "edit"))
   
   let get_user ~id request =
     let _edit_url = Tapak.Router.sprintf edit_user_path id in
@@ -18,14 +21,15 @@ Circular dependencies between routes
   [@@route GET, "/users/<int64:id>/edit"]
   
   let get_user_route =
-    Tapak.Router.( @-> )
-      (Tapak.Router.get
-         (Tapak.Router.( / ) (Tapak.Router.s "users") Tapak.Router.int64))
-      (fun id request -> get_user ~id request)
+    Tapak.Router.get
+      (Tapak.Router.( / ) (Tapak.Router.s "users")
+         (Tapak.Router.p "id" Tapak.Router.int64))
+    |> Tapak.Router.into (fun id request -> get_user ~id request)
   
   let edit_user_route =
-    Tapak.Router.( @-> )
-      (Tapak.Router.get
-         (Tapak.Router.( / ) (Tapak.Router.s "users")
-            (Tapak.Router.( / ) Tapak.Router.int64 (Tapak.Router.s "edit"))))
-      (fun id request -> edit_user ~id request)
+    Tapak.Router.get
+      (Tapak.Router.( / ) (Tapak.Router.s "users")
+         (Tapak.Router.( / )
+            (Tapak.Router.p "id" Tapak.Router.int64)
+            (Tapak.Router.s "edit")))
+    |> Tapak.Router.into (fun id request -> edit_user ~id request)

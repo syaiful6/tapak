@@ -11,12 +11,13 @@ let make_request ?(meth = `GET) target =
 let test_simple_route () =
   let open Router in
   let route =
-    get (s "users") @-> fun request ->
-    Alcotest.(check string)
-      "method should be GET"
-      "GET"
-      (Piaf.Method.to_string (Request.meth request));
-    Response.of_string ~body:"users list" `OK
+    get (s "users")
+    |> into (fun request ->
+      Alcotest.(check string)
+        "method should be GET"
+        "GET"
+        (Piaf.Method.to_string (Request.meth request));
+      Response.of_string ~body:"users list" `OK)
   in
   let request = make_request "/users" in
   match match' [ route ] request with
@@ -30,9 +31,10 @@ let test_simple_route () =
 let test_int64_param () =
   let open Router in
   let route =
-    get (s "users" / int64) @-> fun id _request ->
-    Alcotest.(check int64) "id should be 42" 42L id;
-    Response.of_string ~body:(Printf.sprintf "User %Ld" id) `OK
+    get (s "users" / int64)
+    |> into (fun id _request ->
+      Alcotest.(check int64) "id should be 42" 42L id;
+      Response.of_string ~body:(Printf.sprintf "User %Ld" id) `OK)
   in
   let request = make_request "/users/42" in
   match match' [ route ] request with
@@ -46,12 +48,13 @@ let test_int64_param () =
 let test_multiple_params () =
   let open Router in
   let route =
-    get (s "users" / int64 / s "posts" / str) @-> fun user_id slug _request ->
-    Alcotest.(check int64) "user_id should be 42" 42L user_id;
-    Alcotest.(check string) "slug should be 'hello'" "hello" slug;
-    Response.of_string
-      ~body:(Printf.sprintf "User %Ld post %s" user_id slug)
-      `OK
+    get (s "users" / int64 / s "posts" / str)
+    |> into (fun user_id slug _request ->
+      Alcotest.(check int64) "user_id should be 42" 42L user_id;
+      Alcotest.(check string) "slug should be 'hello'" "hello" slug;
+      Response.of_string
+        ~body:(Printf.sprintf "User %Ld post %s" user_id slug)
+        `OK)
   in
   let request = make_request "/users/42/posts/hello" in
   match match' [ route ] request with
@@ -65,8 +68,8 @@ let test_multiple_params () =
 let test_no_match () =
   let open Router in
   let route =
-    get (s "users" / int64) @-> fun _id _request ->
-    Response.of_string ~body:"user" `OK
+    get (s "users" / int64)
+    |> into (fun _id _request -> Response.of_string ~body:"user" `OK)
   in
   let request = make_request "/posts/42" in
   match match' [ route ] request with
@@ -76,8 +79,8 @@ let test_no_match () =
 let test_post_method () =
   let open Router in
   let route =
-    post (s "users") @-> fun _request ->
-    Response.of_string ~body:"user created" `Created
+    post (s "users")
+    |> into (fun _request -> Response.of_string ~body:"user created" `Created)
   in
   let request = make_request ~meth:`POST "/users" in
   match match' [ route ] request with
@@ -91,8 +94,8 @@ let test_post_method () =
 let test_method_mismatch () =
   let open Router in
   let route =
-    post (s "users") @-> fun _request ->
-    Response.of_string ~body:"user created" `Created
+    post (s "users")
+    |> into (fun _request -> Response.of_string ~body:"user created" `Created)
   in
   let request = make_request ~meth:`GET "/users" in
   match match' [ route ] request with
@@ -123,9 +126,10 @@ let test_sprintf_multiple () =
 let test_int_param () =
   let open Router in
   let route =
-    get (s "page" / int) @-> fun page_num _request ->
-    Alcotest.(check int) "page should be 5" 5 page_num;
-    Response.of_string ~body:(Printf.sprintf "Page %d" page_num) `OK
+    get (s "page" / int)
+    |> into (fun page_num _request ->
+      Alcotest.(check int) "page should be 5" 5 page_num;
+      Response.of_string ~body:(Printf.sprintf "Page %d" page_num) `OK)
   in
   let request = make_request "/page/5" in
   match match' [ route ] request with
@@ -139,8 +143,8 @@ let test_int_param () =
 let test_invalid_int () =
   let open Router in
   let route =
-    get (s "page" / int) @-> fun _page _request ->
-    Response.of_string ~body:"page" `OK
+    get (s "page" / int)
+    |> into (fun _page _request -> Response.of_string ~body:"page" `OK)
   in
   let request = make_request "/page/not-a-number" in
   match match' [ route ] request with
@@ -150,9 +154,10 @@ let test_invalid_int () =
 let test_bool_param () =
   let open Router in
   let route =
-    get (s "published" / bool) @-> fun is_published _request ->
-    Alcotest.(check bool) "should be true" true is_published;
-    Response.of_string ~body:(string_of_bool is_published) `OK
+    get (s "published" / bool)
+    |> into (fun is_published _request ->
+      Alcotest.(check bool) "should be true" true is_published;
+      Response.of_string ~body:(string_of_bool is_published) `OK)
   in
   let request = make_request "/published/true" in
   match match' [ route ] request with
@@ -164,7 +169,9 @@ let test_scope () =
   let route =
     scope
       (s "api" / s "v1")
-      [ (get (s "users") @-> fun _req -> Response.of_string ~body:"users" `OK) ]
+      [ get (s "users")
+        |> into (fun _req -> Response.of_string ~body:"users" `OK)
+      ]
   in
   let request = make_request "/api/v1/users" in
   match match' [ route ] request with
@@ -202,7 +209,7 @@ let test_scope_with_middlewares () =
     scope
       ~middlewares:[ test_middleware ]
       (s "api")
-      [ (get (s "test") @-> fun _req -> Response.of_string ~body:"ok" `OK) ]
+      [ get (s "test") |> into (fun _req -> Response.of_string ~body:"ok" `OK) ]
   in
   let request = make_request "/api/test" in
   match match' [ route ] request with
@@ -215,9 +222,10 @@ let test_scope_with_middlewares () =
 let test_splat () =
   let open Router in
   let route =
-    get (s "files" / splat) @-> fun segments _request ->
-    let path = String.concat "/" segments in
-    Response.of_string ~body:(Printf.sprintf "Files: %s" path) `OK
+    get (s "files" / splat)
+    |> into (fun segments _request ->
+      let path = String.concat "/" segments in
+      Response.of_string ~body:(Printf.sprintf "Files: %s" path) `OK)
   in
   let request = make_request "/files/docs/readme.txt" in
   match match' [ route ] request with
@@ -232,9 +240,10 @@ let test_splat_segments () =
   let open Router in
   let captured_segments = ref [] in
   let route =
-    get (s "static" / splat) @-> fun segments _request ->
-    captured_segments := segments;
-    Response.of_string ~body:"ok" `OK
+    get (s "static" / splat)
+    |> into (fun segments _request ->
+      captured_segments := segments;
+      Response.of_string ~body:"ok" `OK)
   in
   let request = make_request "/static/js/app/bundle.js" in
   match match' [ route ] request with
@@ -249,9 +258,10 @@ let test_splat_empty () =
   let open Router in
   let captured_segments = ref [] in
   let route =
-    get (s "spa" / splat) @-> fun segments _request ->
-    captured_segments := segments;
-    Response.of_string ~body:"ok" `OK
+    get (s "spa" / splat)
+    |> into (fun segments _request ->
+      captured_segments := segments;
+      Response.of_string ~body:"ok" `OK)
   in
   let request = make_request "/spa" in
   match match' [ route ] request with
@@ -280,9 +290,10 @@ let test_sprintf_splat_empty () =
 let test_splat_with_prefix () =
   let open Router in
   let route =
-    get (s "api" / s "v1" / splat) @-> fun segments _request ->
-    let path = String.concat "/" segments in
-    Response.of_string ~body:(Printf.sprintf "API: %s" path) `OK
+    get (s "api" / s "v1" / splat)
+    |> into (fun segments _request ->
+      let path = String.concat "/" segments in
+      Response.of_string ~body:(Printf.sprintf "API: %s" path) `OK)
   in
   let request = make_request "/api/v1/users/42/posts" in
   match match' [ route ] request with
@@ -296,8 +307,9 @@ let test_splat_with_prefix () =
 let test_slug () =
   let open Router in
   let route =
-    get (s "posts" / slug) @-> fun slug_str _request ->
-    Response.of_string ~body:(Printf.sprintf "Post: %s" slug_str) `OK
+    get (s "posts" / slug)
+    |> into (fun slug_str _request ->
+      Response.of_string ~body:(Printf.sprintf "Post: %s" slug_str) `OK)
   in
   let request = make_request "/posts/my-awesome-post-123" in
   match match' [ route ] request with
@@ -311,8 +323,8 @@ let test_slug () =
 let test_slug_invalid () =
   let open Router in
   let route =
-    get (s "posts" / slug) @-> fun _slug _request ->
-    Response.of_string ~body:"ok" `OK
+    get (s "posts" / slug)
+    |> into (fun _slug _request -> Response.of_string ~body:"ok" `OK)
   in
   let request = make_request "/posts/My_Post" in
   match match' [ route ] request with
@@ -323,9 +335,10 @@ let test_slug_valid () =
   let open Router in
   let captured_slug = ref "" in
   let route =
-    get (s "posts" / slug) @-> fun slug_str _request ->
-    captured_slug := slug_str;
-    Response.of_string ~body:"ok" `OK
+    get (s "posts" / slug)
+    |> into (fun slug_str _request ->
+      captured_slug := slug_str;
+      Response.of_string ~body:"ok" `OK)
   in
   let request = make_request "/posts/hello-world-123" in
   match match' [ route ] request with
@@ -351,10 +364,12 @@ let test_custom () =
     custom
       ~parse:(fun s -> if is_hex_color s then Some s else None)
       ~format:Fun.id
+      ~type_name:"string"
   in
   let route =
-    get (s "color" / hex_color) @-> fun color _request ->
-    Response.of_string ~body:(Printf.sprintf "Color: #%s" color) `OK
+    get (s "color" / hex_color ())
+    |> into (fun color _request ->
+      Response.of_string ~body:(Printf.sprintf "Color: #%s" color) `OK)
   in
   let request = make_request "/color/ff5733" in
   match match' [ route ] request with
@@ -380,10 +395,11 @@ let test_custom_invalid () =
     custom
       ~parse:(fun s -> if is_hex_color s then Some s else None)
       ~format:Fun.id
+      ~type_name:"string"
   in
   let route =
-    get (s "color" / hex_color) @-> fun _color _request ->
-    Response.of_string ~body:"ok" `OK
+    get (s "color" / hex_color ())
+    |> into (fun _color _request -> Response.of_string ~body:"ok" `OK)
   in
   let request = make_request "/color/gggggg" in
   match match' [ route ] request with
@@ -402,16 +418,20 @@ let test_sprintf_slug () =
 let test_sprintf_custom () =
   let open Router in
   let hex_color =
-    custom ~parse:(fun s -> Some s) ~format:(fun s -> String.uppercase_ascii s)
+    custom
+      ~parse:(fun s -> Some s)
+      ~format:(fun s -> String.uppercase_ascii s)
+      ~type_name:"string"
   in
-  let pattern = s "color" / hex_color in
+  let pattern = s "color" / hex_color () in
   let url = sprintf pattern "ff5733" in
   Alcotest.(check string) "url should be /color/FF5733" "/color/FF5733" url
 
 let test_root_route () =
   let open Router in
   let route =
-    get (s "") @-> fun _request -> Response.of_string ~body:"home page" `OK
+    get (s "")
+    |> into (fun _request -> Response.of_string ~body:"home page" `OK)
   in
   let request = make_request "/" in
   match match' [ route ] request with
@@ -431,8 +451,8 @@ let test_sprintf_root () =
 let test_root_with_method () =
   let open Router in
   let route =
-    post (s "") @-> fun _request ->
-    Response.of_string ~body:"posted to root" `Created
+    post (s "")
+    |> into (fun _request -> Response.of_string ~body:"posted to root" `Created)
   in
   let request = make_request ~meth:`POST "/" in
   match match' [ route ] request with
@@ -446,7 +466,7 @@ let test_root_with_method () =
 let test_root_doesnt_match_subpaths () =
   let open Router in
   let route =
-    get (s "") @-> fun _request -> Response.of_string ~body:"root" `OK
+    get (s "") |> into (fun _request -> Response.of_string ~body:"root" `OK)
   in
   let request = make_request "/users" in
   match match' [ route ] request with
@@ -458,7 +478,9 @@ let test_scoped_empty_literal () =
   let route =
     scope
       (s "users")
-      [ (get (s "") @-> fun _req -> Response.of_string ~body:"user list" `OK) ]
+      [ get (s "")
+        |> into (fun _req -> Response.of_string ~body:"user list" `OK)
+      ]
   in
   let request = make_request "/users" in
   match match' [ route ] request with
@@ -474,7 +496,9 @@ let test_scoped_empty_literal_no_trailing_slash () =
   let route =
     scope
       (s "api" / s "v1")
-      [ (get (s "") @-> fun _req -> Response.of_string ~body:"api index" `OK) ]
+      [ get (s "")
+        |> into (fun _req -> Response.of_string ~body:"api index" `OK)
+      ]
   in
   let request = make_request "/api/v1" in
   match match' [ route ] request with
@@ -491,8 +515,10 @@ let test_scoped_with_trailing_route () =
   let route =
     scope
       (s "users")
-      [ (get (s "") @-> fun _req -> Response.of_string ~body:"user list" `OK)
-      ; (get (s "new") @-> fun _req -> Response.of_string ~body:"new user" `OK)
+      [ get (s "")
+        |> into (fun _req -> Response.of_string ~body:"user list" `OK)
+      ; get (s "new")
+        |> into (fun _req -> Response.of_string ~body:"new user" `OK)
       ]
   in
   let request1 = make_request "/users" in
@@ -507,8 +533,9 @@ let test_scoped_with_trailing_route () =
 let test_exact_path_matching () =
   let open Router in
   let route =
-    get (s "users" / int64) @-> fun id _request ->
-    Response.of_string ~body:(Printf.sprintf "User %Ld" id) `OK
+    get (s "users" / int64)
+    |> into (fun id _request ->
+      Response.of_string ~body:(Printf.sprintf "User %Ld" id) `OK)
   in
   let request1 = make_request "/users/123" in
   (match match' [ route ] request1 with
@@ -537,8 +564,8 @@ let test_exact_path_matching () =
 let test_any_method () =
   let open Router in
   let route =
-    any (s "api" / s "webhook") @-> fun _request ->
-    Response.of_string ~body:"webhook received" `OK
+    any (s "api" / s "webhook")
+    |> into (fun _request -> Response.of_string ~body:"webhook received" `OK)
   in
   let request1 = make_request ~meth:`GET "/api/webhook" in
   (match match' [ route ] request1 with
@@ -579,8 +606,9 @@ let test_any_method () =
 let test_any_method_with_params () =
   let open Router in
   let route =
-    any (s "resources" / int64) @-> fun id _request ->
-    Response.of_string ~body:(Printf.sprintf "Resource %Ld" id) `OK
+    any (s "resources" / int64)
+    |> into (fun id _request ->
+      Response.of_string ~body:(Printf.sprintf "Resource %Ld" id) `OK)
   in
   let request1 = make_request ~meth:`GET "/resources/42" in
   (match match' [ route ] request1 with
@@ -599,6 +627,36 @@ let test_any_method_with_params () =
       true
       (Response.status response = `OK)
   | None -> Alcotest.fail "POST should have matched 'any' with params"
+
+let test_response_model () =
+  let open Router in
+  let route =
+    get (s "users" / int64)
+    |> response_model (fun body -> Response.of_string ~body `OK)
+    |> into (fun id request ->
+      let headers = Request.headers request in
+      let ua =
+        Piaf.Headers.get headers "user-agent" |> Option.value ~default:"unknown"
+      in
+      Printf.sprintf "User %Ld with ua: %s" id ua)
+  in
+  let request =
+    Request.create
+      ~headers:(Piaf.Headers.of_list [ "user-agent", "alcotest" ])
+      ~scheme:`HTTP
+      ~version:Piaf.Versions.HTTP.HTTP_1_1
+      ~meth:`GET
+      ~body:Piaf.Body.empty
+      "/users/100"
+  in
+  match match' [ route ] request with
+  | Some response ->
+    let body = Response.body response |> Piaf.Body.to_string |> Result.get_ok in
+    Alcotest.(check string)
+      "response body should be the user id and ua"
+      "User 100 with ua: alcotest"
+      body
+  | None -> Alcotest.fail "Route should have matched"
 
 let tests =
   [ "Simple route", `Quick, test_simple_route
@@ -641,6 +699,7 @@ let tests =
   ; "Exact path matching", `Quick, test_exact_path_matching
   ; "Any method matches all HTTP methods", `Quick, test_any_method
   ; "Any method with parameters", `Quick, test_any_method_with_params
+  ; "Response model", `Quick, test_response_model
   ]
   |> List.map (fun (name, speed, fn) -> Alcotest.test_case name speed fn)
   |> fun tests -> "Router", tests

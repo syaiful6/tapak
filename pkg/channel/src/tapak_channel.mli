@@ -1,35 +1,8 @@
-(** Tapak Channel - Phoenix-compatible channels and presence
-    for OCaml
-
-    This module provides real-time communication primitives
-    inspired by Phoenix Channels, including:
-    - PubSub for message broadcasting
-    - Sockets for connection management
-    - Channels for topic-based communication
-    - Presence for distributed user tracking
-
-    The wire protocol is compatible with Phoenix's JavaScript
-    client. *)
-
-(** {1 Topic Patterns}
-
-    Type-safe topic patterns for compile-time verification of
-    topic structure. Similar to the router's path patterns but
-    for channel topics. *)
 module Topic : sig
   type t = string
   (** A topic string, e.g., "room:lobby" or "user:123" *)
 
   type (_, _) pattern
-  (** Type-safe topic pattern. The first type parameter
-      represents the function type needed to construct the
-      topic, and the second is the result type (always [t]).
-
-      Patterns are built by composing segments with the [/]
-      operator. Each segment consumes part of the topic string
-      separated by ":". *)
-
-  (** {2 Pattern Constructors} *)
 
   val s : string -> ('a, 'a) pattern
   (** Literal string segment. Matches exactly the given string.
@@ -84,9 +57,7 @@ end
 (** {1 PubSub}
 
     Publish-subscribe messaging system for broadcasting
-    messages across the application. Multiple backends can be
-    implemented (in-memory, PostgreSQL LISTEN/NOTIFY, Redis,
-    etc.). *)
+    messages across the application. *)
 module Pubsub : sig
   type message =
     { topic : Topic.t
