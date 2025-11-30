@@ -1,10 +1,6 @@
 exception Not_found
 exception Bad_request of string
-
-type _ content_type =
-  | Json : Yojson.Safe.t content_type
-  | Urlencoded : Form.Urlencoded.t content_type
-  | Multipart : Form.Multipart.t content_type
+exception Validation_failed of (string * string) list
 
 type (_, _) path =
   | Nil : ('a, 'a) path
@@ -49,11 +45,12 @@ type (_, _) schema =
       ; rest : ('a, Request.t -> 'resp) schema
       }
       -> ('a, Request.t -> Response.t) schema
-  | Request_body :
-      { content_type : 'body content_type
+  | Body :
+      { input_type : 'input Schema.input
+      ; schema : 'validated Schema.t
       ; rest : ('a, 'b) schema
       }
-      -> ('body -> 'a, 'b) schema
+      -> ('validated -> 'a, 'b) schema
   | Guard :
       { guard : 'g Request_guard.t
       ; rest : ('a, 'b) schema
@@ -217,10 +214,10 @@ let delete : ('a, 'b) path -> ('a, 'b) schema =
 let any : ('a, 'b) path -> ('a, 'b) schema =
  fun pattern -> Method (`Other "*", pattern)
 
-let req_body : type a b body_type.
-  body_type content_type -> (a, b) schema -> (body_type -> a, b) schema
+let body : type a b c input.
+  input Schema.input -> a Schema.t -> (b, c) schema -> (a -> b, c) schema
   =
- fun content_type schema -> Request_body { content_type; rest = schema }
+ fun input_type schema rest -> Body { input_type; schema; rest }
 
 let guard : type a b g. g Request_guard.t -> (a, b) schema -> (g -> a, b) schema
   =
@@ -290,25 +287,38 @@ let rec can_match_path : type a b. (a, b) path -> string list -> bool =
   | Annotated { segment; _ }, segs -> can_match_path segment segs
   | _ -> false
 
-let parse_body : type body.
-  body content_type -> Request.t -> (body, string) result
+let expected_content_type : type input. input Schema.input -> string = function
+  | Schema.Json -> "application/json"
+  | Schema.Urlencoded -> "application/x-www-form-urlencoded"
+  | Schema.Multipart -> "multipart/form-data"
+
+let validate_content_type : type input.
+  input Schema.input -> Request.t -> (unit, string) result
   =
- fun content_type request ->
-  let body = Request.body request in
-  match content_type with
-  | Json ->
-    (match Body.to_string body with
-    | Ok body_str ->
-      (try Ok (Yojson.Safe.from_string body_str) with _ -> Error body_str)
-    | Error _ -> Error "Can't read request body")
-  | Urlencoded ->
-    (match Form.Urlencoded.of_body body with
-    | Ok form -> Ok form
-    | Error _ -> Error "Invalid urlencoded body")
-  | Multipart ->
-    (match Form.Multipart.parse request with
-    | Ok form -> Ok form
-    | Error _ -> Error "Invalid multipart body")
+ fun input_type request ->
+  let expected = expected_content_type input_type in
+  let actual = Piaf.Headers.get (Request.headers request) "content-type" in
+  match actual with
+  | None ->
+    Error (Printf.sprintf "Missing Content-Type header, expected: %s" expected)
+  | Some content_type ->
+    (* Extract media type, ignoring charset and other parameters *)
+    let media_type =
+      match String.split_on_char ';' content_type with
+      | media :: _ -> String.trim media
+      | [] -> content_type
+    in
+    if
+      String.equal
+        (String.lowercase_ascii media_type)
+        (String.lowercase_ascii expected)
+    then Ok ()
+    else
+      Error
+        (Printf.sprintf
+           "Unsupported Content-Type: %s, expected: %s"
+           media_type
+           expected)
 
 let rec match_pattern : type a b.
   (a, b) path -> string list -> Request.t -> a -> b option
@@ -334,7 +344,7 @@ let rec match_pattern : type a b.
 
 let rec get_method : type a b. (a, b) schema -> Piaf.Method.t = function
   | Method (m, _) -> m
-  | Request_body { rest; _ } -> get_method rest
+  | Body { rest; _ } -> get_method rest
   | Guard { rest; _ } -> get_method rest
   | Meta { rest; _ } -> get_method rest
   | Response_model { rest; _ } -> get_method rest
@@ -368,10 +378,37 @@ let rec can_match_schema : type a b.
         = Piaf.Method.to_string (Request.meth request)
     in
     method_matches && can_match_path pattern segments
-  | Request_body { rest; _ } -> can_match_schema rest segments request
+  | Body { rest; _ } -> can_match_schema rest segments request
   | Guard { rest; _ } -> can_match_schema rest segments request
   | Response_model { rest; _ } -> can_match_schema rest segments request
   | Meta { rest; _ } -> can_match_schema rest segments request
+
+let evaluate_body_schema : type a b.
+  a Schema.input
+  -> b Schema.t
+  -> Request.t
+  -> (b, (string * string) list) result
+  =
+ fun input schema request ->
+  match input with
+  | Schema.Json ->
+    (match Body.to_string (Request.body request) with
+    | Ok body_str ->
+      (match
+         try Ok (Yojson.Safe.from_string body_str) with
+         | _ -> Error "Invalid JSON body"
+       with
+      | Ok json -> Schema.eval Schema.Json schema json
+      | Error e -> Error [ "body", e ])
+    | Error _ -> raise (Bad_request "Failed to read request body"))
+  | Schema.Urlencoded ->
+    (match Form.Urlencoded.of_body (Request.body request) with
+    | Ok form -> Schema.eval Schema.Urlencoded schema form
+    | Error _ -> raise (Bad_request "Invalid URL-encoded body"))
+  | Schema.Multipart ->
+    (match Form.Multipart.parse request with
+    | Ok form -> Schema.eval Schema.Multipart schema form
+    | Error _ -> raise (Bad_request "Invalid multipart body"))
 
 let rec match_schema : type a b.
   (a, b) schema -> string list -> Request.t -> a -> b option
@@ -389,13 +426,17 @@ let rec match_schema : type a b.
     if not method_matches
     then None
     else match_pattern pattern segments request k
-  | Request_body { content_type; rest } ->
+  | Body { input_type; schema; rest } ->
     if not (can_match_schema rest segments request)
     then None
     else (
-      match parse_body content_type request with
-      | Ok body -> match_schema rest segments request (k body)
-      | Error msg -> raise (Bad_request msg))
+      match validate_content_type input_type request with
+      | Error msg -> raise (Bad_request msg)
+      | Ok () ->
+        (match evaluate_body_schema input_type schema request with
+        | Ok validated_data ->
+          match_schema rest segments request (k validated_data)
+        | Error errors -> raise (Validation_failed errors)))
   | Response_model { encoder; rest } ->
     (match match_schema rest segments request k with
     | Some data_fn -> Some (fun request -> data_fn request |> encoder)

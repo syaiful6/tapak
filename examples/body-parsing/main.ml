@@ -1,128 +1,134 @@
 open Tapak
 
-let create_user json_body _req =
-  let open Yojson.Safe.Util in
-  try
-    let name = json_body |> member "name" |> to_string in
-    let email = json_body |> member "email" |> to_string in
-    let _age = json_body |> member "age" |> to_int_option in
+type user_input =
+  { name : string
+  ; email : string
+  ; age : int option
+  }
 
-    let response_json =
-      `Assoc
-        [ "status", `String "created"
-        ; "user", `Assoc [ "name", `String name; "email", `String email ]
-        ]
-    in
+let user_schema =
+  let open Schema.Syntax in
+  let+ name = Schema.str "name" |> Schema.validate Schema.Validator.nes
+  and+ email = Schema.str "email" |> Schema.validate Schema.Validator.nes
+  and+ age = Schema.option "age" (Schema.Field.int ()) in
+  { name; email; age }
 
-    Response.of_json ~status:`Created response_json
-  with
-  | Type_error (msg, _) ->
-    let error = `Assoc [ "error", `String ("Invalid JSON: " ^ msg) ] in
-    Response.of_json ~status:`Bad_request error
-  | _ ->
-    let error = `Assoc [ "error", `String "Failed to parse JSON" ] in
-    Response.of_json ~status:`Bad_request error
+let create_user user _req =
+  let user_data =
+    [ "name", `String user.name; "email", `String user.email ]
+    @ match user.age with Some age -> [ "age", `Int age ] | None -> []
+  in
+  let response_json =
+    `Assoc [ "status", `String "created"; "user", `Assoc user_data ]
+  in
+  Response.of_json ~status:`Created response_json
 
-let update_user json_body id _req =
-  let open Yojson.Safe.Util in
-  try
-    let name = json_body |> member "name" |> to_string_option in
-    let email = json_body |> member "email" |> to_string_option in
+type user_update =
+  { name : string option
+  ; email : string option
+  }
 
-    let updates = [] in
-    let updates =
-      match name with
-      | Some n -> ("name", `String n) :: updates
-      | None -> updates
-    in
-    let updates =
-      match email with
-      | Some e -> ("email", `String e) :: updates
-      | None -> updates
-    in
+let update_schema =
+  let open Schema.Syntax in
+  let+ name = Schema.option "name" (Schema.Field.str ())
+  and+ email = Schema.option "email" (Schema.Field.str ()) in
+  { name; email }
 
-    let response_json =
-      `Assoc
-        [ "status", `String "updated"
-        ; "id", `Int (Int64.to_int id)
-        ; "updates", `Assoc updates
-        ]
-    in
+let update_user update id _req =
+  let updates = [] in
+  let updates =
+    match update.name with
+    | Some n -> ("name", `String n) :: updates
+    | None -> updates
+  in
+  let updates =
+    match update.email with
+    | Some e -> ("email", `String e) :: updates
+    | None -> updates
+  in
+  let response_json =
+    `Assoc
+      [ "status", `String "updated"
+      ; "id", `Int (Int64.to_int id)
+      ; "updates", `Assoc updates
+      ]
+  in
+  Response.of_json ~status:`OK response_json
 
-    Response.of_json ~status:`OK response_json
-  with
-  | _ ->
-    let error = `Assoc [ "error", `String "Failed to update user" ] in
-    Response.of_json ~status:`Bad_request error
+type login_input =
+  { username : string
+  ; password : string
+  }
 
-let login_form form_data _req =
-  match
-    ( Form.Urlencoded.get "username" form_data
-    , Form.Urlencoded.get "password" form_data )
-  with
-  | Some username, Some password ->
-    (* In a real app, you'd verify credentials here *)
-    if username <> "" && password <> ""
-    then
-      let response_json =
-        `Assoc
-          [ "status", `String "authenticated"
-          ; "username", `String username
-          ; "message", `String "Login successful"
-          ]
-      in
-      Response.of_json ~status:`OK response_json
-    else
-      let error =
-        `Assoc [ "error", `String "Username and password cannot be empty" ]
-      in
-      Response.of_json ~status:`Bad_request error
-  | None, _ ->
-    let error = `Assoc [ "error", `String "Missing username" ] in
-    Response.of_json ~status:`Bad_request error
-  | _, None ->
-    let error = `Assoc [ "error", `String "Missing password" ] in
-    Response.of_json ~status:`Bad_request error
+let login_schema =
+  let open Schema.Syntax in
+  let+ username = Schema.str "username" |> Schema.validate Schema.Validator.nes
+  and+ password =
+    Schema.str "password" |> Schema.validate Schema.Validator.nes
+  in
+  { username; password }
 
-let contact_form form_data _req =
-  let name = Form.Urlencoded.get "name" form_data in
-  let email = Form.Urlencoded.get "email" form_data in
-  let message = Form.Urlencoded.get "message" form_data in
-  let subscribe = Form.Urlencoded.get "subscribe" form_data in
+let login_form login _req =
+  (* verify login.username and login.password against your user database *)
+  let _password_to_verify = login.password in
+  let response_json =
+    `Assoc
+      [ "status", `String "authenticated"
+      ; "username", `String login.username
+      ; "message", `String "Login successful"
+      ]
+  in
+  Response.of_json ~status:`OK response_json
 
-  match name, email, message with
-  | Some n, Some e, Some m when n <> "" && e <> "" && m <> "" ->
-    let is_subscribed =
-      match subscribe with
-      | Some "on" | Some "true" | Some "1" -> true
-      | _ -> false
-    in
+type contact_input =
+  { name : string
+  ; email : string
+  ; message : string
+  ; subscribe : bool
+  }
 
-    let response_json =
-      `Assoc
-        [ "status", `String "received"
-        ; ( "data"
-          , `Assoc
-              [ "name", `String n
-              ; "email", `String e
-              ; "message", `String m
-              ; "subscribed", `Bool is_subscribed
-              ] )
-        ]
-    in
-    Response.of_json ~status:`OK response_json
-  | _ ->
-    let error =
-      `Assoc
-        [ "error", `String "Missing required fields: name, email, message" ]
-    in
-    Response.of_json ~status:`Bad_request error
+let contact_schema =
+  let open Schema.Syntax in
+  let+ name = Schema.str "name" |> Schema.validate Schema.Validator.nes
+  and+ email = Schema.str "email" |> Schema.validate Schema.Validator.nes
+  and+ message = Schema.str "message" |> Schema.validate Schema.Validator.nes
+  and+ subscribe = Schema.bool ~default:false "subscribe" in
+  { name; email; message; subscribe }
 
-let upload_file _multipart_data _req =
+let contact_form contact _req =
   let response_json =
     `Assoc
       [ "status", `String "received"
-      ; "message", `String "Multipart upload endpoint"
+      ; ( "data"
+        , `Assoc
+            [ "name", `String contact.name
+            ; "email", `String contact.email
+            ; "message", `String contact.message
+            ; "subscribed", `Bool contact.subscribe
+            ] )
+      ]
+  in
+  Response.of_json ~status:`OK response_json
+
+type upload_input =
+  { file : Form.Multipart.part
+  ; description : string
+  }
+
+let upload_schema =
+  let open Schema.Syntax in
+  let+ file = Schema.file "file"
+  and+ description = Schema.str ~default:"No description" "description" in
+  { file; description }
+
+let upload_file upload _req =
+  (* save the upload.file somewhere *)
+  let _file_part = upload.file in
+  let response_json =
+    `Assoc
+      [ "status", `String "received"
+      ; "message", `String "File uploaded successfully"
+      ; "description", `String upload.description
       ]
   in
   Response.of_json ~status:`OK response_json
@@ -239,6 +245,27 @@ let index_page _req =
   in
   Response.of_html ~status:`OK (html_page "Body Parsing Example" body)
 
+let error_handler =
+  let filter next request =
+    try next request with
+    | Router.Validation_failed errors ->
+      let body =
+        `Assoc
+          [ ( "errors"
+            , `List
+                (List.map
+                   (fun (field, msg) ->
+                      `Assoc [ "field", `String field; "message", `String msg ])
+                   errors) )
+          ]
+      in
+      Response.of_json ~status:`Bad_request body
+    | Router.Bad_request msg ->
+      let body = `Assoc [ "error", `String msg ] in
+      Response.of_json ~status:`Bad_request body
+  in
+  Middleware.create ~name:"Error_handler" ~filter
+
 let app env =
   let open Router in
   let open Middleware in
@@ -247,20 +274,30 @@ let app env =
   App.(
     routes
       [ get (s "") |> into index_page
-      ; post (s "api" / s "users") |> req_body Json |> into create_user
-      ; put (s "api" / s "users" / p "userId" int64)
-        |> req_body Json
-        |> into update_user
-      ; get (s "api" / s "users") |> into list_users
-      ; post (s "login") |> req_body Urlencoded |> into login_form
-      ; post (s "contact") |> req_body Urlencoded |> into contact_form
-      ; post (s "upload") |> req_body Multipart |> into upload_file
+      ; scope
+          (s "api")
+          [ get (s "users") |> into list_users
+          ; post (s "users") |> body Schema.Json user_schema |> into create_user
+          ; put (s "users" / p "userId" int64)
+            |> body Schema.Json update_schema
+            |> into update_user
+          ]
+      ; post (s "login")
+        |> body Schema.Urlencoded login_schema
+        |> into login_form
+      ; post (s "contact")
+        |> body Schema.Urlencoded contact_schema
+        |> into contact_form
+      ; post (s "upload")
+        |> body Schema.Multipart upload_schema
+        |> into upload_file
       ]
       ()
     <++> [ Middleware.use
              ~name:"Request_logger"
              (module Request_logger)
              (Request_logger.args ~now ~trusted_proxies:[] ())
+         ; error_handler
          ])
 
 let () =

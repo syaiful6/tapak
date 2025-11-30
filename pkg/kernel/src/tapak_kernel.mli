@@ -10,4 +10,5 @@ module Request_guard = Request_guard
 module Request_info = Request_info
 module Response = Response
 module Router = Router
+module Schema = Schema
 module Service = Service
