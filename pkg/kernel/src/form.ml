@@ -77,6 +77,120 @@ module Multipart = struct
           drain_all (err_msg :: errors) rest)
     in
     drain_all [] fields
+
+  type node =
+    | Object of (string, node) Hashtbl.t
+    | Array of node list ref
+    | Value of part
+
+  let to_tree (parts : t) : node =
+    let parse_key key =
+      match String.split_on_char '[' key with
+      | [] -> []
+      | base :: rest ->
+        let sanitize_part part =
+          if String.ends_with ~suffix:"]" part
+          then String.sub part 0 (String.length part - 1)
+          else part
+        in
+        base :: List.map sanitize_part rest
+    in
+    let is_numeric s =
+      try
+        let _ = int_of_string s in
+        true
+      with
+      | Failure _ -> false
+    in
+    let root = Object (Hashtbl.create 16) in
+    let rec insert node path part =
+      match node, path with
+      | _, [] -> ()
+      | Object h, [ key ] ->
+        (* Terminal key - store the raw part *)
+        Hashtbl.replace h key (Value part)
+      | Object h, key :: rest ->
+        let next_node =
+          match Hashtbl.find_opt h key with
+          | Some n -> n
+          | None ->
+            let new_node =
+              match rest with
+              | "" :: _ -> Array (ref [])
+              | x :: _ when is_numeric x -> Array (ref [])
+              | _ -> Object (Hashtbl.create 4)
+            in
+            Hashtbl.add h key new_node;
+            new_node
+        in
+        insert next_node rest part
+      | Array l, "" :: rest ->
+        (match rest with
+        | [] ->
+          (* Simple array: tags[]=foo&tags[]=bar *)
+          l := !l @ [ Value part ]
+        | _ ->
+          (* Array of objects: items[][id]=1&items[][name]=foo *)
+          let new_obj = Object (Hashtbl.create 4) in
+          l := !l @ [ new_obj ];
+          insert new_obj rest part)
+      | Array l, key :: rest ->
+        (* Indexed array: items[0][id]=1 or items[0]=foo *)
+        let idx = int_of_string key in
+        let rec get_or_create_at_idx i current_list =
+          match current_list with
+          | [] when i = 0 ->
+            let new_node =
+              match rest with
+              | [] -> Value part
+              | "" :: _ -> Array (ref [])
+              | _ -> Object (Hashtbl.create 4)
+            in
+            l := !l @ [ new_node ];
+            new_node
+          | x :: _ when i = 0 -> x
+          | _ :: xs -> get_or_create_at_idx (i - 1) xs
+          | [] ->
+            (* Sparse array padding - use a dummy empty part for padding *)
+            let rec pad_and_create n =
+              if n < 0
+              then failwith "Invalid array index"
+              else if n = 0
+              then (
+                let new_node =
+                  match rest with
+                  | [] -> Value part
+                  | _ -> Object (Hashtbl.create 4)
+                in
+                let dummy_part =
+                  { name = ""
+                  ; filename = None
+                  ; content_type = "text/plain"
+                  ; body = Body.of_string ""
+                  }
+                in
+                l := !l @ [ Value dummy_part (* padding *); new_node ];
+                new_node)
+              else
+                let dummy_part =
+                  { name = ""
+                  ; filename = None
+                  ; content_type = "text/plain"
+                  ; body = Body.of_string ""
+                  }
+                in
+                l := !l @ [ Value dummy_part ];
+                pad_and_create (n - 1)
+            in
+            pad_and_create (idx - List.length !l)
+        in
+        let node_at_idx = get_or_create_at_idx idx !l in
+        insert node_at_idx rest part
+      | Value _, _ :: _ -> ()
+      (* Conflict - ignore *)
+    in
+    List.iter (fun (key, part) -> insert root (parse_key key) part) parts;
+    root
 end
 
 module Urlencoded = struct
@@ -118,4 +232,124 @@ module Urlencoded = struct
       (fun (k, vs) -> if String.equal k key then Some vs else None)
       params
     |> List.concat
+
+  type node =
+    | Object of (string, node) Hashtbl.t
+    | Array of node list ref
+    | Value of string list
+
+  let to_yojson params =
+    let parse_key key =
+      match String.split_on_char '[' key with
+      | [] -> []
+      | base :: rest ->
+        let sanitize_part part =
+          if String.ends_with ~suffix:"]" part
+          then String.sub part 0 (String.length part - 1)
+          else part (* This would be a malformed key like `user[name` *)
+        in
+        base :: List.map sanitize_part rest
+    in
+    let is_numeric s =
+      try
+        let _ = int_of_string s in
+        true
+      with
+      | Failure _ -> false
+    in
+    let root = Object (Hashtbl.create 16) in
+    let rec insert node path values =
+      match node, path with
+      | _, [] -> ()
+      | Object h, [ key ] ->
+        (* If a value for the same key already exists, this will overwrite.
+           This is standard behavior; the last value sent wins. *)
+        Hashtbl.replace h key (Value values)
+      | Object h, key :: rest ->
+        let next_node =
+          match Hashtbl.find_opt h key with
+          | Some n -> n
+          | None ->
+            let new_node =
+              match rest with
+              | "" :: _ -> Array (ref []) (* items[] *)
+              | x :: _ when is_numeric x -> Array (ref []) (* items[0] *)
+              | _ -> Object (Hashtbl.create 4)
+              (* items[foo] *)
+            in
+            Hashtbl.add h key new_node;
+            new_node
+        in
+        insert next_node rest values
+      | Array l, "" :: rest ->
+        (match rest with
+        | [] ->
+          (* Simple array of values: tags[]=foo&tags[]=bar
+             Add each value as a separate element to the array. *)
+          List.iter (fun v -> l := !l @ [ Value [ v ] ]) values
+        | _ ->
+          (* Array of objects: items[][id]=1&items[][name]=foo
+             Create a new object and recurse into it. *)
+          let new_obj = Object (Hashtbl.create 4) in
+          l := !l @ [ new_obj ];
+          insert new_obj rest values)
+      | Array l, key :: rest ->
+        (* This handles `items[0][id]`. It treats the array as an object where
+           keys are integer strings. *)
+        let idx = int_of_string key in
+        let rec get_or_create_at_idx i current_list =
+          match current_list with
+          | [] when i = 0 ->
+            let new_node =
+              match rest with
+              | [] -> Value values
+              | "" :: _ -> Array (ref [])
+              | _ -> Object (Hashtbl.create 4)
+            in
+            l := !l @ [ new_node ];
+            new_node
+          | x :: _ when i = 0 -> x
+          | _ :: xs -> get_or_create_at_idx (i - 1) xs
+          | [] ->
+            (* This case handles sparse arrays, e.g. items[2] when items[0] and items[1] don't exist.
+               We pad with `Value []` which will become `null`. *)
+            let rec pad_and_create n =
+              if n < 0
+              then failwith "Invalid array index"
+              else if n = 0
+              then (
+                let new_node =
+                  match rest with
+                  | [] -> Value values
+                  | _ -> Object (Hashtbl.create 4)
+                in
+                l := !l @ [ Value [] (* padding *); new_node ];
+                new_node)
+              else (
+                l := !l @ [ Value [] ];
+                pad_and_create (n - 1))
+            in
+            pad_and_create (idx - List.length !l)
+        in
+        let node_at_idx = get_or_create_at_idx idx !l in
+        insert node_at_idx rest values
+      (* Any other combination is a conflict/error. *)
+      | Value _, _ :: _ ->
+        (* e.g., trying to insert into `user[name]` when `user` is already a value. *)
+        (* For now, we silently ignore, though an exception could be raised. *)
+        ()
+    in
+    List.iter (fun (key, values) -> insert root (parse_key key) values) params;
+    let rec to_yojson = function
+      | Object h ->
+        `Assoc
+          (Hashtbl.to_seq h
+          |> List.of_seq
+          |> List.map (fun (k, v) -> k, to_yojson v))
+      | Array l -> `List (List.map to_yojson !l)
+      | Value [] -> `Null
+      | Value [ v ] -> `String v
+      | Value vs -> `List (List.map (fun s -> `String s) vs)
+    in
+    to_yojson root
 end

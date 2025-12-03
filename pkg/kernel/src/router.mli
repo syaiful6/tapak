@@ -1,10 +1,6 @@
 exception Not_found
 exception Bad_request of string
-
-type _ content_type =
-  | Json : Yojson.Safe.t content_type
-  | Urlencoded : Form.Urlencoded.t content_type
-  | Multipart : Form.Multipart.t content_type
+exception Validation_failed of (string * string) list
 
 type metadata =
   { operation_id : string option
@@ -49,11 +45,12 @@ type (_, _) schema =
       ; rest : ('a, Request.t -> 'resp) schema
       }
       -> ('a, Request.t -> Response.t) schema
-  | Request_body :
-      { content_type : 'body content_type
+  | Body :
+      { input_type : 'input Schema.input
+      ; schema : 'validated Schema.t
       ; rest : ('a, 'b) schema
       }
-      -> ('body -> 'a, 'b) schema
+      -> ('validated -> 'a, 'b) schema
   | Guard :
       { guard : 'g Request_guard.t
       ; rest : ('a, 'b) schema
@@ -102,10 +99,11 @@ val delete : ('a, 'b) path -> ('a, 'b) schema
 val head : ('a, 'b) path -> ('a, 'b) schema
 val any : ('a, 'b) path -> ('a, 'b) schema
 
-val req_body :
-   'body_type content_type
+val body :
+   'input Schema.input
+  -> 'validated Schema.t
   -> ('a, 'b) schema
-  -> ('body_type -> 'a, 'b) schema
+  -> ('validated -> 'a, 'b) schema
 
 val guard : 'g Request_guard.t -> ('a, 'b) schema -> ('g -> 'a, 'b) schema
 

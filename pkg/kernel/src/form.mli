@@ -75,6 +75,18 @@ module Multipart : sig
 
       Note: [get_field] and [get_all_fields] consume the body when reading,
       but [get_part] returns the body as a stream which you must consume manually. *)
+
+  type node =
+    | Object of (string, node) Hashtbl.t
+    | Array of node list ref
+    | Value of part
+    (** Tree node representing multipart form structure. The structure follow
+    the coventional bracket notation used in popular frameworks. *)
+
+  val to_tree : t -> node
+  (** [to_tree t] convert multipart form parts into a tree structure based on
+      bracket notation in field names (e.g., [user[name]], [files[]]). This allows
+      deep schema validation for multipart forms. *)
 end
 
 module Urlencoded : sig
@@ -98,4 +110,9 @@ module Urlencoded : sig
 
   val get_list : string -> t -> string list
   (** [get_list key params] returns all values associated with [key] across all occurrences. *)
+
+  val to_yojson : t -> Yojson.Safe.t
+  (** [to_yojson params] converts the URL-encoded parameters into a nested
+      Yojson.Safe.t structure, interpreting bracket notation (e.g., [user[name]])
+      as nested objects and arrays. This allows deep schema validation for forms. *)
 end

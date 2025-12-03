@@ -5,6 +5,7 @@ module Headers = Headers
 module Body = Body
 module Status = Status
 module Router = Router
+module Schema = Tapak_kernel.Schema
 module Context = Context
 module Middleware = Middleware
 module App = App
