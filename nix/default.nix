@@ -82,7 +82,7 @@ rec {
   tapak = buildTapak {
     pname = "tapak";
     src = genSrc {
-      dirs = [ "src" "pkg/kernel" ];
+      dirs = [ "src" "pkg/kernel" "pkg/channel" ];
       files = [ "tapak.opam" ];
     };
     propagatedBuildInputs = [
