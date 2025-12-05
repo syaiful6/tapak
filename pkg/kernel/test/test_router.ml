@@ -204,7 +204,7 @@ let test_scope_with_middlewares () =
         resp
   end
   in
-  let test_middleware = Middleware.use ~name:"test" (module M) () in
+  let test_middleware = Middleware.use (module M) () in
   let route =
     scope
       ~middlewares:[ test_middleware ]

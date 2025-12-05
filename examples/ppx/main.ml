@@ -70,7 +70,6 @@ let () =
         ]
         ()
       <++> [ use
-               ~name:"Request_logger"
                (module Request_logger)
                (Request_logger.args ~now ~trusted_proxies ())
            ])

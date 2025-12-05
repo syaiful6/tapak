@@ -455,7 +455,7 @@ let rec match_route ?(middlewares = []) route segments request =
   | Route route ->
     (match match_schema route.schema segments request route.handler with
     | Some handler ->
-      let service = Middleware.apply_all middlewares handler in
+      let service = Filter.apply_all middlewares handler in
       Some (service request)
     | None -> None)
   | Scope scope ->
