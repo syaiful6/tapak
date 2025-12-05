@@ -245,26 +245,23 @@ let index_page _req =
   in
   Response.of_html ~status:`OK (html_page "Body Parsing Example" body)
 
-let error_handler =
-  let filter next request =
-    try next request with
-    | Router.Validation_failed errors ->
-      let body =
-        `Assoc
-          [ ( "errors"
-            , `List
-                (List.map
-                   (fun (field, msg) ->
-                      `Assoc [ "field", `String field; "message", `String msg ])
-                   errors) )
-          ]
-      in
-      Response.of_json ~status:`Bad_request body
-    | Router.Bad_request msg ->
-      let body = `Assoc [ "error", `String msg ] in
-      Response.of_json ~status:`Bad_request body
-  in
-  Middleware.create ~name:"Error_handler" ~filter
+let error_handler next request =
+  try next request with
+  | Router.Validation_failed errors ->
+    let body =
+      `Assoc
+        [ ( "errors"
+          , `List
+              (List.map
+                 (fun (field, msg) ->
+                    `Assoc [ "field", `String field; "message", `String msg ])
+                 errors) )
+        ]
+    in
+    Response.of_json ~status:`Bad_request body
+  | Router.Bad_request msg ->
+    let body = `Assoc [ "error", `String msg ] in
+    Response.of_json ~status:`Bad_request body
 
 let app env =
   let open Router in
@@ -293,8 +290,7 @@ let app env =
         |> into upload_file
       ]
       ()
-    <++> [ Middleware.use
-             ~name:"Request_logger"
+    <++> [ use
              (module Request_logger)
              (Request_logger.args ~now ~trusted_proxies:[] ())
          ; error_handler

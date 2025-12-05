@@ -333,10 +333,7 @@ let setup_app () =
           ]
       ]
       ()
-    <++> [ Middleware.create
-             ~name:"Guard_error_handler"
-             ~filter:guard_error_middleware
-         ])
+    <++> [ guard_error_middleware ])
 
 let setup_log level =
   Fmt_tty.setup_std_outputs ();

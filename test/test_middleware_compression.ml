@@ -69,12 +69,10 @@ let test_no_accept_encoding () =
     }
   in
 
-  let compression_middleware =
-    Middleware.(use ~name:"compression" (module Compression) args)
-  in
+  let compression_middleware = Middleware.(use (module Compression) args) in
 
   let handler _req = original_response in
-  let response = Middleware.apply compression_middleware handler request in
+  let response = compression_middleware handler request in
 
   Alcotest.(check (option string))
     "Content-Encoding is gzip"
@@ -97,12 +95,10 @@ let test_compression_with_gzip () =
     }
   in
 
-  let compression_middleware =
-    Middleware.(use ~name:"compression" (module Compression) args)
-  in
+  let compression_middleware = Middleware.(use (module Compression) args) in
 
   let handler _req = original_response in
-  let response = Middleware.apply compression_middleware handler request in
+  let response = compression_middleware handler request in
 
   Alcotest.(check (option string))
     "Content-Encoding is gzip"
@@ -132,12 +128,10 @@ let test_vary_header_merge () =
     }
   in
 
-  let compression_middleware =
-    Middleware.(use ~name:"compression" (module Compression) args)
-  in
+  let compression_middleware = Middleware.(use (module Compression) args) in
 
   let handler _req = original_response in
-  let response = Middleware.apply compression_middleware handler request in
+  let response = compression_middleware handler request in
 
   Alcotest.(check (option string))
     "Vary header merged"
@@ -157,12 +151,10 @@ let test_vary_header_no_duplicate () =
     }
   in
 
-  let compression_middleware =
-    Middleware.(use ~name:"compression" (module Compression) args)
-  in
+  let compression_middleware = Middleware.(use (module Compression) args) in
 
   let handler _req = original_response in
-  let response = Middleware.apply compression_middleware handler request in
+  let response = compression_middleware handler request in
 
   Alcotest.(check (option string))
     "Vary header not duplicated"
@@ -179,12 +171,10 @@ let test_identity_encoding () =
     ; encoder = make_mock_encoder `Gzip
     }
   in
-  let compression_middleware =
-    Middleware.(use ~name:"compression" (module Compression) args)
-  in
+  let compression_middleware = Middleware.(use (module Compression) args) in
 
   let handler _req = original_response in
-  let response = Middleware.apply compression_middleware handler request in
+  let response = compression_middleware handler request in
 
   Alcotest.(check (option string))
     "no Content-Encoding for identity"
@@ -203,11 +193,11 @@ let test_predicate_blocks_compression () =
   in
 
   let compression_middleware =
-    Middleware.use ~name:"compression" (module Middleware.Compression) args
+    Middleware.use (module Middleware.Compression) args
   in
 
   let handler _req = original_response in
-  let response = Middleware.apply compression_middleware handler request in
+  let response = compression_middleware handler request in
 
   Alcotest.(check (option string))
     "predicate blocks compression"
@@ -226,11 +216,11 @@ let test_no_encoder_available () =
   in
 
   let compression_middleware =
-    Middleware.use ~name:"compression" (module Middleware.Compression) args
+    Middleware.use (module Middleware.Compression) args
   in
 
   let handler _req = original_response in
-  let response = Middleware.apply compression_middleware handler request in
+  let response = compression_middleware handler request in
 
   Alcotest.(check (option string))
     "no compression without encoder"
@@ -248,11 +238,11 @@ let test_compression_failure () =
     }
   in
   let compression_middleware =
-    Middleware.use ~name:"compression" (module Middleware.Compression) args
+    Middleware.use (module Middleware.Compression) args
   in
 
   let handler _req = original_response in
-  let response = Middleware.apply compression_middleware handler request in
+  let response = compression_middleware handler request in
 
   Alcotest.(check (option string))
     "keeps Content-Length on failure"
@@ -275,12 +265,10 @@ let test_encoding_preference () =
     }
   in
 
-  let compression_middleware =
-    Middleware.(use ~name:"compression" (module Compression) args)
-  in
+  let compression_middleware = Middleware.(use (module Compression) args) in
 
   let handler _req = original_response in
-  let response = Middleware.apply compression_middleware handler request in
+  let response = compression_middleware handler request in
 
   Alcotest.(check (option string))
     "prefers gzip"
@@ -299,12 +287,10 @@ let test_replace_content_encoding () =
     ; encoder = make_mock_encoder `Gzip
     }
   in
-  let compression_middleware =
-    Middleware.(use ~name:"compression" (module Compression) args)
-  in
+  let compression_middleware = Middleware.(use (module Compression) args) in
 
   let handler _req = original_response in
-  let response = Middleware.apply compression_middleware handler request in
+  let response = compression_middleware handler request in
 
   Alcotest.(check (option string))
     "Content-Encoding replaced"

@@ -200,7 +200,6 @@ let setup_app env =
           ; scope
               ~middlewares:
                 [ use
-                    ~name:"Limit_request_size"
                     (module Limit_request_size)
                     (Limit_request_size.args ~max_bytes)
                 ]
@@ -218,10 +217,9 @@ let setup_app env =
       ]
       ()
     <++> [ use
-             ~name:"Request_logger"
              (module Request_logger)
              (Request_logger.args ~now ~trusted_proxies ())
-         ; use ~name:"Decompression" (module Decompression) decoder
+         ; use (module Decompression) decoder
          ])
 
 let setup_log ?(threaded = false) ?style_renderer level =
