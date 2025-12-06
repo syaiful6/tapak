@@ -46,6 +46,7 @@
   ptime
   ipaddr
   logs
+  (re (>= 1.7.2))
   (eio
    (>= 1.3))
   (piaf

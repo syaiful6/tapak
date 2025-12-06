@@ -18,6 +18,7 @@ depends: [
   "ptime"
   "ipaddr"
   "logs"
+  "re" {>= "1.7.2"}
   "eio" {>= "1.3"}
   "piaf" {>= "0.2.0"}
   "uri" {>= "4.4.0"}

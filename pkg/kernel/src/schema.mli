@@ -1,19 +1,119 @@
+module Constraint : sig
+  type _ num_t =
+    | Int_ty : int num_t
+    | Int32_ty : int32 num_t
+    | Int64_ty : int64 num_t
+    | Float_ty : float num_t
+
+  type _ num_constraint =
+    | Min : 'a -> 'a num_constraint
+    | Max : 'a -> 'a num_constraint
+    | Exclusive_min : 'a -> 'a num_constraint
+    | Exclusive_max : 'a -> 'a num_constraint
+    | Multiple_of : 'a -> 'a num_constraint
+
+  type string_format =
+    [ `Email
+    | `Uri
+    | `Uuid
+    | `Date
+    | `Date_time
+    | `Ipv4
+    | `Ipv6
+    | `Custom of string
+    ]
+
+  type _ t =
+    | Min_length : int -> string t
+    | Max_length : int -> string t
+    | Pattern : string -> string t
+    | Format : string_format -> string t
+    | Numeric : ('a num_t * 'a num_constraint list) -> 'a t
+    | Min_items : int -> 'a list t
+    | Max_items : int -> 'a list t
+    | Unique_items : 'a list t
+    | Any_of : 'a t list -> 'a t
+    | All_of : 'a t list -> 'a t
+    | One_of : 'a t list -> 'a t
+    | Not : 'a t -> 'a t
+
+  val int_min : int -> int t
+  val int_max : int -> int t
+  val int_range : int -> int -> int t
+  val int_multiple_of : int -> int t
+  val int32_min : int32 -> int32 t
+  val int32_max : int32 -> int32 t
+  val int32_range : int32 -> int32 -> int32 t
+  val int64_min : int64 -> int64 t
+  val int64_max : int64 -> int64 t
+  val int64_range : int64 -> int64 -> int64 t
+  val float_min : float -> float t
+  val float_max : float -> float t
+  val float_range : float -> float -> float t
+  val min_length : int -> string t
+  val max_length : int -> string t
+  val length_range : int -> int -> string t
+  val pattern : string -> string t
+  val format : string_format -> string t
+  val min_items : int -> 'a list t
+  val max_items : int -> 'a list t
+  val unique_items : 'a list t
+  val any_of : 'a t list -> 'a t
+  val all_of : 'a t list -> 'a t
+  val one_of : 'a t list -> 'a t
+  val not_ : 'a t -> 'a t
+
+  val eval : 'a t -> 'a -> ('a, string list) result
+  (** Evaluate a single constraint against a value. Returns Ok value if the constraint
+      is satisfied, or Error with a list of validation error messages. *)
+
+  val apply_constraints : 'a t list -> 'a -> ('a, string list) result
+  (** Apply multiple constraints to a value, collecting all errors.
+      This is the recommended way to validate values with multiple constraints.
+      Custom field interpreters should use this function to apply field constraints. *)
+
+  val apply_constraint : 'a t option -> 'a -> ('a, string list) result
+  (** Apply an optional constraint to a value. Returns Ok value if the constraint is None
+      or if the constraint is satisfied. Returns Error if the constraint fails. *)
+end
+
 type _ input =
   | Json : Yojson.Safe.t input
   | Urlencoded : Form.Urlencoded.t input
   | Multipart : Form.Multipart.t input
 
 type _ field =
-  | Str : { default : string option } -> string field
-  | Int : { default : int option } -> int field
-  | Int32 : { default : int32 option } -> int32 field
-  | Int64 : { default : int64 option } -> int64 field
+  | Str :
+      { default : string option
+      ; constraint_ : string Constraint.t option
+      }
+      -> string field
+  | Int :
+      { default : int option
+      ; constraint_ : int Constraint.t option
+      }
+      -> int field
+  | Int32 :
+      { default : int32 option
+      ; constraint_ : int32 Constraint.t option
+      }
+      -> int32 field
+  | Int64 :
+      { default : int64 option
+      ; constraint_ : int64 Constraint.t option
+      }
+      -> int64 field
   | Bool : { default : bool option } -> bool field
-  | Float : { default : float option } -> float field
+  | Float :
+      { default : float option
+      ; constraint_ : float Constraint.t option
+      }
+      -> float field
   | Option : 'a field -> 'a option field
   | List :
       { default : 'a list option
       ; item : 'a field
+      ; constraint_ : 'a list Constraint.t option
       }
       -> 'a list field
   | File : Form.Multipart.part field
@@ -62,40 +162,86 @@ module Multipart_interpreter :
 module Field : sig
   type 'a t = 'a field
 
-  val str : ?default:string -> unit -> string field
-  val int : ?default:int -> unit -> int field
-  val int32 : ?default:int32 -> unit -> int32 field
-  val int64 : ?default:int64 -> unit -> int64 field
+  val str :
+     ?default:string
+    -> ?constraint_:string Constraint.t
+    -> unit
+    -> string field
+
+  val int : ?default:int -> ?constraint_:int Constraint.t -> unit -> int field
+
+  val int32 :
+     ?default:int32
+    -> ?constraint_:int32 Constraint.t
+    -> unit
+    -> int32 field
+
+  val int64 :
+     ?default:int64
+    -> ?constraint_:int64 Constraint.t
+    -> unit
+    -> int64 field
+
   val bool : ?default:bool -> unit -> bool field
-  val float : ?default:float -> unit -> float field
-  val list : ?default:'a list -> 'a field -> 'a list field
+
+  val float :
+     ?default:float
+    -> ?constraint_:float Constraint.t
+    -> unit
+    -> float field
+
+  val list :
+     ?default:'a list
+    -> ?constraint_:'a list Constraint.t
+    -> 'a field
+    -> 'a list field
+
   val option : 'a field -> 'a option field
   val choice : ?default:'a -> (string * 'a) list -> ('a * int) list field
   val file : unit -> Form.Multipart.part field
-end
-
-module Validator : sig
-  type ('a, 'b) t = 'a -> ('b, string list) result
-
-  val nes : (string, string) t
-  val str : ?min_len:int -> ?max_len:int -> (string, string) t
-  val int : ?min:int -> ?max:int -> (int, int) t
-  val int32 : ?min:int32 -> ?max:int32 -> (int32, int32) t
-  val int64 : ?min:int64 -> ?max:int64 -> (int64, int64) t
 end
 
 val validate : ('a -> ('b, string list) result) -> 'a t -> 'b t
 val map : ('a -> 'b) -> 'a t -> 'b t
 val return : 'a -> 'a t
 val field : string -> 'a field -> 'a t
-val int : ?default:int -> string -> int t
-val str : ?default:string -> string -> string t
-val int32 : ?default:int32 -> string -> int32 t
-val int64 : ?default:int64 -> string -> int64 t
+val int : ?default:int -> ?constraint_:int Constraint.t -> string -> int t
+
+val str :
+   ?default:string
+  -> ?constraint_:string Constraint.t
+  -> string
+  -> string t
+
+val int32 :
+   ?default:int32
+  -> ?constraint_:int32 Constraint.t
+  -> string
+  -> int32 t
+
+val int64 :
+   ?default:int64
+  -> ?constraint_:int64 Constraint.t
+  -> string
+  -> int64 t
+
 val bool : ?default:bool -> string -> bool t
-val float : ?default:float -> string -> float t
+
+val float :
+   ?default:float
+  -> ?constraint_:float Constraint.t
+  -> string
+  -> float t
+
 val option : string -> 'a field -> 'a option t
-val list : ?default:'a list -> string -> 'a field -> 'a list t
+
+val list :
+   ?default:'a list
+  -> ?constraint_:'a list Constraint.t
+  -> string
+  -> 'a field
+  -> 'a list t
+
 val choice : ?default:'a -> string -> (string * 'a) list -> ('a * int) list t
 val obj : string -> 'a t -> 'a t
 val file : string -> Form.Multipart.part t

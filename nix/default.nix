@@ -90,6 +90,7 @@ rec {
       angstrom
       hmap
       logs
+      re
       piaf
       magic-mime
       uri

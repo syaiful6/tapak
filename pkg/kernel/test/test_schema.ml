@@ -152,8 +152,13 @@ let test_validator_usage () =
   let open Schema in
   let schema =
     let open Syntax in
-    let+ name = str "name" |> validate (Validator.str ~min_len:2 ~max_len:50)
-    and+ email = str "email" |> validate Validator.nes in
+    let+ name =
+      str
+        ~constraint_:
+          (Constraint.all_of
+             [ Constraint.min_length 2; Constraint.max_length 50 ])
+        "name"
+    and+ email = str ~constraint_:(Constraint.min_length 1) "email" in
     name, email
   in
   let valid_json =
@@ -173,9 +178,9 @@ let test_error_accumulation () =
   let open Schema in
   let schema =
     let open Syntax in
-    let+ name = str "name" |> validate (Validator.str ~min_len:2)
-    and+ email = str "email" |> validate Validator.nes
-    and+ age = int "age" |> validate (Validator.int ~min:0 ~max:120) in
+    let+ name = str ~constraint_:(Constraint.min_length 2) "name"
+    and+ email = str ~constraint_:(Constraint.min_length 1) "email"
+    and+ age = int ~constraint_:(Constraint.int_range 0 120) "age" in
     name, email, age
   in
   let invalid_json =
@@ -356,6 +361,193 @@ let test_urlencoded_object_with_optional () =
     (Ok ("Bob", "bob@example.com", None))
     result
 
+let test_pattern_constraint () =
+  let open Schema in
+  let schema =
+    str ~constraint_:(Constraint.pattern "^[A-Z][a-z]+$") "username"
+  in
+  let valid_json = `Assoc [ "username", `String "Alice" ] in
+  let invalid_json = `Assoc [ "username", `String "alice123" ] in
+  Alcotest.(check (result string (list (pair string string))))
+    "accept string matching pattern"
+    (Ok "Alice")
+    (eval Schema.Json schema valid_json);
+  Alcotest.(check bool)
+    "reject string not matching pattern"
+    true
+    (Result.is_error (eval Schema.Json schema invalid_json))
+
+let test_format_email () =
+  let open Schema in
+  let schema = str ~constraint_:(Constraint.format `Email) "email" in
+  let valid_json = `Assoc [ "email", `String "test@example.com" ] in
+  let invalid_json = `Assoc [ "email", `String "not-an-email" ] in
+  Alcotest.(check (result string (list (pair string string))))
+    "accept valid email"
+    (Ok "test@example.com")
+    (eval Schema.Json schema valid_json);
+  Alcotest.(check bool)
+    "reject invalid email"
+    true
+    (Result.is_error (eval Schema.Json schema invalid_json))
+
+let test_format_uri () =
+  let open Schema in
+  let schema = str ~constraint_:(Constraint.format `Uri) "website" in
+  let valid_json = `Assoc [ "website", `String "https://example.com" ] in
+  let invalid_json = `Assoc [ "website", `String "not a uri" ] in
+  Alcotest.(check (result string (list (pair string string))))
+    "accept valid URI"
+    (Ok "https://example.com")
+    (eval Schema.Json schema valid_json);
+  Alcotest.(check bool)
+    "reject invalid URI"
+    true
+    (Result.is_error (eval Schema.Json schema invalid_json))
+
+let test_format_uuid () =
+  let open Schema in
+  let schema = str ~constraint_:(Constraint.format `Uuid) "id" in
+  let valid_json =
+    `Assoc [ "id", `String "550e8400-e29b-41d4-a716-446655440000" ]
+  in
+  let invalid_json = `Assoc [ "id", `String "not-a-uuid" ] in
+  Alcotest.(check (result string (list (pair string string))))
+    "accept valid UUID"
+    (Ok "550e8400-e29b-41d4-a716-446655440000")
+    (eval Schema.Json schema valid_json);
+  Alcotest.(check bool)
+    "reject invalid UUID"
+    true
+    (Result.is_error (eval Schema.Json schema invalid_json))
+
+let test_format_date () =
+  let open Schema in
+  let schema = str ~constraint_:(Constraint.format `Date) "birthdate" in
+  let valid_json = `Assoc [ "birthdate", `String "2024-03-15" ] in
+  let invalid_date_json = `Assoc [ "birthdate", `String "2024-02-30" ] in
+  let invalid_format_json = `Assoc [ "birthdate", `String "15-03-2024" ] in
+  Alcotest.(check (result string (list (pair string string))))
+    "accept valid date"
+    (Ok "2024-03-15")
+    (eval Schema.Json schema valid_json);
+  Alcotest.(check bool)
+    "reject invalid date (Feb 30)"
+    true
+    (Result.is_error (eval Schema.Json schema invalid_date_json));
+  Alcotest.(check bool)
+    "reject invalid date format"
+    true
+    (Result.is_error (eval Schema.Json schema invalid_format_json))
+
+let test_format_datetime () =
+  let open Schema in
+  let schema = str ~constraint_:(Constraint.format `Date_time) "created_at" in
+  let valid_json = `Assoc [ "created_at", `String "2024-03-15T14:30:00Z" ] in
+  let invalid_json = `Assoc [ "created_at", `String "2024-03-15 14:30:00" ] in
+  Alcotest.(check (result string (list (pair string string))))
+    "accept valid datetime"
+    (Ok "2024-03-15T14:30:00Z")
+    (eval Schema.Json schema valid_json);
+  Alcotest.(check bool)
+    "reject invalid datetime format"
+    true
+    (Result.is_error (eval Schema.Json schema invalid_json))
+
+let test_format_ipv4 () =
+  let open Schema in
+  let schema = str ~constraint_:(Constraint.format `Ipv4) "ip_address" in
+  let valid_json = `Assoc [ "ip_address", `String "192.168.1.1" ] in
+  let invalid_json = `Assoc [ "ip_address", `String "999.999.999.999" ] in
+  Alcotest.(check (result string (list (pair string string))))
+    "accept valid IPv4"
+    (Ok "192.168.1.1")
+    (eval Schema.Json schema valid_json);
+  Alcotest.(check bool)
+    "reject invalid IPv4"
+    true
+    (Result.is_error (eval Schema.Json schema invalid_json))
+
+let test_format_ipv6 () =
+  let open Schema in
+  let schema = str ~constraint_:(Constraint.format `Ipv6) "ip_address" in
+  let valid_json = `Assoc [ "ip_address", `String "2001:0db8::1" ] in
+  let invalid_json = `Assoc [ "ip_address", `String "not-an-ipv6" ] in
+  Alcotest.(check (result string (list (pair string string))))
+    "accept valid IPv6"
+    (Ok "2001:0db8::1")
+    (eval Schema.Json schema valid_json);
+  Alcotest.(check bool)
+    "reject invalid IPv6"
+    true
+    (Result.is_error (eval Schema.Json schema invalid_json))
+
+let test_date_leap_year () =
+  let open Schema in
+  let schema = str ~constraint_:(Constraint.format `Date) "date" in
+  let leap_year_json = `Assoc [ "date", `String "2024-02-29" ] in
+  let non_leap_year_json = `Assoc [ "date", `String "2023-02-29" ] in
+  Alcotest.(check (result string (list (pair string string))))
+    "accept Feb 29 in leap year"
+    (Ok "2024-02-29")
+    (eval Schema.Json schema leap_year_json);
+  Alcotest.(check bool)
+    "reject Feb 29 in non-leap year"
+    true
+    (Result.is_error (eval Schema.Json schema non_leap_year_json))
+
+let test_time_validation () =
+  let open Schema in
+  let schema = str ~constraint_:(Constraint.format `Date_time) "timestamp" in
+  let valid_json = `Assoc [ "timestamp", `String "2024-01-01T23:59:59Z" ] in
+  let invalid_hour_json =
+    `Assoc [ "timestamp", `String "2024-01-01T25:00:00Z" ]
+  in
+  let invalid_minute_json =
+    `Assoc [ "timestamp", `String "2024-01-01T12:60:00Z" ]
+  in
+  Alcotest.(check (result string (list (pair string string))))
+    "accept valid time"
+    (Ok "2024-01-01T23:59:59Z")
+    (eval Schema.Json schema valid_json);
+  Alcotest.(check bool)
+    "reject invalid hour (25)"
+    true
+    (Result.is_error (eval Schema.Json schema invalid_hour_json));
+  Alcotest.(check bool)
+    "reject invalid minute (60)"
+    true
+    (Result.is_error (eval Schema.Json schema invalid_minute_json))
+
+let test_multiple_constraints () =
+  let open Schema in
+  let schema =
+    str
+      ~constraint_:
+        (Constraint.all_of
+           [ Constraint.min_length 5
+           ; Constraint.max_length 50
+           ; Constraint.pattern
+               "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"
+           ])
+      "email"
+  in
+  let valid_json = `Assoc [ "email", `String "user@example.com" ] in
+  let too_short_json = `Assoc [ "email", `String "a@b" ] in
+  let no_pattern_json = `Assoc [ "email", `String "not-an-email" ] in
+  Alcotest.(check (result string (list (pair string string))))
+    "accept valid with all constraints"
+    (Ok "user@example.com")
+    (eval Schema.Json schema valid_json);
+  Alcotest.(check bool)
+    "reject too short email"
+    true
+    (Result.is_error (eval Schema.Json schema too_short_json));
+  Alcotest.(check bool)
+    "reject invalid pattern"
+    true
+    (Result.is_error (eval Schema.Json schema no_pattern_json))
+
 let tests =
   [ ( "Schema"
     , [ Alcotest.test_case "Single field" `Quick test_schema_single_field
@@ -404,5 +596,22 @@ let tests =
           "URL-encoded object with optional"
           `Quick
           test_urlencoded_object_with_optional
+      ; Alcotest.test_case "Pattern constraint" `Quick test_pattern_constraint
+      ; Alcotest.test_case "Format: Email" `Quick test_format_email
+      ; Alcotest.test_case "Format: URI" `Quick test_format_uri
+      ; Alcotest.test_case "Format: UUID" `Quick test_format_uuid
+      ; Alcotest.test_case "Format: Date" `Quick test_format_date
+      ; Alcotest.test_case "Format: Date_time" `Quick test_format_datetime
+      ; Alcotest.test_case "Format: IPv4" `Quick test_format_ipv4
+      ; Alcotest.test_case "Format: IPv6" `Quick test_format_ipv6
+      ; Alcotest.test_case
+          "Date leap year validation"
+          `Quick
+          test_date_leap_year
+      ; Alcotest.test_case "Time validation" `Quick test_time_validation
+      ; Alcotest.test_case
+          "Multiple constraints"
+          `Quick
+          test_multiple_constraints
       ] )
   ]
