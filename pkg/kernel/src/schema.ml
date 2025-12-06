@@ -1,20 +1,43 @@
+module Constraint = Schema_constraint
+
 type _ input =
   | Json : Yojson.Safe.t input
   | Urlencoded : Form.Urlencoded.t input
   | Multipart : Form.Multipart.t input
 
 type _ field =
-  | Str : { default : string option } -> string field
-  | Int : { default : int option } -> int field
-  | Int32 : { default : int32 option } -> int32 field
-  | Int64 : { default : int64 option } -> int64 field
+  | Str :
+      { default : string option
+      ; constraint_ : string Constraint.t option
+      }
+      -> string field
+  | Int :
+      { default : int option
+      ; constraint_ : int Constraint.t option
+      }
+      -> int field
+  | Int32 :
+      { default : int32 option
+      ; constraint_ : int32 Constraint.t option
+      }
+      -> int32 field
+  | Int64 :
+      { default : int64 option
+      ; constraint_ : int64 Constraint.t option
+      }
+      -> int64 field
   | Bool : { default : bool option } -> bool field
-  | Float : { default : float option } -> float field
+  | Float :
+      { default : float option
+      ; constraint_ : float Constraint.t option
+      }
+      -> float field
   (* Container types *)
   | Option : 'a field -> 'a option field
   | List :
       { default : 'a list option
       ; item : 'a field
+      ; constraint_ : 'a list Constraint.t option
       }
       -> 'a list field
   (* Special types *)
@@ -62,62 +85,16 @@ end
 module Field = struct
   type 'a t = 'a field
 
-  let str ?default () = Str { default }
-  let int ?default () = Int { default }
-  let int32 ?default () = Int32 { default }
-  let int64 ?default () = Int64 { default }
+  let str ?default ?constraint_ () = Str { default; constraint_ }
+  let int ?default ?constraint_ () = Int { default; constraint_ }
+  let int32 ?default ?constraint_ () = Int32 { default; constraint_ }
+  let int64 ?default ?constraint_ () = Int64 { default; constraint_ }
   let bool ?default () = Bool { default }
-  let float ?default () = Float { default }
-  let list ?default item = List { default; item }
+  let float ?default ?constraint_ () = Float { default; constraint_ }
+  let list ?default ?constraint_ item = List { default; item; constraint_ }
   let option field = Option field
   let choice ?default choices = Choice { choices; default }
   let file () = File
-end
-
-module Validator = struct
-  type ('a, 'b) t = 'a -> ('b, string list) result
-
-  (* non-empty string *)
-  let nes : (string, string) t =
-   fun s -> if String.length s > 0 then Ok s else Error [ "String is empty" ]
-
-  let str ?(min_len = 0) ?(max_len = Sys.max_string_length) : (string, string) t
-    =
-   fun s ->
-    let len = String.length s in
-    if len < min_len
-    then
-      Error
-        [ Printf.sprintf "String length %d is less than minimum %d" len min_len
-        ]
-    else if len > max_len
-    then
-      Error [ Printf.sprintf "String length %d exceeds maximum %d" len max_len ]
-    else Ok s
-
-  let int ?(min = Int.min_int) ?(max = Int.max_int) : (int, int) t =
-   fun n ->
-    if n < min
-    then Error [ Printf.sprintf "Integer %d is less than minimum %d" n min ]
-    else if n > max
-    then Error [ Printf.sprintf "Integer %d exceeds maximum %d" n max ]
-    else Ok n
-
-  let int32 ?(min = Int32.min_int) ?(max = Int32.max_int) : (int32, int32) t =
-   fun n ->
-    if n < min
-    then Error [ Printf.sprintf "Int32 %ld is less than minimum %ld" n min ]
-    else if n > max
-    then Error [ Printf.sprintf "Int32 %ld exceeds maximum %ld" n max ]
-    else Ok n
-
-  let int64 ?(min = Int64.min_int) ?(max = Int64.max_int) : (int64, int64) t =
-   fun n ->
-    if n < min
-    then Error [ Printf.sprintf "Int64 %Ld is less than minimum %Ld" n min ]
-    else if n > max
-    then Error [ Printf.sprintf "Int64 %Ld exceeds maximum %Ld" n max ]
-    else Ok n
 end
 
 let validate : type a b. (a -> (b, string list) result) -> a t -> b t =
@@ -136,14 +113,29 @@ let map : type a b. (a -> b) -> a t -> b t =
 
 let return : type a. a -> a t = fun v -> Pure v
 let field name field = Field { field; name }
-let int ?default name = field name (Field.int ?default ())
-let str ?default name = field name (Field.str ?default ())
-let int32 ?default name = field name (Field.int32 ?default ())
-let int64 ?default name = field name (Field.int64 ?default ())
+
+let int ?default ?constraint_ name =
+  field name (Field.int ?default ?constraint_ ())
+
+let str ?default ?constraint_ name =
+  field name (Field.str ?default ?constraint_ ())
+
+let int32 ?default ?constraint_ name =
+  field name (Field.int32 ?default ?constraint_ ())
+
+let int64 ?default ?constraint_ name =
+  field name (Field.int64 ?default ?constraint_ ())
+
 let bool ?default name = field name (Field.bool ?default ())
-let float ?default name = field name (Field.float ?default ())
+
+let float ?default ?constraint_ name =
+  field name (Field.float ?default ?constraint_ ())
+
 let option name fld = field name (Field.option fld)
-let list ?default name item = field name (Field.list ?default item)
+
+let list ?default ?constraint_ name item =
+  field name (Field.list ?default ?constraint_ item)
+
 let choice ?default name choices = field name (Field.choice ?default choices)
 let file name = field name (Field.file ())
 let obj name schema = field name (Object schema)
@@ -168,26 +160,42 @@ struct
    fun interp field json ->
     let { eval = object_eval } = interp in
     match field, json with
-    | Str _, `String s -> Ok s
-    | Str { default = Some d }, `Null -> Ok d
+    | Str { default = _; constraint_ }, `String s ->
+      Constraint.apply_constraint constraint_ s
+    | Str { default = Some d; _ }, `Null -> Ok d
     | Str _, `Null -> Error [ "Expected string value" ]
-    | Int _, `Int n -> Ok n
-    | Int _, `String s ->
-      (try Ok (int_of_string s) with
-      | Failure _ -> Error [ Printf.sprintf "Invalid integer: %s" s ])
-    | Int { default = Some d }, `Null -> Ok d
+    | Int { default = _; constraint_ }, `Int n ->
+      Constraint.apply_constraint constraint_ n
+    | Int { default = _; constraint_ }, `String s ->
+      (match
+         try Ok (int_of_string s) with
+         | Failure _ -> Error [ Printf.sprintf "Invalid integer: %s" s ]
+       with
+      | Error _ as e -> e
+      | Ok n -> Constraint.apply_constraint constraint_ n)
+    | Int { default = Some d; _ }, `Null -> Ok d
     | Int _, `Null -> Error [ "Expected integer value" ]
-    | Int32 _, `Int n -> Ok (Int32.of_int n)
-    | Int32 _, `String s ->
-      (try Ok (Int32.of_string s) with
-      | Failure _ -> Error [ Printf.sprintf "Invalid int32: %s" s ])
-    | Int32 { default = Some d }, `Null -> Ok d
+    | Int32 { default = _; constraint_ }, `Int n ->
+      Constraint.apply_constraint constraint_ (Int32.of_int n)
+    | Int32 { default = _; constraint_ }, `String s ->
+      (match
+         try Ok (Int32.of_string s) with
+         | Failure _ -> Error [ Printf.sprintf "Invalid int32: %s" s ]
+       with
+      | Error _ as e -> e
+      | Ok n -> Constraint.apply_constraint constraint_ n)
+    | Int32 { default = Some d; _ }, `Null -> Ok d
     | Int32 _, `Null -> Error [ "Expected int32 value" ]
-    | Int64 _, `Int n -> Ok (Int64.of_int n)
-    | Int64 { default = Some d }, `Null -> Ok d
-    | Int64 _, `String s ->
-      (try Ok (Int64.of_string s) with
-      | Failure _ -> Error [ Printf.sprintf "Invalid int64: %s" s ])
+    | Int64 { default = _; constraint_ }, `Int n ->
+      Constraint.apply_constraint constraint_ (Int64.of_int n)
+    | Int64 { default = Some d; _ }, `Null -> Ok d
+    | Int64 { default = _; constraint_ }, `String s ->
+      (match
+         try Ok (Int64.of_string s) with
+         | Failure _ -> Error [ Printf.sprintf "Invalid int64: %s" s ]
+       with
+      | Error _ as e -> e
+      | Ok n -> Constraint.apply_constraint constraint_ n)
     | Int64 _, `Null -> Error [ "Expected int64 value" ]
     | Bool _, `Bool b -> Ok b
     | Bool _, `String s ->
@@ -197,18 +205,24 @@ struct
       | _ -> Error [ Printf.sprintf "Invalid boolean: %s" s ])
     | Bool { default = Some d }, `Null -> Ok d
     | Bool _, `Null -> Error [ "Expected boolean value" ]
-    | Float _, `Float f -> Ok f
-    | Float _, `Int n -> Ok (float_of_int n)
-    | Float _, `String s ->
-      (try Ok (float_of_string s) with
-      | Failure _ -> Error [ Printf.sprintf "Invalid float: %s" s ])
-    | Float { default = Some d }, `Null -> Ok d
+    | Float { default = _; constraint_ }, `Float f ->
+      Constraint.apply_constraint constraint_ f
+    | Float { default = _; constraint_ }, `Int n ->
+      Constraint.apply_constraint constraint_ (float_of_int n)
+    | Float { default = _; constraint_ }, `String s ->
+      (match
+         try Ok (float_of_string s) with
+         | Failure _ -> Error [ Printf.sprintf "Invalid float: %s" s ]
+       with
+      | Error _ as e -> e
+      | Ok f -> Constraint.apply_constraint constraint_ f)
+    | Float { default = Some d; _ }, `Null -> Ok d
     | Float _, `Null -> Error [ "Expected float value" ]
     | Option _, `Null -> Ok None
     | Option field, _ -> eval interp field json |> Result.map Option.some
     | List { default = Some d; _ }, `Null -> Ok d
     | List _, `Null -> Error [ "Expected list/array value" ]
-    | List { item; _ }, `List lst ->
+    | List { item; constraint_; _ }, `List lst ->
       let rec aux acc = function
         | [] -> Ok (List.rev acc)
         | x :: xs ->
@@ -216,7 +230,9 @@ struct
           | Ok v -> aux (v :: acc) xs
           | Error e -> Error e)
       in
-      aux [] lst
+      (match aux [] lst with
+      | Error _ as e -> e
+      | Ok list_val -> Constraint.apply_constraint constraint_ list_val)
     | Choice { default = Some d; _ }, `Null -> Ok [ d, 0 ]
     | Choice { choices; _ }, `String id ->
       (match
@@ -271,36 +287,48 @@ module Multipart_interpreter :
     let { eval = object_eval } = interp in
     match field, node with
     | File, Form.Multipart.Value part -> Ok part
-    | Str _, Form.Multipart.Value { body; _ } ->
+    | Str { default = _; constraint_ }, Form.Multipart.Value { body; _ } ->
       (match Body.to_string body with
-      | Ok s -> Ok s
+      | Ok s -> Constraint.apply_constraint constraint_ s
       | Error (`Msg msg) -> Error [ msg ]
       | Error _ -> Error [ "Failed to read field body" ])
-    | Str { default = Some d }, _ -> Ok d
-    | Int _, Form.Multipart.Value { body; _ } ->
-      (match Body.to_string body with
-      | Ok s ->
-        (try Ok (int_of_string s) with
-        | Failure _ -> Error [ Printf.sprintf "Invalid integer: %s" s ])
-      | Error (`Msg msg) -> Error [ msg ]
-      | Error _ -> Error [ "Failed to read field body" ])
-    | Int { default = Some d }, _ -> Ok d
-    | Int32 _, Form.Multipart.Value { body; _ } ->
+    | Str { default = Some d; _ }, _ -> Ok d
+    | Int { default = _; constraint_ }, Form.Multipart.Value { body; _ } ->
       (match Body.to_string body with
       | Ok s ->
-        (try Ok (Int32.of_string s) with
-        | Failure _ -> Error [ Printf.sprintf "Invalid int32: %s" s ])
+        (match
+           try Ok (int_of_string s) with
+           | Failure _ -> Error [ Printf.sprintf "Invalid integer: %s" s ]
+         with
+        | Error _ as e -> e
+        | Ok n -> Constraint.apply_constraint constraint_ n)
       | Error (`Msg msg) -> Error [ msg ]
       | Error _ -> Error [ "Failed to read field body" ])
-    | Int32 { default = Some d }, _ -> Ok d
-    | Int64 _, Form.Multipart.Value { body; _ } ->
+    | Int { default = Some d; _ }, _ -> Ok d
+    | Int32 { default = _; constraint_ }, Form.Multipart.Value { body; _ } ->
       (match Body.to_string body with
       | Ok s ->
-        (try Ok (Int64.of_string s) with
-        | Failure _ -> Error [ Printf.sprintf "Invalid int64: %s" s ])
+        (match
+           try Ok (Int32.of_string s) with
+           | Failure _ -> Error [ Printf.sprintf "Invalid int32: %s" s ]
+         with
+        | Error _ as e -> e
+        | Ok n -> Constraint.apply_constraint constraint_ n)
       | Error (`Msg msg) -> Error [ msg ]
       | Error _ -> Error [ "Failed to read field body" ])
-    | Int64 { default = Some d }, _ -> Ok d
+    | Int32 { default = Some d; _ }, _ -> Ok d
+    | Int64 { default = _; constraint_ }, Form.Multipart.Value { body; _ } ->
+      (match Body.to_string body with
+      | Ok s ->
+        (match
+           try Ok (Int64.of_string s) with
+           | Failure _ -> Error [ Printf.sprintf "Invalid int64: %s" s ]
+         with
+        | Error _ as e -> e
+        | Ok n -> Constraint.apply_constraint constraint_ n)
+      | Error (`Msg msg) -> Error [ msg ]
+      | Error _ -> Error [ "Failed to read field body" ])
+    | Int64 { default = Some d; _ }, _ -> Ok d
     | Bool _, Form.Multipart.Value { body; _ } ->
       (match Body.to_string body with
       | Ok s ->
@@ -311,20 +339,24 @@ module Multipart_interpreter :
       | Error (`Msg msg) -> Error [ msg ]
       | Error _ -> Error [ "Failed to read field body" ])
     | Bool { default = Some d }, _ -> Ok d
-    | Float _, Form.Multipart.Value { body; _ } ->
+    | Float { default = _; constraint_ }, Form.Multipart.Value { body; _ } ->
       (match Body.to_string body with
       | Ok s ->
-        (try Ok (float_of_string s) with
-        | Failure _ -> Error [ Printf.sprintf "Invalid float: %s" s ])
+        (match
+           try Ok (float_of_string s) with
+           | Failure _ -> Error [ Printf.sprintf "Invalid float: %s" s ]
+         with
+        | Error _ as e -> e
+        | Ok f -> Constraint.apply_constraint constraint_ f)
       | Error (`Msg msg) -> Error [ msg ]
       | Error _ -> Error [ "Failed to read field body" ])
-    | Float { default = Some d }, _ -> Ok d
+    | Float { default = Some d; _ }, _ -> Ok d
     | Option inner, _ ->
       (match eval interp inner node with
       | Ok v -> Ok (Some v)
       | Error _ -> Ok None)
     | List { default = Some d; _ }, _ -> Ok d
-    | List { item; _ }, Form.Multipart.Array l ->
+    | List { item; constraint_; _ }, Form.Multipart.Array l ->
       let rec aux acc = function
         | [] -> Ok (List.rev acc)
         | x :: xs ->
@@ -332,7 +364,9 @@ module Multipart_interpreter :
           | Ok v -> aux (v :: acc) xs
           | Error e -> Error e)
       in
-      aux [] !l
+      (match aux [] !l with
+      | Error _ as e -> e
+      | Ok list_val -> Constraint.apply_constraint constraint_ list_val)
     | Choice { default = Some d; _ }, _ -> Ok [ d, 0 ]
     | Choice { choices; _ }, Form.Multipart.Value { body; _ } ->
       (match Body.to_string body with

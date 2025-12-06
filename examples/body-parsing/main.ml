@@ -8,9 +8,11 @@ type user_input =
 
 let user_schema =
   let open Schema.Syntax in
-  let+ name = Schema.str "name" |> Schema.validate Schema.Validator.nes
-  and+ email = Schema.str "email" |> Schema.validate Schema.Validator.nes
-  and+ age = Schema.option "age" (Schema.Field.int ()) in
+  let+ name = Schema.(str ~constraint_:(Constraint.min_length 3) "name")
+  and+ email = Schema.(str ~constraint_:(Constraint.format `Email) "email")
+  and+ age =
+    Schema.(option "age" (Field.int ~constraint_:(Constraint.int_min 18) ()))
+  in
   { name; email; age }
 
 let create_user user _req =
@@ -62,9 +64,14 @@ type login_input =
 
 let login_schema =
   let open Schema.Syntax in
-  let+ username = Schema.str "username" |> Schema.validate Schema.Validator.nes
+  let+ username = Schema.(str ~constraint_:(Constraint.min_length 3) "username")
   and+ password =
-    Schema.str "password" |> Schema.validate Schema.Validator.nes
+    Schema.(
+      str
+        ~constraint_:
+          (Constraint.all_of
+             [ Constraint.min_length 8; Constraint.max_length 32 ])
+        "password")
   in
   { username; password }
 
@@ -89,9 +96,9 @@ type contact_input =
 
 let contact_schema =
   let open Schema.Syntax in
-  let+ name = Schema.str "name" |> Schema.validate Schema.Validator.nes
-  and+ email = Schema.str "email" |> Schema.validate Schema.Validator.nes
-  and+ message = Schema.str "message" |> Schema.validate Schema.Validator.nes
+  let+ name = Schema.(str ~constraint_:(Constraint.min_length 1) "name")
+  and+ email = Schema.(str ~constraint_:(Constraint.format `Email) "email")
+  and+ message = Schema.(str ~constraint_:(Constraint.min_length 1) "message")
   and+ subscribe = Schema.bool ~default:false "subscribe" in
   { name; email; message; subscribe }
 
