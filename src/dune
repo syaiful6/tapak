@@ -8,6 +8,7 @@
   eio
   ipaddr
   yojson
+  str
   logs
   mirage-crypto
   mirage-crypto-rng

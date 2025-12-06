@@ -61,7 +61,7 @@ module Constraint : sig
   val any_of : 'a t list -> 'a t
   val all_of : 'a t list -> 'a t
   val one_of : 'a t list -> 'a t
-  val not_ : 'a t -> 'a t
+  val not : 'a t -> 'a t
 
   val eval : 'a t -> 'a -> ('a, string list) result
   (** Evaluate a single constraint against a value. Returns Ok value if the constraint
@@ -75,6 +75,10 @@ module Constraint : sig
   val apply_constraint : 'a t option -> 'a -> ('a, string list) result
   (** Apply an optional constraint to a value. Returns Ok value if the constraint is None
       or if the constraint is satisfied. Returns Error if the constraint fails. *)
+
+  val to_json_schema : 'a t -> (string * Yojson.Safe.t) list
+  (** Convert a constraint to JSON Schema properties. Returns a list of key-value pairs
+      that can be merged into a JSON Schema object. *)
 end
 
 type _ input =

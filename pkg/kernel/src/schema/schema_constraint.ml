@@ -60,7 +60,7 @@ let unique_items = Unique_items
 let any_of constraints = Any_of constraints
 let all_of constraints = All_of constraints
 let one_of constraints = One_of constraints
-let not_ constraint_ = Not constraint_
+let not constraint_ = Not constraint_
 
 let eval_num : type a.
   a num_t -> a num_constraint -> a -> (a, string list) result
@@ -313,3 +313,79 @@ let apply_constraints : type a. a t list -> a -> (a, string list) result =
 let apply_constraint : type a. a t option -> a -> (a, string list) result =
  fun constraint_ value ->
   match constraint_ with None -> Ok value | Some c -> eval c value
+
+let format_to_str = function
+  | `Email -> "email"
+  | `Uri -> "uri"
+  | `Uuid -> "uuid"
+  | `Date -> "date"
+  | `Date_time -> "date-time"
+  | `Ipv4 -> "ipv4"
+  | `Ipv6 -> "ipv6"
+  | `Custom s -> s
+
+let numeric_to_json : type a. a num_t -> a -> Yojson.Safe.t =
+ fun ty value ->
+  match ty with
+  | Int_ty -> `Int value
+  | Int32_ty -> `Int (Int32.to_int value)
+  | Int64_ty -> `Int (Int64.to_int value)
+  | Float_ty -> `Float value
+
+let rec to_json_schema : type a. a t -> (string * Yojson.Safe.t) list =
+ fun constraint_ ->
+  match constraint_ with
+  | Min_length n -> [ "minLength", `Int n ]
+  | Max_length n -> [ "maxLength", `Int n ]
+  | Pattern p -> [ "pattern", `String p ]
+  | Format fmt -> [ "format", `String (format_to_str fmt) ]
+  | Numeric (ty, constraints) ->
+    List.concat_map
+      (fun num_constraint ->
+         match num_constraint with
+         | Min n -> [ "minimum", numeric_to_json ty n ]
+         | Max n -> [ "maximum", numeric_to_json ty n ]
+         | Exclusive_min n -> [ "exclusiveMinimum", numeric_to_json ty n ]
+         | Exclusive_max n -> [ "exclusiveMaximum", numeric_to_json ty n ]
+         | Multiple_of n -> [ "multipleOf", numeric_to_json ty n ])
+      constraints
+  | Min_items n -> [ "minItems", `Int n ]
+  | Max_items n -> [ "maxItems", `Int n ]
+  | Unique_items -> [ "uniqueItems", `Bool true ]
+  | Any_of constraints ->
+    let schemas =
+      List.map
+        (fun c ->
+           let props = to_json_schema c in
+           `Assoc props)
+        constraints
+    in
+    [ "anyOf", `List schemas ]
+  | All_of constraints ->
+    (* For allOf in JSON Schema, we need to merge properties if they're simple constraints,
+       or use allOf array if they're complex *)
+    let all_props = List.concat_map to_json_schema constraints in
+    (* Check if we can flatten (no nested anyOf/oneOf/not) *)
+    let has_complex =
+      List.exists
+        (fun c ->
+           match c with Any_of _ | One_of _ | Not _ -> true | _ -> false)
+        constraints
+    in
+    if has_complex
+    then
+      let schemas = List.map (fun c -> `Assoc (to_json_schema c)) constraints in
+      [ "allOf", `List schemas ]
+    else all_props
+  | One_of constraints ->
+    let schemas =
+      List.map
+        (fun c ->
+           let props = to_json_schema c in
+           `Assoc props)
+        constraints
+    in
+    [ "oneOf", `List schemas ]
+  | Not constraint_ ->
+    let props = to_json_schema constraint_ in
+    [ "not", `Assoc props ]

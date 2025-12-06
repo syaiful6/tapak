@@ -17,3 +17,4 @@ module Csrf = Csrf
 module Versions = Versions
 module Static = Static
 module Sse = Sse
+module Openapi = Openapi
