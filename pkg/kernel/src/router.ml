@@ -36,6 +36,7 @@ type metadata =
   ; description : string option
   ; tags : string list
   ; body_description : string option
+  ; include_in_schema : bool
   }
 
 type (_, _) schema =
@@ -76,7 +77,7 @@ let int : (int -> 'a, 'a) path =
     { parse = parse_int
     ; format = string_of_int
     ; type_name = "integer"
-    ; format_name = Some "int32"
+    ; format_name = None
     ; rest = Nil
     }
 
@@ -236,6 +237,7 @@ let empty_metadata =
   ; description = None
   ; tags = []
   ; body_description = None
+  ; include_in_schema = true
   }
 
 let operation_id : type a b. string -> (a, b) schema -> (a, b) schema =
@@ -254,6 +256,10 @@ let tags : type a b. string list -> (a, b) schema -> (a, b) schema =
 
 let tag : type a b. string -> (a, b) schema -> (a, b) schema =
  fun t rest -> Meta { meta = { empty_metadata with tags = [ t ] }; rest }
+
+let include_in_schema : type a b. bool -> (a, b) schema -> (a, b) schema =
+ fun value rest ->
+  Meta { meta = { empty_metadata with include_in_schema = value }; rest }
 
 let p : type a b. string -> (a, b) path -> (a, b) path =
  fun name segment -> Annotated { segment; name; description = None }
