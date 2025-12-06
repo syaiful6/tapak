@@ -8,6 +8,7 @@ type metadata =
   ; description : string option
   ; tags : string list
   ; body_description : string option
+  ; include_in_schema : bool
   }
 
 type (_, _) path =
@@ -62,7 +63,18 @@ type (_, _) schema =
       }
       -> ('a, 'b) schema
 
-type route
+type route =
+  | Route :
+      { schema : ('a, Request.t -> Response.t) schema
+      ; handler : 'a
+      }
+      -> route
+  | Scope :
+      { prefix : ('a, 'a) path
+      ; routes : route list
+      ; middlewares : Middleware.t list
+      }
+      -> route
 
 val int : (int -> 'a, 'a) path
 val int32 : (int32 -> 'a, 'a) path
@@ -118,6 +130,7 @@ val summary : string -> ('a, 'b) schema -> ('a, 'b) schema
 val description : string -> ('a, 'b) schema -> ('a, 'b) schema
 val tags : string list -> ('a, 'b) schema -> ('a, 'b) schema
 val tag : string -> ('a, 'b) schema -> ('a, 'b) schema
+val include_in_schema : bool -> ('a, 'b) schema -> ('a, 'b) schema
 val p : string -> ('a, 'b) path -> ('a, 'b) path
 val ann : string * string -> ('a, 'b) path -> ('a, 'b) path
 val match' : route list -> Request.t -> Response.t option
