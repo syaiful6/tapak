@@ -410,54 +410,41 @@ let evaluate_body_schema : type a b.
     | Ok form -> Schema.eval Schema.Multipart schema form
     | Error _ -> raise (Bad_request "Invalid multipart body"))
 
-let rec match_schema : type a b.
+let rec evaluate_schema : type a b.
   (a, b) schema -> string list -> Request.t -> a -> b option
   =
  fun schema segments request k ->
   match schema with
-  | Method (meth, pattern) ->
-    let method_matches =
-      match meth with
-      | `Other "*" -> true
-      | _ ->
-        Piaf.Method.to_string meth
-        = Piaf.Method.to_string (Request.meth request)
-    in
-    if not method_matches
-    then None
-    else match_pattern pattern segments request k
+  | Method (_, pattern) -> match_pattern pattern segments request k
   | Body { input_type; schema; rest } ->
-    if not (can_match_schema rest segments request)
-    then None
-    else (
-      match validate_content_type input_type request with
-      | Error msg -> raise (Bad_request msg)
-      | Ok () ->
-        (match evaluate_body_schema input_type schema request with
-        | Ok validated_data ->
-          match_schema rest segments request (k validated_data)
-        | Error errors -> raise (Validation_failed errors)))
+    (match validate_content_type input_type request with
+    | Error msg -> raise (Bad_request msg)
+    | Ok () ->
+      (match evaluate_body_schema input_type schema request with
+      | Ok validated_data ->
+        evaluate_schema rest segments request (k validated_data)
+      | Error errors -> raise (Validation_failed errors)))
   | Response_model { encoder; rest } ->
-    (match match_schema rest segments request k with
+    (match evaluate_schema rest segments request k with
     | Some data_fn -> Some (fun request -> data_fn request |> encoder)
     | None -> None)
   | Guard { guard; rest } ->
-    if not (can_match_schema rest segments request)
-    then None
-    else (
-      match guard request with
-      | Ok g -> match_schema rest segments request (k g)
-      | Error e -> raise (Request_guard.Failed e))
-  | Meta { rest; _ } -> match_schema rest segments request k
+    (match guard request with
+    | Ok g -> evaluate_schema rest segments request (k g)
+    | Error e -> raise (Request_guard.Failed e))
+  | Meta { rest; _ } -> evaluate_schema rest segments request k
 
 let rec match_route ?(middlewares = []) route segments request =
   match route with
   | Route route ->
-    (match match_schema route.schema segments request route.handler with
-    | Some handler ->
-      let service = Filter.apply_all middlewares handler in
-      Some (service request)
-    | None -> None)
+    if can_match_schema route.schema segments request
+    then
+      match evaluate_schema route.schema segments request route.handler with
+      | Some handler ->
+        let service = Filter.apply_all middlewares handler in
+        Some (service request)
+      | None -> None
+    else None
   | Scope scope ->
     (match match_prefix scope.prefix segments with
     | None -> None
