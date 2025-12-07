@@ -3,7 +3,7 @@
     The primary API is {!stream}, which takes an [Event.t Piaf.Stream.t] and returns
     a [Response.t] configured for Server-Sent Events with proper headers.
 
-    {b: Basic usage: } 
+    {b: Basic usage: }
 
     {[
       open Tapak
@@ -67,12 +67,4 @@ val stream :
 (** Convert an event stream into an SSE response.
 
     This is the main function for Server-Sent Events. It takes a stream of {!Event.t}
-    and returns a {!Response.t} with appropriate SSE headers:
-    - [Content-Type: text/event-stream]
-    - [Cache-Control: no-cache]
-    - [Connection: keep-alive] (only added for HTTP/1.0, as HTTP/1.1+ defaults to keep-alive)
-
-    @param version HTTP version to use (defaults to HTTP/1.1)
-    @param headers Additional headers to include
-    @param context Response context
-    @param event_stream Stream of events to send to the client *)
+    and returns a {!Response.t} with appropriate SSE headers. *)

@@ -4,8 +4,7 @@
 > the API is not yet stable. Breaking changes may occur between releases.
 > Not recommended for production use at this time.
 
-Tapak is a composable web framework for OCaml 5, built on EIO (effect-based I/O)
-and inspired by [Twitter's Finagle](https://twitter.github.io/finagle/) architecture.
+Tapak is a web framework for OCaml 5, built on EIO (effect-based I/O).
 
 ## Documentation
 
@@ -32,39 +31,10 @@ With OCaml 5's effect handlers and **EIO** (effect-based I/O), we now have a fou
 for writing concurrent code that is both ergonomic (direct style, no monads) and performant
 (no heap allocations for context switching).
 
-Tapak explores what a **modern, practical web framework** looks like when built on this foundation:
-
-1. **Embraces modern OCaml**: OCaml 5 effects + EIO for direct-style concurrent code
-2. **Type-safe from the ground up**: GADT-based routing with compile-time parameter checking
-3. **Composable architecture**: Finagle's proven Service/Filter pattern for modularity
-4. **Focused core**: Not batteries-included, compose what you need
-
-Unlike **Dream** or **Opium** (Lwt-based with monadic code), Tapak uses EIO for direct-style
-concurrency. Unlike **Eliom** (full-stack with client/server shared code), Tapak focuses on
-server-side HTTP services with maximum composability.
+Tapak explores what a **modern, practical web framework** looks like when built on this foundation.
 
 This is an experiment in pushing the boundaries of typed functional web development
 while keeping pragmatism and real-world usage in mind.
-
-## Features
-
-- **Composable Architecture**: Build applications from small, reusable components using the Service/Filter pattern
-- **Type-Safe Routing**: GADT-based router with compile-time parameter type checking and URL generation
-- **Request Guards**: Composable request validation and data extraction with extensible error types
-- **Middleware Pipeline**: Composable middleware for cross-cutting concerns (logging, compression, CSRF, etc.)
-- **Request/Response Compression**: Built-in support for gzip, deflate, brotli, and zstd
-- **Static File Serving**: Efficient static file handler with support for range requests and caching
-- **Server-Sent Events (SSE)**: Built-in support for real-time server-to-client streaming
-- **Built on EIO**: Uses OCaml 5's effect-based I/O for direct-style concurrent code
-- **Powered by Piaf**: Currently uses [Piaf](https://github.com/anmonteiro/piaf) as the HTTP server (EIO-native, HTTP/1.1 & HTTP/2)
-- **Finagle-Inspired**: Adopts proven patterns from Twitter's battle-tested framework
-- **PPX Support**: Optional PPX for Django/Flask-style route annotations
-
-### Roadmap
-
-- **Backend abstraction**: Make the HTTP server pluggable (currently coupled to Piaf)
-- **WebSocket support**: Native WebSocket handling for bidirectional real-time communication
-- More built-in middleware and utilities as real-world usage demands emerge
 
 ## Installation
 
@@ -152,13 +122,5 @@ let () =
   Printf.printf "Server running on http://localhost:%d\n" port;
   ignore (Server.run_with ~config ~env (app env))
 ```
-
-**Key points:**
-
-- **Type-safe parameters**: `int64`, `str`, `bool`, `int32`, `int`, and custom types
-- **Clean syntax**: Routes look like the URLs they match
-- **No runtime parsing errors**: Parameter types are checked at compile time
-- **Composable middleware**: Use `<++>` to add middleware chains
-- **EIO integration**: Native support for OCaml 5's effect-based I/O
 
 For more examples, see the [`examples/`](./examples) directory.
