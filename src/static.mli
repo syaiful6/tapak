@@ -5,20 +5,6 @@
     (filesystem, S3, embedded files) through a simple module
     interface.
 
-    {1 Features}
-
-    - Backend agnostic via first-class modules
-    - Conditional requests (If-Match, If-None-Match,
-      If-Modified-Since, etc.)
-    - Range requests with partial content support (206
-      responses)
-    - Pre-compressed file support (.gz, .br, etc.)
-    - ETag support (both weak and strong)
-    - Configurable cache control
-    - Path sanitization and directory traversal prevention
-    - Hidden file filtering
-    - Automatic index file serving (index.html, etc.)
-
     {1 Usage Example}
 
     {[
@@ -448,195 +434,25 @@ val serve :
   -> string list
   -> Request.t
   -> Response.t
-(** [serve (module Backend) ~config () segments] creates a
+(** [serve (module STORAGE) ~config () segments] creates a
     static file handler that accepts path segments directly.
 
     This function is designed to work seamlessly with the
     router's splat parameter, accepting a [string list]
-    representing path components.
-
-    {3 Parameters}
-
-    - [module Backend] - File backend implementation
-      (filesystem, S3, embedded, etc.)
-    - [~config] - Optional configuration (defaults to
-      {!default_config})
-    - [segments] - Path segments as a string list (typically
-      from router splat)
-    - [request] - The HTTP request
-
-    {3 Features}
-
-    The service handles:
-    - Path sanitization and validation
-    - File lookup with error handling
-    - Directory index file serving (index.html, etc.)
-    - Hidden file filtering (files starting with '.')
-    - HTTP conditional requests (If-Match, If-None-Match,
-      If-Modified-Since, etc.)
-    - HTTP range requests (partial content, 206 responses)
-    - Pre-compressed file support (.gz, .br, .zst)
-    - ETag generation (strong and weak)
-    - Cache control headers
-    - Proper Content-Type and Content-Encoding headers
-
-    {3 Usage with Router}
-
-    The most common usage is with the router's splat parameter:
-
-    {[
-      open Tapak
-
-      let routes =
-        Router.
-          [
-            (* Serve static files from /assets/** *)
-            get (s "assets" / splat)
-            @-> Static.serve (module Fs) ();
-            (* Serve with custom config *)
-            get (s "public" / splat)
-            @-> Static.serve
-                  (module Fs)
-                  ~config:
-                    {
-                      Static.default_config with
-                      max_age = `Seconds 3600;
-                      use_weak_etags = true;
-                    }
-                  ();
-          ]
-    ]}
-
-    {3 Direct Usage}
-
-    You can also call it directly with a path segment list:
-
-    {[
-      let segments = ["css"; "style.css"] in
-      let response = Static.serve (module Fs) () segments request
-    ]}
-
-    {3 Response Status Codes}
-
-    - [200 OK] - Successful file serving
-    - [206 Partial Content] - Range requests (partial file
-      content)
-    - [304 Not Modified] - Conditional requests (resource not
-      modified)
-    - [400 Bad Request] - Invalid path components (e.g.,
-      contains '../')
-    - [403 Forbidden] - Hidden files or directories without
-      index file
-    - [404 Not Found] - File or directory not found
-    - [412 Precondition Failed] - Failed conditional request
-      precondition
-    - [416 Range Not Satisfiable] - Invalid range specification
-    - [500 Internal Server Error] - Backend I/O errors
-
-    @since 0.1.0 *)
+    representing path components. *)
 
 val filesystem : ?follow:bool -> _ Eio.Path.t -> (module STORAGE)
 (** [filesystem ~follow root] creates a filesystem-based static
     file backend.
 
-    {3 Parameters}
-
-    - [~follow] - Whether to follow symbolic links (default:
-      [true])
-    - [root] - Root directory path as an Eio.Path.t
-
-    Returns a first-class module implementing {!File_sig} that
-    serves files from the local filesystem.
-
-    {3 Usage}
-
-    {[
-      open Eio
-
-      Eio_main.run @@ fun env ->
-      let cwd = Stdenv.cwd env in
-      let static_root = cwd / "public" in
-
-      (* Create filesystem backend *)
-      let fs_backend = Static.filesystem static_root in
-
-      (* Use with serve *)
-      let handler = Static.serve fs_backend ()
-    ]}
-
-    {3 Features}
-
-    - Uses Eio for async file I/O
-    - Efficient sendfile for complete content
-    - Streaming for range requests
-    - Automatic MIME type detection
-    - ETag generation from file metadata
-
-    @since 0.1.0 *)
+    Returns a first-class module implementing {!STORAGE} that
+    serves files from the local filesystem. *)
 
 val app : (module STORAGE) -> ?config:config -> unit -> Tapak_kernel.Handler.t
-(** [app (module Backend) ~config ()] creates a standalone
+(** [app (module STORAGE) ~config ()] creates a standalone
     static file handler.
 
     Unlike {!serve}, this function extracts path segments from
     the request URI and is suitable for use as a standalone
     handler or when you want to handle path prefix stripping
-    yourself using {!Tapak_kernel.Filter.strip_prefix}.
-
-    {3 Parameters}
-
-    - [module Backend] - File backend implementation
-    - [~config] - Optional configuration (defaults to
-      {!default_config})
-
-    Returns a handler function of type
-    [Request.t -> Response.t].
-
-    {3 Usage}
-
-    {b Standalone handler:}
-
-    {[
-      (* Serve files directly from the root path *)
-      let handler = Static.app (module Fs) ()
-    ]}
-
-    {b With path prefix stripping:}
-
-    {[
-      open Tapak
-      open Tapak_kernel
-
-      (* Mount at /static, stripping the prefix before serving *)
-      let static_handler =
-        Filter.strip_prefix ~prefix:"/static" |> fun filter ->
-        filter (Static.app (module Fs) ())
-
-      let routes =
-        Router.[ any (s "static" / splat) @-> static_handler ]
-    ]}
-
-    {b With custom configuration:}
-
-    {[
-      let handler =
-        Static.app
-          (module Fs)
-          ~config:
-            {
-              Static.default_config with
-              max_age = `Forever;
-              use_weak_etags = true;
-              follow_symlinks = false;
-            }
-          ()
-    ]}
-
-    {3 Comparison with serve}
-
-    - Use {!serve} when working with router splat parameters
-      (recommended)
-    - Use [app] when you need a standalone handler or custom
-      path handling
-    - [app] parses the full request URI path, while {!serve}
-      uses provided segments *)
+    yourself using {!Tapak_kernel.Filter.strip_prefix}. *)

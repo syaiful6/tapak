@@ -1,36 +1,8 @@
-(** Cross-Site Request Forgery (CSRF) protection using the double-submit cookie pattern.
+(** Cross Site Forgery (CSRF) protection using the double-submit cookie pattern.
 
-    This module provides functions to generate and verify CSRF tokens to protect against
-    CSRF attacks. The implementation uses:
-    - Token masking to prevent BREACH attacks
-    - Constant-time comparison to prevent timing attacks
-    - Secure cookie storage with SameSite protection
-
-    {b Basic Usage:}
-
-    {[
-      (* In your form GET handler *)
-      let form_get_handler req =
-        let token, secret = CSRF.input req in
-        let html = Printf.sprintf
-          "<form method='POST'>
-             <input type='hidden' name='csrf_token' value='%s'>
-             <button type='submit'>Submit</button>
-           </form>" token
-        in
-        Response.of_html ~status:`OK html
-        |> CSRF.with_cookie secret
-
-      (* In your form POST handler *)
-      let form_post_handler req =
-        let form_data = Form.Urlencoded.of_body (Request.body req) in
-        match Result.map (Form.Urlencoded.get "csrf_token") form_data with
-        | Ok (Some token) when CSRF.verify_token ~token req ->
-          Response.of_html ~status:`OK "Success!"
-        | _ ->
-          Response.of_html ~status:`Forbidden "Invalid CSRF token"
-    ]}
-*)
+    This module provides functions to generate and verify CSRF tokens. It's not
+    implemented as middleware, since it requires us to consume the request body.
+  *)
 
 type t =
   { cookie_name : string option
@@ -52,7 +24,7 @@ type t =
 val generate_secret : unit -> string
 (** [generate_secret ()] generates a new random 32-byte secret.
 
-    This is automatically called by {!csrf_input} if no existing secret is found
+    This is automatically called by {!input} if no existing secret is found
     in the request cookie. *)
 
 val input : ?cookie_name:string -> Tapak_kernel.Request.t -> string * string

@@ -58,6 +58,5 @@ val strip_prefix : prefix:string -> (Request.t, Response.t) simple
 (** [strip_prefix ~prefix] creates a filter that removes a path prefix from
     incoming requests.
 
-    This is useful for mounting services at specific paths, particularly when
-    using {!Static.app} or delegating to sub-applications that expect paths
-    relative to their mount point. *)
+    This is useful for mounting services at specific paths, which is the case
+    for serving static files *)
