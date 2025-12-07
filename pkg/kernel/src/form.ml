@@ -239,6 +239,7 @@ module Urlencoded = struct
     | Value of string list
 
   let to_yojson params =
+    let params = normalize params in
     let parse_key key =
       match String.split_on_char '[' key with
       | [] -> []

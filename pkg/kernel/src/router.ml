@@ -41,6 +41,11 @@ type metadata =
 
 type (_, _) schema =
   | Method : Piaf.Method.t * ('a, 'b) path -> ('a, 'b) schema
+  | Query :
+      { schema : 'query Schema.t
+      ; rest : ('a, 'b) schema
+      }
+      -> ('query -> 'a, 'b) schema
   | Response_model :
       { encoder : 'resp -> Response.t
       ; rest : ('a, Request.t -> 'resp) schema
@@ -220,6 +225,9 @@ let body : type a b c input.
   =
  fun input_type schema rest -> Body { input_type; schema; rest }
 
+let query : type a b c. a Schema.t -> (b, c) schema -> (a -> b, c) schema =
+ fun schema rest -> Query { schema; rest }
+
 let guard : type a b g. g Request_guard.t -> (a, b) schema -> (g -> a, b) schema
   =
  fun guard schema -> Guard { guard; rest = schema }
@@ -350,6 +358,7 @@ let rec match_pattern : type a b.
 
 let rec get_method : type a b. (a, b) schema -> Piaf.Method.t = function
   | Method (m, _) -> m
+  | Query { rest; _ } -> get_method rest
   | Body { rest; _ } -> get_method rest
   | Guard { rest; _ } -> get_method rest
   | Meta { rest; _ } -> get_method rest
@@ -384,6 +393,7 @@ let rec can_match_schema : type a b.
         = Piaf.Method.to_string (Request.meth request)
     in
     method_matches && can_match_path pattern segments
+  | Query { rest; _ } -> can_match_schema rest segments request
   | Body { rest; _ } -> can_match_schema rest segments request
   | Guard { rest; _ } -> can_match_schema rest segments request
   | Response_model { rest; _ } -> can_match_schema rest segments request
@@ -422,6 +432,12 @@ let rec evaluate_schema : type a b.
  fun schema segments request k ->
   match schema with
   | Method (_, pattern) -> match_pattern pattern segments request k
+  | Query { schema; rest } ->
+    (match
+       Schema.eval Schema.Urlencoded schema (Form.Urlencoded.of_query request)
+     with
+    | Ok query_data -> evaluate_schema rest segments request (k query_data)
+    | Error errors -> raise (Validation_failed errors))
   | Body { input_type; schema; rest } ->
     (match validate_content_type input_type request with
     | Error msg -> raise (Bad_request msg)

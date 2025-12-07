@@ -123,10 +123,10 @@ module CORS : sig
       Example:
       {[
         (* Development - allow all origins *)
-        use ~name:"CORS" (module CORS) (CORS.args ())
+        use (module CORS) (CORS.args ())
 
         (* Production - specific origins with credentials *)
-        use ~name:"CORS" (module CORS)
+        use (module CORS)
           (CORS.args
             ~origins:(Allow_list ["https://example.com"; "https://app.example.com"])
             ~credentials:true

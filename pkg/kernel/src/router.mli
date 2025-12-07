@@ -41,6 +41,11 @@ type (_, _) path =
 
 type (_, _) schema =
   | Method : Piaf.Method.t * ('a, 'b) path -> ('a, 'b) schema
+  | Query :
+      { schema : 'query Schema.t
+      ; rest : ('a, 'b) schema
+      }
+      -> ('query -> 'a, 'b) schema
   | Response_model :
       { encoder : 'resp -> Response.t
       ; rest : ('a, Request.t -> 'resp) schema
@@ -117,6 +122,7 @@ val body :
   -> ('a, 'b) schema
   -> ('validated -> 'a, 'b) schema
 
+val query : 'query Schema.t -> ('a, 'b) schema -> ('query -> 'a, 'b) schema
 val guard : 'g Request_guard.t -> ('a, 'b) schema -> ('g -> 'a, 'b) schema
 
 val response_model :

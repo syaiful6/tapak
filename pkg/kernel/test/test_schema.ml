@@ -198,6 +198,66 @@ let test_error_accumulation () =
     Alcotest.(check bool) "has email error with field name" true has_email_error;
     Alcotest.(check bool) "has age error with field name" true has_age_error
 
+let test_urlencoded_repeated_keys () =
+  let open Schema in
+  let schema = list "tags" (Field.str ()) in
+  (* Standard format: ?tags=ocaml&tags=web&tags=framework *)
+  let form =
+    [ "tags", [ "ocaml" ]; "tags", [ "web" ]; "tags", [ "framework" ] ]
+  in
+  let result = eval Schema.Urlencoded schema form in
+  Alcotest.(check (result (list string) (list (pair string string))))
+    "parse array with repeated keys (standard OpenAPI format)"
+    (Ok [ "ocaml"; "web"; "framework" ])
+    result
+
+let test_urlencoded_repeated_keys_mixed () =
+  let open Schema in
+  let schema =
+    let open Syntax in
+    let+ tags = list "tags" (Field.str ())
+    and+ category = str "category"
+    and+ active = bool "active" in
+    tags, category, active
+  in
+  (* Standard format: ?tags=ocaml&tags=web&category=programming&active=true *)
+  let form =
+    [ "tags", [ "ocaml" ]
+    ; "tags", [ "web" ]
+    ; "category", [ "programming" ]
+    ; "active", [ "true" ]
+    ]
+  in
+  let result = eval Schema.Urlencoded schema form in
+  Alcotest.(
+    check
+      (result (triple (list string) string bool) (list (pair string string))))
+    "parse mixed repeated keys and single values"
+    (Ok ([ "ocaml"; "web" ], "programming", true))
+    result
+
+let test_urlencoded_repeated_keys_integers () =
+  let open Schema in
+  let schema = list "ids" (Field.int ()) in
+  (* Standard format: ?ids=1&ids=2&ids=3 *)
+  let form = [ "ids", [ "1" ]; "ids", [ "2" ]; "ids", [ "3" ] ] in
+  let result = eval Schema.Urlencoded schema form in
+  Alcotest.(check (result (list int) (list (pair string string))))
+    "parse integer array with repeated keys"
+    (Ok [ 1; 2; 3 ])
+    result
+
+let test_urlencoded_repeated_keys_empty () =
+  let open Schema in
+  let schema = list ~default:[] "tags" (Field.str ()) in
+  (* No tags parameter provided *)
+  let form = [ "category", [ "test" ] ] in
+  let result = eval Schema.Urlencoded schema form in
+  Alcotest.(check (result (list string) (list (pair string string))))
+    "use default for missing array parameter"
+    (Ok [])
+    result
+
 let test_urlencoded_array_bracket_notation () =
   let open Schema in
   let schema = list "tags" (Field.str ()) in
@@ -563,7 +623,22 @@ let tests =
       ; Alcotest.test_case "Complex schema" `Quick test_schema_complex
       ; Alcotest.test_case "Validator usage" `Quick test_validator_usage
       ; Alcotest.test_case "Error accumulation" `Quick test_error_accumulation
-        (* Bracket notation tests *)
+      ; Alcotest.test_case
+          "URL-encoded repeated keys (standard)"
+          `Quick
+          test_urlencoded_repeated_keys
+      ; Alcotest.test_case
+          "URL-encoded repeated keys mixed with singles"
+          `Quick
+          test_urlencoded_repeated_keys_mixed
+      ; Alcotest.test_case
+          "URL-encoded repeated keys (integers)"
+          `Quick
+          test_urlencoded_repeated_keys_integers
+      ; Alcotest.test_case
+          "URL-encoded repeated keys empty (default)"
+          `Quick
+          test_urlencoded_repeated_keys_empty
       ; Alcotest.test_case
           "URL-encoded array bracket notation"
           `Quick

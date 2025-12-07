@@ -9,13 +9,63 @@ type user =
 let user_to_json { id; name; email } =
   `Assoc [ "id", `Int id; "name", `String name; "email", `String email ]
 
-let list_users _req =
-  Response.of_json
-    ~status:`OK
-    (`List
-        (List.map
-           user_to_json
-           [ { id = 1; name = "Alice"; email = "alice@example.com" } ]))
+let user_schema =
+  let open Schema.Syntax in
+  let+ name =
+    Schema.(
+      str
+        ~constraint_:
+          (Constraint.all_of
+             [ Constraint.min_length 1; Constraint.max_length 125 ])
+        "name")
+  and+ email = Schema.(str ~constraint_:(Constraint.format `Email) "email") in
+  name, email
+
+type search =
+  { q : string option
+  ; limit : int
+  ; offset : int
+  }
+
+let search_schema =
+  let open Schema in
+  let open Syntax in
+  let+ q = option "q" (Field.str ())
+  and+ limit =
+    int
+      ~default:10
+      ~constraint_:
+        (Constraint.all_of
+           [ Constraint.int_range 5 100; Constraint.int_multiple_of 5 ])
+      "limit"
+  and+ offset =
+    int ~default:0 ~constraint_:(Constraint.int_range 0 1000) "offset"
+  in
+  { q; limit; offset }
+
+let list_users search _req =
+  let users =
+    [ { id = 1; name = "Alice"; email = "alice@example.com" }
+    ; { id = 2; name = "Bob"; email = "bob@example.com" }
+    ]
+  in
+  if search.offset >= List.length users
+  then Response.of_json ~status:`OK (`List [])
+  else
+    let paginated_users =
+      users
+      |> List.drop search.offset
+      |> List.take search.limit
+      |>
+      match search.q with
+      | None -> Fun.id
+      | Some query ->
+        (* the search use starting with for simplicity *)
+        List.filter (fun user ->
+          String.starts_with ~prefix:query user.name
+          || String.starts_with ~prefix:query user.email)
+    in
+    Response.of_json ~status:`OK (`List (List.map user_to_json paginated_users))
 
 let get_user id _req =
   Response.of_json
@@ -31,21 +81,10 @@ let update_user (name, email) id _req =
 let delete_user id _req =
   Response.of_string ~body:(Format.sprintf "User %d deleted" id) `No_content
 
-let user_schema =
-  let open Schema.Syntax in
-  let+ name =
-    Schema.(
-      str
-        ~constraint_:
-          (Constraint.all_of
-             [ Constraint.min_length 1; Constraint.max_length 125 ])
-        "name")
-  and+ email = Schema.(str ~constraint_:(Constraint.format `Email) "email") in
-  name, email
-
 let v1_api_routes =
   let open Router in
   [ get (s "users")
+    |> query search_schema
     |> summary "List all users"
     |> operation_id "listUsers"
     |> tags [ "Users" ]
@@ -129,6 +168,24 @@ let swagger_ui_handler _ =
   in
   Response.of_html ~status:`OK html
 
+let error_handler next request =
+  try next request with
+  | Router.Validation_failed errors ->
+    let body =
+      `Assoc
+        [ ( "errors"
+          , `List
+              (List.map
+                 (fun (field, msg) ->
+                    `Assoc [ "field", `String field; "message", `String msg ])
+                 errors) )
+        ]
+    in
+    Response.of_json ~status:`Bad_request body
+  | Router.Bad_request msg ->
+    let body = `Assoc [ "error", `String msg ] in
+    Response.of_json ~status:`Bad_request body
+
 let app env =
   let open Router in
   let open Middleware in
@@ -147,6 +204,7 @@ let app env =
          ; use
              (module Request_logger)
              (Request_logger.args ~now ~trusted_proxies:[] ())
+         ; error_handler
          ])
 
 let () =
