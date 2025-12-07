@@ -199,6 +199,159 @@ let test_include_in_schema () =
     | _ -> Alcotest.fail "Expected paths object")
   | _ -> Alcotest.fail "Expected object"
 
+let test_query_parameters () =
+  let open Router in
+  let open Schema.Syntax in
+  let search_schema =
+    let+ query = Schema.str "q"
+    and+ limit = Schema.int ~default:10 "limit"
+    and+ tags = Schema.list "tags" (Schema.Field.str ()) in
+    query, limit, tags
+  in
+  let routes =
+    [ get (s "search")
+      |> query search_schema
+      |> summary "Search"
+      |> into (fun (_q, _limit, _tags) _req ->
+        Response.of_string ~body:"Results" `OK)
+    ]
+  in
+  let spec = Openapi.generate routes in
+  try
+    let operation =
+      List.fold_left
+        (fun acc name -> Yojson.Safe.Util.member name acc)
+        spec
+        [ "paths"; "/search"; "get" ]
+    in
+    match operation with
+    | `Assoc op_fields ->
+      (match List.assoc "parameters" op_fields with
+      | `List params ->
+        Alcotest.(check int) "has 3 query parameters" 3 (List.length params);
+        (* Check first parameter (q - required string) *)
+        (match List.nth params 0 with
+        | `Assoc param_fields ->
+          Alcotest.(check string)
+            "q parameter name"
+            "q"
+            (match List.assoc "name" param_fields with
+            | `String n -> n
+            | _ -> "");
+          Alcotest.(check string)
+            "q parameter in query"
+            "query"
+            (match List.assoc "in" param_fields with `String i -> i | _ -> "");
+          Alcotest.(check bool)
+            "q parameter required"
+            true
+            (match List.assoc "required" param_fields with
+            | `Bool r -> r
+            | _ -> false)
+        | _ -> Alcotest.fail "Expected parameter object");
+        (* Check second parameter (limit - optional with default) *)
+        (match List.nth params 1 with
+        | `Assoc param_fields ->
+          Alcotest.(check string)
+            "limit parameter name"
+            "limit"
+            (match List.assoc "name" param_fields with
+            | `String n -> n
+            | _ -> "");
+          Alcotest.(check bool)
+            "limit parameter not required (has default)"
+            false
+            (match List.assoc "required" param_fields with
+            | `Bool r -> r
+            | _ -> true)
+        | _ -> Alcotest.fail "Expected parameter object");
+        (* Check third parameter (tags - array with explode) *)
+        (match List.nth params 2 with
+        | `Assoc param_fields ->
+          Alcotest.(check string)
+            "tags parameter name"
+            "tags"
+            (match List.assoc "name" param_fields with
+            | `String n -> n
+            | _ -> "");
+          Alcotest.(check string)
+            "tags has form style"
+            "form"
+            (match List.assoc_opt "style" param_fields with
+            | Some (`String s) -> s
+            | _ -> "");
+          Alcotest.(check bool)
+            "tags has explode true"
+            true
+            (match List.assoc_opt "explode" param_fields with
+            | Some (`Bool e) -> e
+            | _ -> false);
+          (* Check schema is array *)
+          (match List.assoc "schema" param_fields with
+          | `Assoc schema_fields ->
+            Alcotest.(check string)
+              "tags schema is array"
+              "array"
+              (match List.assoc "type" schema_fields with
+              | `String t -> t
+              | _ -> "")
+          | _ -> Alcotest.fail "Expected schema object")
+        | _ -> Alcotest.fail "Expected parameter object")
+      | _ -> Alcotest.fail "Expected parameters array")
+    | _ -> Alcotest.fail "Expected get operation object"
+  with
+  | Not_found -> Alcotest.fail "Missing required field in spec"
+
+let test_query_with_constraints () =
+  let open Router in
+  let open Schema in
+  let search_schema =
+    let open Syntax in
+    let+ page = int ~default:1 ~constraint_:(Constraint.int_range 1 100) "page"
+    and+ per_page =
+      int ~default:20 ~constraint_:(Constraint.int_range 1 100) "per_page"
+    in
+    page, per_page
+  in
+  let routes =
+    [ get (s "items")
+      |> query search_schema
+      |> into (fun (_page, _per_page) _req ->
+        Response.of_string ~body:"Items" `OK)
+    ]
+  in
+  let spec = Openapi.generate routes in
+  try
+    let operation =
+      List.fold_left
+        (fun acc name -> Yojson.Safe.Util.member name acc)
+        spec
+        [ "paths"; "/items"; "get" ]
+    in
+    match operation with
+    | `Assoc op_fields ->
+      (match List.assoc "parameters" op_fields with
+      | `List params ->
+        (* Check page parameter has constraints *)
+        (match List.nth params 0 with
+        | `Assoc param_fields ->
+          (match List.assoc "schema" param_fields with
+          | `Assoc schema_fields ->
+            Alcotest.(check bool)
+              "page has minimum constraint"
+              true
+              (List.mem_assoc "minimum" schema_fields);
+            Alcotest.(check bool)
+              "page has maximum constraint"
+              true
+              (List.mem_assoc "maximum" schema_fields)
+          | _ -> Alcotest.fail "Expected schema object")
+        | _ -> Alcotest.fail "Expected parameter object")
+      | _ -> Alcotest.fail "Expected parameters array")
+    | _ -> Alcotest.fail "Expected get operation object"
+  with
+  | Not_found -> Alcotest.fail "Missing required field in spec"
+
 let tests =
   [ ( "OpenAPI"
     , [ Alcotest.test_case "Basic generation" `Quick test_basic_generation
@@ -212,5 +365,10 @@ let tests =
       ; Alcotest.test_case "Base path" `Quick test_base_path
       ; Alcotest.test_case "Tags" `Quick test_tags
       ; Alcotest.test_case "Include in schema" `Quick test_include_in_schema
+      ; Alcotest.test_case "Query parameters" `Quick test_query_parameters
+      ; Alcotest.test_case
+          "Query with constraints"
+          `Quick
+          test_query_with_constraints
       ] )
   ]

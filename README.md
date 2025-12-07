@@ -108,7 +108,7 @@ let app env =
       ; get (s "api" / s "users" / int64 / str) |> into api_handler
       ]
       ()
-    <++> [ use ~name:"Logger" (module Request_logger)
+    <++> [ use (module Request_logger)
              (Request_logger.args
                ~now:(fun () -> Eio.Time.now (Eio.Stdenv.clock env))
                ())
