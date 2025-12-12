@@ -13,6 +13,7 @@ pkgs.mkShell {
     utop
     odoc
     reason
+    benchmark
     pkgs.openssl
     pkgs.postgresql
     pkgs.pkg-config
