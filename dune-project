@@ -68,6 +68,7 @@
     (= 0.27.0)
     :with-dev-setup))
   (alcotest :with-test)
+  (benchmark :with-test)
   (odoc :with-doc))
  (tags
   ("web" "framework" "ocaml" "eio" "http" "modular")))

@@ -276,30 +276,51 @@ let ann : type a b. string * string -> (a, b) path -> (a, b) path =
  fun (name, desc) segment ->
   Annotated { segment; name; description = Some desc }
 
-let split_path path =
-  let only_path =
-    match String.index_opt path '?' with
-    | Some idx -> String.sub path 0 idx
-    | None -> path
-  in
-  let segments = String.split_on_char '/' only_path in
-  List.filter (fun s -> s <> "") segments
+module Path_cursor = struct
+  type t =
+    { path : string
+    ; pos : int
+    ; len : int
+    }
 
-let rec can_match_path : type a b. (a, b) path -> string list -> bool =
- fun pattern segments ->
-  match pattern, segments with
-  | Nil, [] -> true
-  | Nil, _ :: _ -> false
-  | Literal ("", rest), [] -> can_match_path rest []
-  | Literal (expected, rest), seg :: segs when String.equal expected seg ->
-    can_match_path rest segs
-  | Splat rest, _ -> can_match_path rest []
-  | Capture { parse; rest; _ }, seg :: segs ->
-    (match parse seg with Some _ -> can_match_path rest segs | None -> false)
-  | Enum { parse; rest; _ }, seg :: segs ->
-    (match parse seg with Some _ -> can_match_path rest segs | None -> false)
-  | Annotated { segment; _ }, segs -> can_match_path segment segs
-  | _ -> false
+  let create path =
+    let total_len = String.length path in
+    let len =
+      match String.index_opt path '?' with Some idx -> idx | None -> total_len
+    in
+    let pos = if len > 0 && path.[0] = '/' then 1 else 0 in
+    { path; pos; len }
+
+  let[@inline] rec next t =
+    if t.pos >= t.len
+    then None
+    else
+      let rec find_end i =
+        if i >= t.len
+        then i
+        else if t.path.[i] = '/'
+        then i
+        else find_end (i + 1)
+      in
+      let end_pos = find_end t.pos in
+      if end_pos = t.pos
+      then next { t with pos = end_pos + 1 }
+      else
+        let segment = String.sub t.path t.pos (end_pos - t.pos) in
+        let next_pos = if end_pos < t.len then end_pos + 1 else end_pos in
+        Some (segment, { t with pos = next_pos })
+
+  let rec to_list t =
+    match next t with None -> [] | Some (seg, t') -> seg :: to_list t'
+
+  let rec skip n cursor =
+    if n <= 0
+    then cursor
+    else
+      match next cursor with
+      | None -> cursor
+      | Some (_, rest) -> skip (n - 1) rest
+end
 
 let expected_content_type : type input. input Schema.input -> string = function
   | Schema.Json -> "application/json"
@@ -335,26 +356,40 @@ let validate_content_type : type input.
            expected)
 
 let rec match_pattern : type a b.
-  (a, b) path -> string list -> Request.t -> a -> b option
+  (a, b) path -> Path_cursor.t -> Request.t -> a -> b option
   =
- fun pattern segments request k ->
-  match pattern, segments with
-  | Nil, [] -> Some k
-  | Nil, _ :: _ -> None (* Reject trailing segments *)
-  | Literal ("", rest), [] -> match_pattern rest [] request k
-  | Literal (expected, rest), seg :: segs when String.equal expected seg ->
-    match_pattern rest segs request k
-  | Splat rest, segs -> match_pattern rest [] request (k segs)
-  | Capture { parse; rest; _ }, seg :: segs ->
-    (match parse seg with
-    | Some v -> match_pattern rest segs request (k v)
+ fun pattern cursor request k ->
+  match pattern with
+  | Nil ->
+    (match Path_cursor.next cursor with
+    | None -> Some k
+    | Some _ -> None (* Reject trailing segments *))
+  | Literal ("", rest) ->
+    (* Empty literal doesn't consume anything, just continue *)
+    match_pattern rest cursor request k
+  | Literal (expected, rest) ->
+    (match Path_cursor.next cursor with
+    | Some (seg, rest_cursor) when String.equal expected seg ->
+      match_pattern rest rest_cursor request k
+    | _ -> None)
+  | Splat rest ->
+    let remaining = Path_cursor.to_list cursor in
+    match_pattern rest (Path_cursor.create "") request (k remaining)
+  | Capture { parse; rest; _ } ->
+    (match Path_cursor.next cursor with
+    | Some (seg, rest_cursor) ->
+      (match parse seg with
+      | Some v -> match_pattern rest rest_cursor request (k v)
+      | None -> None)
     | None -> None)
-  | Enum { parse; rest; _ }, seg :: segs ->
-    (match parse seg with
-    | Some v -> match_pattern rest segs request (k v)
+  | Enum { parse; rest; _ } ->
+    (match Path_cursor.next cursor with
+    | Some (seg, rest_cursor) ->
+      (match parse seg with
+      | Some v -> match_pattern rest rest_cursor request (k v)
+      | None -> None)
     | None -> None)
-  | Annotated { segment; _ }, segs -> match_pattern segment segs request k
-  | _ -> None
+  | Annotated { segment; _ } -> match_pattern segment cursor request k
 
 let rec get_method : type a b. (a, b) schema -> Piaf.Method.t = function
   | Method (m, _) -> m
@@ -366,38 +401,6 @@ let rec get_method : type a b. (a, b) schema -> Piaf.Method.t = function
 
 let into : type a. a -> (a, Request.t -> Response.t) schema -> route =
  fun handler schema -> Route { schema; handler }
-
-let rec match_prefix : type a b.
-  (a, b) path -> string list -> string list option
-  =
- fun pattern segments ->
-  match pattern, segments with
-  | Nil, segs -> Some segs
-  | Literal ("", rest), segs -> match_prefix rest segs
-  | Literal (expected, rest), seg :: segs when String.equal expected seg ->
-    match_prefix rest segs
-  | Annotated { segment; _ }, segs -> match_prefix segment segs
-  | _ -> None
-
-let rec can_match_schema : type a b.
-  (a, b) schema -> string list -> Request.t -> bool
-  =
- fun schema segments request ->
-  match schema with
-  | Method (meth, pattern) ->
-    let method_matches =
-      match meth with
-      | `Other "*" -> true
-      | _ ->
-        Piaf.Method.to_string meth
-        = Piaf.Method.to_string (Request.meth request)
-    in
-    method_matches && can_match_path pattern segments
-  | Query { rest; _ } -> can_match_schema rest segments request
-  | Body { rest; _ } -> can_match_schema rest segments request
-  | Guard { rest; _ } -> can_match_schema rest segments request
-  | Response_model { rest; _ } -> can_match_schema rest segments request
-  | Meta { rest; _ } -> can_match_schema rest segments request
 
 let evaluate_body_schema : type a b.
   a Schema.input
@@ -427,16 +430,16 @@ let evaluate_body_schema : type a b.
     | Error _ -> raise (Bad_request "Invalid multipart body"))
 
 let rec evaluate_schema : type a b.
-  (a, b) schema -> string list -> Request.t -> a -> b option
+  (a, b) schema -> Path_cursor.t -> Request.t -> a -> b option
   =
- fun schema segments request k ->
+ fun schema cursor request k ->
   match schema with
-  | Method (_, pattern) -> match_pattern pattern segments request k
+  | Method (_, pattern) -> match_pattern pattern cursor request k
   | Query { schema; rest } ->
     (match
        Schema.eval Schema.Urlencoded schema (Form.Urlencoded.of_query request)
      with
-    | Ok query_data -> evaluate_schema rest segments request (k query_data)
+    | Ok query_data -> evaluate_schema rest cursor request (k query_data)
     | Error errors -> raise (Validation_failed errors))
   | Body { input_type; schema; rest } ->
     (match validate_content_type input_type request with
@@ -444,51 +447,184 @@ let rec evaluate_schema : type a b.
     | Ok () ->
       (match evaluate_body_schema input_type schema request with
       | Ok validated_data ->
-        evaluate_schema rest segments request (k validated_data)
+        evaluate_schema rest cursor request (k validated_data)
       | Error errors -> raise (Validation_failed errors)))
   | Response_model { encoder; rest } ->
-    (match evaluate_schema rest segments request k with
+    (match evaluate_schema rest cursor request k with
     | Some data_fn -> Some (fun request -> data_fn request |> encoder)
     | None -> None)
   | Guard { guard; rest } ->
     (match guard request with
-    | Ok g -> evaluate_schema rest segments request (k g)
+    | Ok g -> evaluate_schema rest cursor request (k g)
     | Error e -> raise (Request_guard.Failed e))
-  | Meta { rest; _ } -> evaluate_schema rest segments request k
+  | Meta { rest; _ } -> evaluate_schema rest cursor request k
 
-let rec match_route ?(middlewares = []) route segments request =
-  match route with
-  | Route route ->
-    if can_match_schema route.schema segments request
-    then
-      match evaluate_schema route.schema segments request route.handler with
-      | Some handler ->
-        let service = Filter.apply_all middlewares handler in
-        Some (service request)
+module Trie = struct
+  type segment =
+    | Lit of string
+    | Capt
+    | Splat_key
+
+  type flat_route =
+    | Flat_route :
+        { schema : ('a, Request.t -> Response.t) schema
+        ; handler : 'a
+        ; method_str : string
+        ; segments : segment list
+        ; middlewares : Middleware.t list
+        ; prefix_len : int
+        }
+        -> flat_route
+
+  let flat_route_method_str (Flat_route { method_str; _ }) = method_str
+  let flat_route_segments (Flat_route { segments; _ }) = segments
+
+  module String_map = Map.Make (String)
+
+  type t =
+    { literals : t String_map.t
+    ; capture : t option
+    ; splat : t option
+    ; handlers : flat_route String_map.t
+    }
+
+  let rec extract_path_segments : type a b. (a, b) path -> segment list
+    = function
+    | Nil -> []
+    | Literal ("", rest) -> extract_path_segments rest
+    | Literal (s, rest) -> Lit s :: extract_path_segments rest
+    | Capture { rest; _ } -> Capt :: extract_path_segments rest
+    | Enum { rest; _ } -> Capt :: extract_path_segments rest
+    | Splat rest -> Splat_key :: extract_path_segments rest
+    | Annotated { segment; _ } -> extract_path_segments segment
+
+  let rec extract_path_segments_and_method : type a b.
+    (a, b) schema -> Piaf.Method.t * segment list
+    = function
+    | Method (m, pattern) -> m, extract_path_segments pattern
+    | Query { rest; _ } -> extract_path_segments_and_method rest
+    | Body { rest; _ } -> extract_path_segments_and_method rest
+    | Response_model { rest; _ } -> extract_path_segments_and_method rest
+    | Guard { rest; _ } -> extract_path_segments_and_method rest
+    | Meta { rest; _ } -> extract_path_segments_and_method rest
+
+  let rec flatten_route prefix_len prefix middlewares route =
+    match route with
+    | Route { schema; handler } ->
+      let method_, segments = extract_path_segments_and_method schema in
+      [ Flat_route
+          { schema
+          ; handler
+          ; method_str = Piaf.Method.to_string method_ (* Cache method string *)
+          ; segments = prefix @ segments
+          ; middlewares
+          ; prefix_len
+          }
+      ]
+    | Scope { prefix = scope_prefix; routes; middlewares = scope_mws } ->
+      let scope_segments = extract_path_segments scope_prefix in
+      let new_prefix = prefix @ scope_segments in
+      let new_prefix_len = prefix_len + List.length scope_segments in
+      routes
+      |> List.concat_map
+           (flatten_route new_prefix_len new_prefix (middlewares @ scope_mws))
+
+  let flatten_routes routes = routes |> List.concat_map (flatten_route 0 [] [])
+
+  let empty =
+    { literals = String_map.empty
+    ; capture = None
+    ; splat = None
+    ; handlers = String_map.empty
+    }
+
+  let rec insert_route : segment list -> flat_route -> t -> t =
+   fun segments route node ->
+    match segments with
+    | [] ->
+      { node with
+        handlers =
+          String_map.add (flat_route_method_str route) route node.handlers
+      }
+    | Lit s :: segs ->
+      let child =
+        match String_map.find_opt s node.literals with
+        | Some n -> n
+        | None -> empty
+      in
+      let updated_child = insert_route segs route child in
+      { node with literals = String_map.add s updated_child node.literals }
+    | Capt :: segs ->
+      let child = match node.capture with Some n -> n | None -> empty in
+      let updated_child = insert_route segs route child in
+      { node with capture = Some updated_child }
+    | Splat_key :: segs ->
+      let child = match node.splat with Some n -> n | None -> empty in
+      let updated_child = insert_route segs route child in
+      { node with splat = Some updated_child }
+
+  let compile routes =
+    let routes' = flatten_routes routes in
+    List.fold_left
+      (fun trie route -> insert_route (flat_route_segments route) route trie)
+      empty
+      routes'
+
+  let rec match_trie cursor method_str trie =
+    let try_splat () =
+      match trie.splat with
+      | Some splat_child ->
+        match_trie (Path_cursor.create "") method_str splat_child
       | None -> None
-    else None
-  | Scope scope ->
-    (match match_prefix scope.prefix segments with
-    | None -> None
-    | Some remaining_segments ->
-      let accumulated_middlewares = middlewares @ scope.middlewares in
-      List.find_map
-        (fun route ->
-           match_route
-             ~middlewares:accumulated_middlewares
-             route
-             remaining_segments
-             request)
-        scope.routes)
+    in
+    match Path_cursor.next cursor with
+    | None ->
+      (match String_map.find_opt method_str trie.handlers with
+      | Some route -> Some route
+      | None ->
+        (match String_map.find_opt "*" trie.handlers with
+        | Some route -> Some route
+        | None -> try_splat ()))
+    | Some (seg, rest_cursor) ->
+      let try_capture () =
+        match trie.capture with
+        | Some capt_child ->
+          (match match_trie rest_cursor method_str capt_child with
+          | Some r -> Some r
+          | None -> try_splat ())
+        | None -> try_splat ()
+      in
+      (match String_map.find_opt seg trie.literals with
+      | Some child ->
+        (match match_trie rest_cursor method_str child with
+        | Some r -> Some r
+        | None -> try_capture ())
+      | None -> try_capture ())
 
-let match' routes request =
-  let segments = split_path (Request.target request) in
-  List.find_map (fun route -> match_route route segments request) routes
+  let router' trie request =
+    let path = Request.target request in
+    let cursor = Path_cursor.create path in
+    let method_str = Piaf.Method.to_string (Request.meth request) in
+    match match_trie cursor method_str trie with
+    | Some (Flat_route { schema; handler; middlewares; prefix_len; _ }) ->
+      let cursor = Path_cursor.create path |> Path_cursor.skip prefix_len in
+      (match evaluate_schema schema cursor request handler with
+      | Some h ->
+        let service = Filter.apply_all middlewares h in
+        service request
+      | None -> raise Not_found)
+    | None -> raise Not_found
 
-let router routes request =
-  match match' routes request with
-  | Some response -> response
-  | None -> raise Not_found
+  let router routes =
+    let trie = compile routes in
+    router' trie
+end
+
+let router = Trie.router
+
+let match' routes =
+  let trie = Trie.compile routes in
+  fun request -> try Some (Trie.router' trie request) with Not_found -> None
 
 let rec sprintf' : type a. (a, string) path -> string -> a =
  fun pattern acc ->

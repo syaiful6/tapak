@@ -31,6 +31,7 @@ depends: [
   "ocaml-lsp-server" {with-dev-setup}
   "ocamlformat" {= "0.27.0" & with-dev-setup}
   "alcotest" {with-test}
+  "benchmark" {with-test}
   "odoc" {with-doc}
 ]
 build: [
