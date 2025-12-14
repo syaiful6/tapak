@@ -658,6 +658,197 @@ let test_response_model () =
       body
   | None -> Alcotest.fail "Route should have matched"
 
+let test_route_with_header () =
+  let open Router in
+  let open Schema in
+  let header_schema = str "X-API-Key" in
+  let route =
+    get (s "api" / s "data")
+    |> header header_schema
+    |> into (fun api_key _request ->
+      Alcotest.(check string) "api key should be secret123" "secret123" api_key;
+      Response.of_string ~body:"authenticated" `OK)
+  in
+  let request =
+    Request.create
+      ~headers:(Piaf.Headers.of_list [ "x-api-key", "secret123" ])
+      ~scheme:`HTTP
+      ~version:Piaf.Versions.HTTP.HTTP_1_1
+      ~meth:`GET
+      ~body:Piaf.Body.empty
+      "/api/data"
+  in
+  match match' [ route ] request with
+  | Some response ->
+    Alcotest.(check bool)
+      "route with header should match"
+      true
+      (Response.status response = `OK)
+  | None -> Alcotest.fail "route with valid header should have matched"
+
+let test_route_header_case_insensitive () =
+  let open Router in
+  let open Schema in
+  let header_schema = str "Content-Type" in
+  let route =
+    post (s "api" / s "upload")
+    |> header header_schema
+    |> into (fun content_type _request ->
+      Response.of_string
+        ~body:(Printf.sprintf "Content-Type: %s" content_type)
+        `OK)
+  in
+  let request =
+    Request.create
+      ~headers:(Piaf.Headers.of_list [ "CONTENT-TYPE", "application/json" ])
+      ~scheme:`HTTP
+      ~version:Piaf.Versions.HTTP.HTTP_1_1
+      ~meth:`POST
+      ~body:Piaf.Body.empty
+      "/api/upload"
+  in
+  match match' [ route ] request with
+  | Some response ->
+    let body = Response.body response |> Piaf.Body.to_string |> Result.get_ok in
+    Alcotest.(check string)
+      "should match header case-insensitively"
+      "Content-Type: application/json"
+      body
+  | None -> Alcotest.fail "route should match with case-insensitive header"
+
+let test_route_header_missing () =
+  let open Router in
+  let open Schema in
+  let header_schema = str "Authorization" in
+  let route =
+    get (s "api" / s "protected")
+    |> header header_schema
+    |> into (fun _auth _request -> Response.of_string ~body:"ok" `OK)
+  in
+  let request = make_request "/api/protected" in
+  try
+    let _ = match' [ route ] request in
+    Alcotest.fail "route should raise Validation_failed without required header"
+  with
+  | Router.Validation_failed _ -> ()
+
+let test_route_multiple_headers () =
+  let open Router in
+  let open Schema in
+  let header_schema =
+    let open Schema.Syntax in
+    let+ api_key = str "X-API-Key"
+    and+ user_id = str "X-User-ID" in
+    api_key, user_id
+  in
+  let route =
+    get (s "api" / s "user-data")
+    |> header header_schema
+    |> into (fun (api_key, user_id) _request ->
+      Response.of_string
+        ~body:(Printf.sprintf "Key: %s, User: %s" api_key user_id)
+        `OK)
+  in
+  let request =
+    Request.create
+      ~headers:
+        (Piaf.Headers.of_list
+           [ "x-api-key", "secret123"; "x-user-id", "user42" ])
+      ~scheme:`HTTP
+      ~version:Piaf.Versions.HTTP.HTTP_1_1
+      ~meth:`GET
+      ~body:Piaf.Body.empty
+      "/api/user-data"
+  in
+  match match' [ route ] request with
+  | Some response ->
+    let body = Response.body response |> Piaf.Body.to_string |> Result.get_ok in
+    Alcotest.(check string)
+      "should extract multiple headers"
+      "Key: secret123, User: user42"
+      body
+  | None -> Alcotest.fail "route with multiple headers should have matched"
+
+let test_route_optional_header () =
+  let open Router in
+  let open Schema in
+  let header_schema = option "X-Request-ID" (Field.str ()) in
+  let route =
+    get (s "api" / s "endpoint")
+    |> header header_schema
+    |> into (fun request_id _request ->
+      let msg =
+        match request_id with
+        | Some id -> Printf.sprintf "Request ID: %s" id
+        | None -> "No request ID"
+      in
+      Response.of_string ~body:msg `OK)
+  in
+  let request_with =
+    Request.create
+      ~headers:(Piaf.Headers.of_list [ "x-request-id", "req-123" ])
+      ~scheme:`HTTP
+      ~version:Piaf.Versions.HTTP.HTTP_1_1
+      ~meth:`GET
+      ~body:Piaf.Body.empty
+      "/api/endpoint"
+  in
+  let request_without = make_request "/api/endpoint" in
+  (match match' [ route ] request_with with
+  | Some response ->
+    let body = Response.body response |> Piaf.Body.to_string |> Result.get_ok in
+    Alcotest.(check string)
+      "should use header when present"
+      "Request ID: req-123"
+      body
+  | None -> Alcotest.fail "route should match with optional header present");
+  match match' [ route ] request_without with
+  | Some response ->
+    let body = Response.body response |> Piaf.Body.to_string |> Result.get_ok in
+    Alcotest.(check string)
+      "should work without optional header"
+      "No request ID"
+      body
+  | None -> Alcotest.fail "route should match without optional header"
+
+let test_route_header_validation () =
+  let open Router in
+  let open Schema in
+  let header_schema =
+    str ~constraint_:(Constraint.pattern "^Bearer .+$") "Authorization"
+  in
+  let route =
+    get (s "api" / s "secure")
+    |> header header_schema
+    |> into (fun _auth _request -> Response.of_string ~body:"authorized" `OK)
+  in
+  let valid_request =
+    Request.create
+      ~headers:(Piaf.Headers.of_list [ "authorization", "Bearer token123" ])
+      ~scheme:`HTTP
+      ~version:Piaf.Versions.HTTP.HTTP_1_1
+      ~meth:`GET
+      ~body:Piaf.Body.empty
+      "/api/secure"
+  in
+  let invalid_request =
+    Request.create
+      ~headers:(Piaf.Headers.of_list [ "authorization", "Basic token123" ])
+      ~scheme:`HTTP
+      ~version:Piaf.Versions.HTTP.HTTP_1_1
+      ~meth:`GET
+      ~body:Piaf.Body.empty
+      "/api/secure"
+  in
+  (match match' [ route ] valid_request with
+  | Some _ -> ()
+  | None -> Alcotest.fail "route should match valid Authorization header");
+  try
+    let _ = match' [ route ] invalid_request in
+    Alcotest.fail "route should raise Validation_failed for invalid header"
+  with
+  | Router.Validation_failed _ -> ()
+
 let tests =
   [ "Simple route", `Quick, test_simple_route
   ; "Int64 parameter", `Quick, test_int64_param
@@ -700,6 +891,12 @@ let tests =
   ; "Any method matches all HTTP methods", `Quick, test_any_method
   ; "Any method with parameters", `Quick, test_any_method_with_params
   ; "Response model", `Quick, test_response_model
+  ; "Route with header", `Quick, test_route_with_header
+  ; "Route header case-insensitive", `Quick, test_route_header_case_insensitive
+  ; "Route header missing fails", `Quick, test_route_header_missing
+  ; "Route multiple headers", `Quick, test_route_multiple_headers
+  ; "Route optional header", `Quick, test_route_optional_header
+  ; "Route header validation", `Quick, test_route_header_validation
   ]
   |> List.map (fun (name, speed, fn) -> Alcotest.test_case name speed fn)
   |> fun tests -> "Router", tests

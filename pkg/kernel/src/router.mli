@@ -46,6 +46,11 @@ type (_, _) schema =
       ; rest : ('a, 'b) schema
       }
       -> ('query -> 'a, 'b) schema
+  | Header :
+      { schema : 'header Schema.t
+      ; rest : ('a, 'b) schema
+      }
+      -> ('header -> 'a, 'b) schema
   | Response_model :
       { encoder : 'resp -> Response.t
       ; rest : ('a, Request.t -> 'resp) schema
@@ -123,6 +128,7 @@ val body :
   -> ('validated -> 'a, 'b) schema
 
 val query : 'query Schema.t -> ('a, 'b) schema -> ('query -> 'a, 'b) schema
+val header : 'a Schema.t -> ('b, 'c) schema -> ('a -> 'b, 'c) schema
 val guard : 'g Request_guard.t -> ('a, 'b) schema -> ('g -> 'a, 'b) schema
 
 val response_model :

@@ -163,6 +163,8 @@ module Yojson_interpreter : FIELD_INTERPRETER with type input = Yojson.Safe.t
 module Multipart_interpreter :
   FIELD_INTERPRETER with type input = Form.Multipart.node
 
+module Header_interpreter : FIELD_INTERPRETER with type input = Yojson.Safe.t
+
 module Field : sig
   type 'a t = 'a field
 

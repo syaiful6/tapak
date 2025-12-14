@@ -43,6 +43,13 @@ let search_schema =
   in
   { q; limit; offset }
 
+let auth_headers_schema =
+  let open Schema.Syntax in
+  let+ api_key =
+    Schema.(str ~constraint_:(Constraint.min_length 32) "X-API-Key")
+  and+ request_id = Schema.(option "X-Request-ID" (Field.str ())) in
+  api_key, request_id
+
 let list_users search _req =
   let users =
     [ { id = 1; name = "Alice"; email = "alice@example.com" }
@@ -72,13 +79,13 @@ let get_user id _req =
     ~status:`OK
     (user_to_json { id; name = "Alice"; email = "alice@example.com" })
 
-let create_user (name, email) _req =
+let create_user (name, email) (_api_key, _request_id) _req =
   Response.of_json ~status:`Created (user_to_json { id = 2; name; email })
 
-let update_user (name, email) id _req =
+let update_user (name, email) (_api_key, _request_id) id _req =
   Response.of_json ~status:`OK (user_to_json { id; name; email })
 
-let delete_user id _req =
+let delete_user (_api_key, _request_id) id _req =
   Response.of_string ~body:(Format.sprintf "User %d deleted" id) `No_content
 
 let v1_api_routes =
@@ -95,19 +102,25 @@ let v1_api_routes =
     |> tags [ "Users" ]
     |> into get_user
   ; post (s "users")
+    |> header auth_headers_schema
     |> body Schema.Json user_schema
     |> summary "Create a new user"
+    |> description "Requires authentication via X-API-Key header"
     |> operation_id "createUser"
     |> tags [ "Users" ]
     |> into create_user
   ; put (s "users" / p "userId" int)
+    |> header auth_headers_schema
     |> body Schema.Json user_schema
     |> summary "Update a user"
+    |> description "Requires authentication via X-API-Key header"
     |> operation_id "updateUser"
     |> tags [ "Users" ]
     |> into update_user
   ; delete (s "users" / p "userId" int)
+    |> header auth_headers_schema
     |> summary "Delete a user"
+    |> description "Requires authentication via X-API-Key header"
     |> operation_id "deleteUser"
     |> tags [ "Users" ]
     |> into delete_user

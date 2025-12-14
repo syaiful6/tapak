@@ -46,6 +46,11 @@ type (_, _) schema =
       ; rest : ('a, 'b) schema
       }
       -> ('query -> 'a, 'b) schema
+  | Header :
+      { schema : 'header Schema.t
+      ; rest : ('a, 'b) schema
+      }
+      -> ('header -> 'a, 'b) schema
   | Response_model :
       { encoder : 'resp -> Response.t
       ; rest : ('a, Request.t -> 'resp) schema
@@ -228,6 +233,9 @@ let body : type a b c input.
 let query : type a b c. a Schema.t -> (b, c) schema -> (a -> b, c) schema =
  fun schema rest -> Query { schema; rest }
 
+let header : type a b c. a Schema.t -> (b, c) schema -> (a -> b, c) schema =
+ fun schema rest -> Header { schema; rest }
+
 let guard : type a b g. g Request_guard.t -> (a, b) schema -> (g -> a, b) schema
   =
  fun guard schema -> Guard { guard; rest = schema }
@@ -394,6 +402,7 @@ let rec match_pattern : type a b.
 let rec get_method : type a b. (a, b) schema -> Piaf.Method.t = function
   | Method (m, _) -> m
   | Query { rest; _ } -> get_method rest
+  | Header { rest; _ } -> get_method rest
   | Body { rest; _ } -> get_method rest
   | Guard { rest; _ } -> get_method rest
   | Meta { rest; _ } -> get_method rest
@@ -440,6 +449,15 @@ let rec evaluate_schema : type a b.
        Schema.eval Schema.Urlencoded schema (Form.Urlencoded.of_query request)
      with
     | Ok query_data -> evaluate_schema rest cursor request (k query_data)
+    | Error errors -> raise (Validation_failed errors))
+  | Header { schema; rest } ->
+    (match
+       Schema.evaluate
+         (module Schema.Header_interpreter)
+         schema
+         (Schema_headers.to_yojson (Request.headers request))
+     with
+    | Ok header_data -> evaluate_schema rest cursor request (k header_data)
     | Error errors -> raise (Validation_failed errors))
   | Body { input_type; schema; rest } ->
     (match validate_content_type input_type request with
@@ -503,6 +521,7 @@ module Trie = struct
     = function
     | Method (m, pattern) -> m, extract_path_segments pattern
     | Query { rest; _ } -> extract_path_segments_and_method rest
+    | Header { rest; _ } -> extract_path_segments_and_method rest
     | Body { rest; _ } -> extract_path_segments_and_method rest
     | Response_model { rest; _ } -> extract_path_segments_and_method rest
     | Guard { rest; _ } -> extract_path_segments_and_method rest
