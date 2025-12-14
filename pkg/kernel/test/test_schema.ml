@@ -608,6 +608,105 @@ let test_multiple_constraints () =
     true
     (Result.is_error (eval Schema.Json schema no_pattern_json))
 
+let test_header_case_insensitive () =
+  let open Schema in
+  let schema = str "X-API-Key" in
+  let headers_upper = `Assoc [ "X-API-KEY", `String "secret123" ] in
+  let headers_lower = `Assoc [ "x-api-key", `String "secret123" ] in
+  let headers_mixed = `Assoc [ "X-Api-Key", `String "secret123" ] in
+  Alcotest.(check (result string (list (pair string string))))
+    "match uppercase header"
+    (Ok "secret123")
+    (evaluate (module Header_interpreter) schema headers_upper);
+  Alcotest.(check (result string (list (pair string string))))
+    "match lowercase header"
+    (Ok "secret123")
+    (evaluate (module Header_interpreter) schema headers_lower);
+  Alcotest.(check (result string (list (pair string string))))
+    "match mixed case header"
+    (Ok "secret123")
+    (evaluate (module Header_interpreter) schema headers_mixed)
+
+let test_header_multiple_fields () =
+  let open Schema in
+  let schema =
+    let open Syntax in
+    let+ api_key = str "X-API-Key"
+    and+ content_type = str "Content-Type"
+    and+ user_agent = option "User-Agent" (Field.str ()) in
+    api_key, content_type, user_agent
+  in
+  let headers =
+    `Assoc
+      [ "x-api-key", `String "secret123"
+      ; "content-type", `String "application/json"
+      ; "user-agent", `String "test-client/1.0"
+      ]
+  in
+  match evaluate (module Header_interpreter) schema headers with
+  | Ok (key, ct, ua) ->
+    Alcotest.(check string) "api key" "secret123" key;
+    Alcotest.(check string) "content type" "application/json" ct;
+    Alcotest.(check (option string)) "user agent" (Some "test-client/1.0") ua
+  | Error errs ->
+    let msg = String.concat "; " (List.map (fun (f, m) -> f ^ ": " ^ m) errs) in
+    Alcotest.fail msg
+
+let test_header_missing_required () =
+  let open Schema in
+  let schema = str "Authorization" in
+  let headers = `Assoc [ "Content-Type", `String "application/json" ] in
+  match evaluate (module Header_interpreter) schema headers with
+  | Ok _ -> Alcotest.fail "Should fail when required header is missing"
+  | Error errs ->
+    let has_auth_error =
+      List.exists (fun (field, _) -> field = "Authorization") errs
+    in
+    Alcotest.(check bool) "has Authorization error" true has_auth_error
+
+let test_header_optional () =
+  let open Schema in
+  let schema = option "X-Custom-Header" (Field.str ()) in
+  let with_header = `Assoc [ "x-custom-header", `String "value" ] in
+  let without_header = `Assoc [] in
+  Alcotest.(check (result (option string) (list (pair string string))))
+    "parse present optional header"
+    (Ok (Some "value"))
+    (evaluate (module Header_interpreter) schema with_header);
+  Alcotest.(check (result (option string) (list (pair string string))))
+    "parse missing optional header"
+    (Ok None)
+    (evaluate (module Header_interpreter) schema without_header)
+
+let test_header_with_constraint () =
+  let open Schema in
+  let schema =
+    str ~constraint_:(Constraint.pattern "^Bearer .+$") "Authorization"
+  in
+  let valid_header = `Assoc [ "authorization", `String "Bearer token123" ] in
+  let invalid_header = `Assoc [ "authorization", `String "Basic token123" ] in
+  Alcotest.(check (result string (list (pair string string))))
+    "accept valid Authorization header"
+    (Ok "Bearer token123")
+    (evaluate (module Header_interpreter) schema valid_header);
+  Alcotest.(check bool)
+    "reject invalid Authorization header"
+    true
+    (Result.is_error
+       (evaluate (module Header_interpreter) schema invalid_header))
+
+let test_header_multiple_values () =
+  let open Schema in
+  let schema = list "Accept" (Field.str ()) in
+  let headers =
+    `Assoc
+      [ "accept", `List [ `String "application/json"; `String "text/html" ] ]
+  in
+  Alcotest.(check (result (list string) (list (pair string string))))
+    "parse header with multiple values"
+    (Ok [ "application/json"; "text/html" ])
+    (evaluate (module Header_interpreter) schema headers)
+
 let tests =
   [ ( "Schema"
     , [ Alcotest.test_case "Single field" `Quick test_schema_single_field
@@ -688,5 +787,26 @@ let tests =
           "Multiple constraints"
           `Quick
           test_multiple_constraints
+      ; Alcotest.test_case
+          "Header case-insensitive"
+          `Quick
+          test_header_case_insensitive
+      ; Alcotest.test_case
+          "Header multiple fields"
+          `Quick
+          test_header_multiple_fields
+      ; Alcotest.test_case
+          "Header missing required"
+          `Quick
+          test_header_missing_required
+      ; Alcotest.test_case "Header optional" `Quick test_header_optional
+      ; Alcotest.test_case
+          "Header with constraint"
+          `Quick
+          test_header_with_constraint
+      ; Alcotest.test_case
+          "Header multiple values"
+          `Quick
+          test_header_multiple_values
       ] )
   ]

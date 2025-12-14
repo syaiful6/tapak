@@ -126,6 +126,7 @@ let rec extract_metadata : type a b. (a, b) Router.schema -> Router.metadata =
     ; include_in_schema = true
     }
   | Query { rest; _ } -> extract_metadata rest
+  | Header { rest; _ } -> extract_metadata rest
   | Body { rest; _ } -> extract_metadata rest
   | Guard { rest; _ } -> extract_metadata rest
   | Response_model { rest; _ } -> extract_metadata rest
@@ -319,6 +320,48 @@ let rec schema_to_query_parameters : type a. a Schema.t -> parameter list =
     schema_to_query_parameters left @ schema_to_query_parameters right
   | Map { tree; _ } -> schema_to_query_parameters tree
 
+let rec schema_to_header_parameters : type a. a Schema.t -> parameter list =
+ fun schema ->
+  match schema with
+  | Pure _ -> []
+  | Field { field; name } ->
+    let is_required, param_schema =
+      match field with
+      | Option inner -> false, field_to_openapi_schema inner
+      | List { default; _ } ->
+        ( (match default with Some _ -> false | None -> true)
+        , field_to_openapi_schema field )
+      | _ ->
+        let has_default =
+          match field with
+          | Str { default = Some _; _ }
+          | Int { default = Some _; _ }
+          | Int32 { default = Some _; _ }
+          | Int64 { default = Some _; _ }
+          | Bool { default = Some _ }
+          | Float { default = Some _; _ }
+          | Choice { default = Some _; _ } ->
+            true
+          | _ -> false
+        in
+        not has_default, field_to_openapi_schema field
+    in
+    let style, explode =
+      match field with List _ -> Some "simple", Some false | _ -> None, None
+    in
+    [ { name = String.lowercase_ascii name (* Headers are case-insensitive *)
+      ; in_ = `Header
+      ; description = None
+      ; required = is_required
+      ; schema = param_schema
+      ; style
+      ; explode
+      }
+    ]
+  | App (left, right) ->
+    schema_to_header_parameters left @ schema_to_header_parameters right
+  | Map { tree; _ } -> schema_to_header_parameters tree
+
 let rec extract_query_parameters : type a b.
   (a, b) Router.schema -> parameter list
   =
@@ -327,10 +370,25 @@ let rec extract_query_parameters : type a b.
   | Method _ -> []
   | Query { schema = query_schema; rest } ->
     schema_to_query_parameters query_schema @ extract_query_parameters rest
+  | Header { rest; _ } -> extract_query_parameters rest
   | Body { rest; _ } -> extract_query_parameters rest
   | Guard { rest; _ } -> extract_query_parameters rest
   | Response_model { rest; _ } -> extract_query_parameters rest
   | Meta { rest; _ } -> extract_query_parameters rest
+
+let rec extract_header_parameters : type a b.
+  (a, b) Router.schema -> parameter list
+  =
+ fun schema ->
+  match schema with
+  | Method _ -> []
+  | Query { rest; _ } -> extract_header_parameters rest
+  | Header { schema = header_schema; rest } ->
+    schema_to_header_parameters header_schema @ extract_header_parameters rest
+  | Body { rest; _ } -> extract_header_parameters rest
+  | Guard { rest; _ } -> extract_header_parameters rest
+  | Response_model { rest; _ } -> extract_header_parameters rest
+  | Meta { rest; _ } -> extract_header_parameters rest
 
 let rec extract_request_body : type a b.
   (a, b) Router.schema -> request_body option
@@ -339,6 +397,7 @@ let rec extract_request_body : type a b.
   match schema with
   | Method _ -> None
   | Query { rest; _ } -> extract_request_body rest
+  | Header { rest; _ } -> extract_request_body rest
   | Body { input_type; schema; _ } ->
     let content_type =
       match input_type with
@@ -364,6 +423,7 @@ let schema_to_operation : type a b. (a, b) Router.schema -> operation =
     match s with
     | Method (_, path) -> path_to_string path
     | Query { rest; _ } -> get_path rest
+    | Header { rest; _ } -> get_path rest
     | Body { rest; _ } -> get_path rest
     | Guard { rest; _ } -> get_path rest
     | Response_model { rest; _ } -> get_path rest
@@ -371,7 +431,8 @@ let schema_to_operation : type a b. (a, b) Router.schema -> operation =
   in
   let _, path_parameters = get_path schema in
   let query_parameters = extract_query_parameters schema in
-  let all_parameters = path_parameters @ query_parameters in
+  let header_parameters = extract_header_parameters schema in
+  let all_parameters = path_parameters @ query_parameters @ header_parameters in
   let request_body =
     match extract_request_body schema with
     | Some body -> Some { body with description = metadata.body_description }
@@ -560,6 +621,7 @@ let rec extract_paths ?(prefix = "") (routes : Router.route list) :
             let path_str, _ = path_to_string path in
             prefix ^ path_str, meth
           | Query { rest; _ } -> get_path_and_method rest
+          | Header { rest; _ } -> get_path_and_method rest
           | Body { rest; _ } -> get_path_and_method rest
           | Guard { rest; _ } -> get_path_and_method rest
           | Response_model { rest; _ } -> get_path_and_method rest

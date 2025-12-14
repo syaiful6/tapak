@@ -385,6 +385,24 @@ module Multipart_interpreter :
     | _ -> Error [ "Required field is missing or type mismatch" ]
 end
 
+module Header_interpreter : FIELD_INTERPRETER with type input = Yojson.Safe.t =
+struct
+  type input = Yojson.Safe.t
+
+  let get_input name json =
+    match json with
+    | `Assoc fields ->
+      let value =
+        List.find_opt (fun (k, _) -> Schema_headers.CI.equal k name) fields
+        |> Option.map snd
+        |> Option.value ~default:`Null
+      in
+      Ok value
+    | _ -> Error [ "Expected JSON object for header fields" ]
+
+  let eval = Yojson_interpreter.eval
+end
+
 let rec eval_tree_internal : type a b.
   (module FIELD_INTERPRETER with type input = b)
   -> a t
