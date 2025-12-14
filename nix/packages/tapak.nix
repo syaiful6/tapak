@@ -1,0 +1,60 @@
+{
+  buildDunePackage,
+  lib,
+  eio,
+  eio_main,
+  angstrom,
+  hmap,
+  logs,
+  re,
+  piaf,
+  magic-mime,
+  uri,
+  ptime,
+  saturn,
+  yojson,
+  mirage-crypto,
+  mirage-crypto-rng,
+  alcotest,
+  doCheck ? true,
+}:
+
+buildDunePackage {
+  pname = "tapak";
+  version = "0.1.0";
+
+  src =
+    let
+      fs = lib.fileset;
+    in
+    fs.toSource {
+      root = ../..;
+      fileset = fs.unions [
+        ../../src
+        ../../pkg/kernel
+        ../../pkg/channel
+        ../../tapak.opam
+        ../../dune-project
+      ];
+    };
+
+  propagatedBuildInputs = [
+    eio
+    eio_main
+    angstrom
+    hmap
+    logs
+    re
+    piaf
+    magic-mime
+    uri
+    ptime
+    saturn
+    yojson
+    mirage-crypto
+    mirage-crypto-rng
+  ];
+
+  inherit doCheck;
+  checkInputs = [ alcotest ];
+}
