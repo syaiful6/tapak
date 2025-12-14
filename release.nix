@@ -11,5 +11,8 @@ let
   };
 in
 {
-  inherit (pkgs.ocamlPackages) tapak;
+  inherit (pkgs.ocamlPackages)
+    tapak
+    tapak-compressions
+    ;
 }
