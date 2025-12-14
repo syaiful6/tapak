@@ -3,6 +3,7 @@ final: prev: {
     final': prev': {
       tapak = final'.callPackage ../packages/tapak.nix { };
       tapak-compressions = final'.callPackage ../packages/tapak-compressions.nix { };
+      tapak-ppx = final'.callPackage ../packages/tapak-ppx.nix { };
     }
   );
 }
