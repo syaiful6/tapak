@@ -17,4 +17,7 @@ in
     tapak-ppx
     simdutf
     ;
+  inherit (pkgs.tapak)
+    dev-shell
+    ;
 }
