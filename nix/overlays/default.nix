@@ -2,12 +2,16 @@ final: prev:
 let
   ocamlOverlay = final': prev': {
     tapak = final'.callPackage ../packages/tapak.nix {
+      inherit (final.tapak) doCheck;
     };
     tapak-compressions = final'.callPackage ../packages/tapak-compressions.nix {
+      inherit (final.tapak) doCheck;
     };
     tapak-ppx = final'.callPackage ../packages/tapak-ppx.nix {
+      inherit (final.tapak) doCheck;
     };
     simdutf = final'.callPackage ../packages/simdutf.nix {
+      inherit (final.tapak) doCheck;
     };
   };
 in
@@ -19,5 +23,6 @@ in
   ocaml-ng.ocamlPackages = prev.ocaml-ng.ocamlPackages.overrideScope ocamlOverlay;
 
   tapak = final.lib.makeScope final.newScope (self: {
+    doCheck = true;
   });
 }

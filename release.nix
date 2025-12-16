@@ -1,3 +1,7 @@
+{
+  system ? builtins.currentSystem,
+  doCheck ? true,
+}:
 let
   flakeLock = builtins.fromJSON (builtins.readFile ./flake.lock);
   # A helper to fetch evaluation dependencies given a flake input name
@@ -13,10 +17,19 @@ let
   treefmtSrc = fetchGitHub "treefmt-nix";
 
   pkgs = import nixpkgsSrc {
+    inherit system;
     overlays = [
       (import ./nix/overlays)
       (_final: prev: {
         treefmt-nix = import treefmtSrc;
+        # In the default overlay the projects packages inherit the tapak.doCheck attribute
+        # A user can disable the checks by evaluating this file, release.nix, running:
+        # $ nix-build release.nix --arg doCheck false
+        tapak = prev.tapak.overrideScope (
+          _final': _prev': {
+            inherit doCheck;
+          }
+        );
       })
       (import ./nix/overlays/development.nix)
     ];
