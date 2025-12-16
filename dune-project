@@ -106,7 +106,7 @@
   (tapak
    (= :version))
   (ppxlib
-   (>= 0.32.0))
+   (>= 0.36.0))
   (ocamlformat
    (and
     (= 0.27.0)

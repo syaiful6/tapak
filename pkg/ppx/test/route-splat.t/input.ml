@@ -1,3 +1,3 @@
-let static_handler ~splat request =
+let static_handler ~splat =
   Tapak.Response.of_text (String.concat "/" splat)
 [@@route GET, "/static/**"]

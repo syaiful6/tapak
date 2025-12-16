@@ -33,7 +33,7 @@ let () =
     }
   in
 
-  let api_handler _request =
+  let api_handler () =
     let json_body =
       {|{"message":"Hello from API","timestamp":"|}
       ^ Float.to_string (Ptime_clock.now () |> Ptime.to_float_s)
@@ -49,8 +49,10 @@ let () =
   let app =
     App.(
       routes
-        [ get (s "api" / s "hello") |> into api_handler
-        ; get splat |> into (Static.serve fs_backend ~config:static_config ())
+        [ get (s "api" / s "hello") |> unit |> into api_handler
+        ; get splat
+          |> request
+          |> into (Static.serve fs_backend ~config:static_config ())
         ]
         ()
       <++> [ Middleware.(

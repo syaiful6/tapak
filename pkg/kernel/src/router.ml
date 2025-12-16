@@ -53,9 +53,9 @@ type (_, _) schema =
       -> ('header -> 'a, 'b) schema
   | Response_model :
       { encoder : 'resp -> Response.t
-      ; rest : ('a, Request.t -> 'resp) schema
+      ; rest : ('a, 'resp) schema
       }
-      -> ('a, Request.t -> Response.t) schema
+      -> ('a, Response.t) schema
   | Body :
       { input_type : 'input Schema.input
       ; schema : 'validated Schema.t
@@ -155,7 +155,7 @@ let enum : type a.
 
 type route =
   | Route :
-      { schema : ('a, Request.t -> Response.t) schema
+      { schema : ('a, Response.t) schema
       ; handler : 'a
       }
       -> route
@@ -241,11 +241,15 @@ let guard : type a b g. g Request_guard.t -> (a, b) schema -> (g -> a, b) schema
  fun guard schema -> Guard { guard; rest = schema }
 
 let response_model : type a resp.
-  (resp -> Response.t)
-  -> (a, Request.t -> resp) schema
-  -> (a, Request.t -> Response.t) schema
+  (resp -> Response.t) -> (a, resp) schema -> (a, Response.t) schema
   =
  fun encoder rest -> Response_model { encoder; rest }
+
+let request : type a b. (a, b) schema -> (Request.t -> a, b) schema =
+ fun schema -> Guard { guard = Result.ok; rest = schema }
+
+let unit : type a b. (a, b) schema -> (unit -> a, b) schema =
+ fun schema -> Guard { guard = (fun _ -> Result.ok ()); rest = schema }
 
 let empty_metadata =
   { operation_id = None
@@ -408,7 +412,7 @@ let rec get_method : type a b. (a, b) schema -> Piaf.Method.t = function
   | Meta { rest; _ } -> get_method rest
   | Response_model { rest; _ } -> get_method rest
 
-let into : type a. a -> (a, Request.t -> Response.t) schema -> route =
+let into : type a. a -> (a, Response.t) schema -> route =
  fun handler schema -> Route { schema; handler }
 
 let evaluate_body_schema : type a b.
@@ -439,16 +443,16 @@ let evaluate_body_schema : type a b.
     | Error _ -> raise (Bad_request "Invalid multipart body"))
 
 let rec evaluate_schema : type a b.
-  (a, b) schema -> Path_cursor.t -> Request.t -> a -> b option
+  (a, b) schema -> Path_cursor.t -> a -> Request.t -> b option
   =
- fun schema cursor request k ->
+ fun schema cursor k request ->
   match schema with
   | Method (_, pattern) -> match_pattern pattern cursor request k
   | Query { schema; rest } ->
     (match
        Schema.eval Schema.Urlencoded schema (Form.Urlencoded.of_query request)
      with
-    | Ok query_data -> evaluate_schema rest cursor request (k query_data)
+    | Ok query_data -> evaluate_schema rest cursor (k query_data) request
     | Error errors -> raise (Validation_failed errors))
   | Header { schema; rest } ->
     (match
@@ -457,7 +461,7 @@ let rec evaluate_schema : type a b.
          schema
          (Schema_headers.to_yojson (Request.headers request))
      with
-    | Ok header_data -> evaluate_schema rest cursor request (k header_data)
+    | Ok header_data -> evaluate_schema rest cursor (k header_data) request
     | Error errors -> raise (Validation_failed errors))
   | Body { input_type; schema; rest } ->
     (match validate_content_type input_type request with
@@ -465,17 +469,17 @@ let rec evaluate_schema : type a b.
     | Ok () ->
       (match evaluate_body_schema input_type schema request with
       | Ok validated_data ->
-        evaluate_schema rest cursor request (k validated_data)
+        evaluate_schema rest cursor (k validated_data) request
       | Error errors -> raise (Validation_failed errors)))
   | Response_model { encoder; rest } ->
-    (match evaluate_schema rest cursor request k with
-    | Some data_fn -> Some (fun request -> data_fn request |> encoder)
+    (match evaluate_schema rest cursor k request with
+    | Some data -> Some (encoder data)
     | None -> None)
   | Guard { guard; rest } ->
     (match guard request with
-    | Ok g -> evaluate_schema rest cursor request (k g)
+    | Ok g -> evaluate_schema rest cursor (k g) request
     | Error e -> raise (Request_guard.Failed e))
-  | Meta { rest; _ } -> evaluate_schema rest cursor request k
+  | Meta { rest; _ } -> evaluate_schema rest cursor k request
 
 module Trie = struct
   type segment =
@@ -485,7 +489,7 @@ module Trie = struct
 
   type flat_route =
     | Flat_route :
-        { schema : ('a, Request.t -> Response.t) schema
+        { schema : ('a, Response.t) schema
         ; handler : 'a
         ; method_str : string
         ; segments : segment list
@@ -620,6 +624,9 @@ module Trie = struct
         | None -> try_capture ())
       | None -> try_capture ())
 
+  let route_filter next request =
+    match next request with Some resp -> resp | None -> raise Not_found
+
   let router' trie request =
     let path = Request.target request in
     let cursor = Path_cursor.create path in
@@ -627,11 +634,12 @@ module Trie = struct
     match match_trie cursor method_str trie with
     | Some (Flat_route { schema; handler; middlewares; prefix_len; _ }) ->
       let cursor = Path_cursor.create path |> Path_cursor.skip prefix_len in
-      (match evaluate_schema schema cursor request handler with
-      | Some h ->
-        let service = Filter.apply_all middlewares h in
-        service request
-      | None -> raise Not_found)
+      let service =
+        Filter.apply_all
+          middlewares
+          (route_filter (evaluate_schema schema cursor handler))
+      in
+      service request
     | None -> raise Not_found
 
   let router routes =
@@ -671,21 +679,21 @@ module type Resource = sig
   val index : Handler.t
   val new_ : Handler.t
   val create : Handler.t
-  val get : id -> Handler.t
-  val edit : id -> Handler.t
-  val update : id -> Handler.t
-  val delete : id -> Handler.t
+  val get : Request.t -> id -> Response.t
+  val edit : Request.t -> id -> Response.t
+  val update : Request.t -> id -> Response.t
+  val delete : Request.t -> id -> Response.t
 end
 
 let resource ?(middlewares = []) prefix_builder (module R : Resource) =
   scope
     ~middlewares
     prefix_builder
-    [ get (s "") |> into R.index
-    ; get (s "new") |> into R.new_
-    ; post (s "") |> into R.create
-    ; get (R.id_path ()) |> into R.get
-    ; get (R.id_path () / s "edit") |> into R.edit
-    ; put (R.id_path ()) |> into R.update
-    ; delete (R.id_path ()) |> into R.delete
+    [ get (s "") |> request |> into R.index
+    ; get (s "new") |> request |> into R.new_
+    ; post (s "") |> request |> into R.create
+    ; get (R.id_path ()) |> request |> into R.get
+    ; get (R.id_path () / s "edit") |> request |> into R.edit
+    ; put (R.id_path ()) |> request |> into R.update
+    ; delete (R.id_path ()) |> request |> into R.delete
     ]
