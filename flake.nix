@@ -3,10 +3,16 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs?ref=nixos-25.11";
+    treefmt-nix.url = "github:numtide/treefmt-nix";
+    treefmt-nix.flake = false;
   };
 
   outputs =
-    { self, nixpkgs }:
+    {
+      self,
+      nixpkgs,
+      treefmt-nix,
+    }:
     let
       # There is also pkgs.ocaml.meta.platforms
       # flakeExposed is a subset of that.
@@ -21,6 +27,10 @@
               inherit system;
               overlays = [
                 (import ./nix/overlays)
+                (_final: _prev: {
+                  treefmt-nix = import treefmt-nix;
+                })
+                (import ./nix/overlays/development.nix)
               ];
             };
           in
@@ -51,6 +61,13 @@
 
       overlays.default = import ./nix/overlays;
 
-      formatter = withPkgs ({ pkgs, ... }: pkgs.nixfmt-rfc-style);
+      formatter = withPkgs ({ pkgs, ... }: pkgs.tapak.treefmt);
+
+      checks = withPkgs (
+        { pkgs, ... }:
+        {
+          formatting = pkgs.tapak.checks.formatting;
+        }
+      );
     };
 }

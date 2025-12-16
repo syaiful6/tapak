@@ -1,5 +1,6 @@
 {
   mkShell,
+  treefmt,
   ocamlPackages,
   systemfd,
   watchexec,
@@ -21,6 +22,7 @@ mkShell {
       benchmark
     ])
     ++ [
+      treefmt
       systemfd
       watchexec
     ];

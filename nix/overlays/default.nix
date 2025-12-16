@@ -9,6 +9,5 @@ final: prev: {
     }
   );
   tapak = final.lib.makeScope final.newScope (self: {
-    dev-shell = self.callPackage ../packages/dev-shell.nix { };
   });
 }

@@ -1,3 +1,4 @@
+version = 0.28.1
 break-infix = fit-or-vertical
 break-infix-before-func = false
 break-fun-decl = fit-or-vertical

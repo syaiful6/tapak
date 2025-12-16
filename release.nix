@@ -1,12 +1,24 @@
 let
   flakeLock = builtins.fromJSON (builtins.readFile ./flake.lock);
-  nixpkgsSrc = builtins.fetchTarball {
-    url = "https://github.com/${flakeLock.nodes.nixpkgs.locked.owner}/${flakeLock.nodes.nixpkgs.locked.repo}/archive/${flakeLock.nodes.nixpkgs.locked.rev}.tar.gz";
-    sha256 = flakeLock.nodes.nixpkgs.locked.narHash;
-  };
+  # A helper to fetch evaluation dependencies given a flake input name
+  fetchGitHub =
+    flakeInput:
+    builtins.fetchTarball {
+      url = "https://github.com/${flakeLock.nodes.${flakeInput}.locked.owner}/${
+        flakeLock.nodes.${flakeInput}.locked.repo
+      }/archive/${flakeLock.nodes.${flakeInput}.locked.rev}.tar.gz";
+      sha256 = flakeLock.nodes.${flakeInput}.locked.narHash;
+    };
+  nixpkgsSrc = fetchGitHub "nixpkgs";
+  treefmtSrc = fetchGitHub "treefmt-nix";
+
   pkgs = import nixpkgsSrc {
     overlays = [
       (import ./nix/overlays)
+      (_final: prev: {
+        treefmt-nix = import treefmtSrc;
+      })
+      (import ./nix/overlays/development.nix)
     ];
   };
 in
@@ -20,4 +32,5 @@ in
   inherit (pkgs.tapak)
     dev-shell
     ;
+  checks.formatting = pkgs.tapak.checks.formatting;
 }
