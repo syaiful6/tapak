@@ -21,8 +21,30 @@ let
       (import ./nix/overlays/development.nix)
     ];
   };
+
+  # Generate outputs for the projects packages
+  # for each listed OCaml package set version.
+  ocamlPackageSets = [
+    "ocamlPackages" # for NixOS 25.11 this defaults to OCaml version 5.3
+    "ocamlPackages_5_4"
+    "ocamlPackages_5_3"
+    "ocamlPackages_5_2"
+  ];
+  packageNames = [
+    "tapak"
+    "tapak-compressions"
+    "tapak-ppx"
+    "simdutf"
+  ];
+  outputs = pkgs.lib.genAttrs ocamlPackageSets (
+    ocamlPackages: pkgs.lib.genAttrs packageNames (package: pkgs.ocaml-ng.${ocamlPackages}.${package})
+  );
 in
-{
+outputs
+// {
+  # Re-export the projects packages for the latest stable OCaml package set in
+  # a flat hierarchy for convenience. Example:
+  # $ nix-build release.nix -A tapak
   inherit (pkgs.ocamlPackages)
     tapak
     tapak-compressions
