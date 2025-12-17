@@ -1,7 +1,7 @@
 final: prev:
 let
   treefmtEval = final.treefmt-nix.evalModule final {
-    projectRootFile = ".git/config";
+    projectRootFile = "dune-project";
     programs.nixfmt.enable = true;
     programs.ocamlformat = {
       enable = true;
