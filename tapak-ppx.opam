@@ -15,7 +15,7 @@ depends: [
   "dune" {>= "3.19"}
   "tapak" {= version}
   "ppxlib" {>= "0.36.0"}
-  "ocamlformat" {= "0.27.0" & with-test}
+  "ocamlformat" {= "0.28.1" & with-test}
   "angstrom"
   "odoc" {with-doc}
 ]
