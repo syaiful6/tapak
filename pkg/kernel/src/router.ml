@@ -506,8 +506,8 @@ module Trie = struct
     ; handlers : flat_route String_map.t
     }
 
-  let rec extract_path_segments : type a b. (a, b) path -> segment list
-    = function
+  let rec extract_path_segments : type a b. (a, b) path -> segment list =
+    function
     | Nil -> []
     | Literal ("", rest) -> extract_path_segments rest
     | Literal (s, rest) -> Lit s :: extract_path_segments rest

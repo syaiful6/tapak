@@ -145,9 +145,9 @@ let parse_gzip_header chunk =
             if !pos > len then Error `Need_more_data else Ok !pos))
 
 let decompress_deflate_stream body =
-  (* Note: HTTP "deflate" encoding officially means zlib-wrapped deflate (RFC 1950).
-     Some implementations use raw deflate, but most tools (Python zlib, Java, etc.)
-     produce zlib-wrapped deflate. We use the wrapper by default. *)
+  (* Note: HTTP "deflate" encoding officially means zlib-wrapped deflate (RFC
+     1950). Some implementations use raw deflate, but most tools (Python zlib,
+     Java, etc.) produce zlib-wrapped deflate. We use the wrapper by default. *)
   let state = create_stream_state ~use_zlib_wrapper:true () in
   let input_stream = body in
   let rec next_decompressed () =

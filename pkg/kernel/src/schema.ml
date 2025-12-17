@@ -42,8 +42,8 @@ type _ field =
       -> 'a list field
   (* Special types *)
   | File : Form.Multipart.part field
-  (* Choices/enums with default selection
-       (identifier, value) pairs, the return value has the actual value as well as the index in the list *)
+  (* Choices/enums with default selection (identifier, value) pairs, the return
+     value has the actual value as well as the index in the list *)
   | Choice :
       { choices : (string * 'a) list
       ; default : 'a option
@@ -273,7 +273,8 @@ module Multipart_interpreter :
       (match Hashtbl.find_opt h name with
       | Some value_node -> Ok value_node
       | None ->
-        (* Return empty object for missing fields - let field evaluator handle defaults *)
+        (* Return empty object for missing fields - let field evaluator handle
+           defaults *)
         Ok (Form.Multipart.Object (Hashtbl.create 0)))
     | _ -> Error [ "Expected object structure" ]
 

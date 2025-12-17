@@ -362,8 +362,8 @@ let rec to_json_schema : type a. a t -> (string * Yojson.Safe.t) list =
     in
     [ "anyOf", `List schemas ]
   | All_of constraints ->
-    (* For allOf in JSON Schema, we need to merge properties if they're simple constraints,
-       or use allOf array if they're complex *)
+    (* For allOf in JSON Schema, we need to merge properties if they're simple
+       constraints, or use allOf array if they're complex *)
     let all_props = List.concat_map to_json_schema constraints in
     (* Check if we can flatten (no nested anyOf/oneOf/not) *)
     let has_complex =
