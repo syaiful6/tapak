@@ -65,7 +65,7 @@
   (ocaml-lsp-server :with-dev-setup)
   (ocamlformat
    (and
-    (= 0.27.0)
+    (= 0.28.1)
     :with-dev-setup))
   (alcotest :with-test)
   (benchmark :with-test)
@@ -106,10 +106,10 @@
   (tapak
    (= :version))
   (ppxlib
-   (>= 0.32.0))
+   (>= 0.36.0))
   (ocamlformat
    (and
-    (= 0.27.0)
+    (= 0.28.1)
     :with-test))
   angstrom
   (odoc :with-doc))

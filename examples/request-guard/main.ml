@@ -76,13 +76,13 @@ let pagination_guard : pagination Request_guard.t =
     | _ -> Error Invalid_pagination)
   | None, None -> Ok { page = 1; per_page = 20 }
 
-let api_info_handler api_key _req =
+let api_info_handler api_key =
   let body =
     Printf.sprintf {|{"message": "API access granted", "key": "%s"}|} api_key
   in
   Response.of_string' ~status:`OK body
 
-let profile_handler user _req =
+let profile_handler user =
   let body =
     Printf.sprintf
       {|{"id": %d, "name": "%s", "role": "%s"}|}
@@ -92,7 +92,7 @@ let profile_handler user _req =
   in
   Response.of_string' ~status:`OK body
 
-let admin_handler admin _req =
+let admin_handler admin =
   let body =
     Printf.sprintf
       {|{"message": "Admin access granted", "admin": "%s"}|}
@@ -100,9 +100,7 @@ let admin_handler admin _req =
   in
   Response.of_string' ~status:`OK body
 
-let create_post_handler ((user, ()) : user * unit) (req : Request.t) :
-  Response.t
-  =
+let create_post_handler req (user, ()) =
   let body_content =
     Result.fold
       ~ok:Fun.id
@@ -117,7 +115,7 @@ let create_post_handler ((user, ()) : user * unit) (req : Request.t) :
   in
   Response.of_string' ~status:`OK response
 
-let update_user_handler user user_id req =
+let update_user_handler req user user_id =
   if Int64.of_int user.id = user_id || user.role = "admin"
   then
     let body_content =
@@ -136,7 +134,7 @@ let update_user_handler user user_id req =
     Response.of_string' ~status:`OK response
   else Response.of_string' ~status:`Forbidden {|{"error": "Forbidden"}|}
 
-let user_list_handler admin pagination _req =
+let user_list_handler admin pagination =
   (* Only admins can list users with pagination *)
   let response =
     Printf.sprintf
@@ -298,18 +296,19 @@ let setup_app () =
   App.(
     routes
       ~not_found
-      [ get (s "") |> into home_handler
-      ; (* Examples using request guard with >=> operator *)
-        scope
+      [ get (s "") |> unit |> into home_handler
+      ; scope
           (s "manual")
           [ get (s "api-info") |> guard api_key_guard |> into api_info_handler
           ; get (s "profile") |> guard user_guard |> into profile_handler
           ; get (s "admin") |> guard admin_guard |> into admin_handler
           ; post (s "posts")
             |> guard authenticated_json_guard
+            |> request
             |> into create_post_handler
           ; put (s "users" / int64)
             |> guard user_guard
+            |> request
             |> into update_user_handler
           ; (* Multiple guards chained *)
             get (s "users" / s "list")

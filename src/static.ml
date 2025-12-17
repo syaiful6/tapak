@@ -798,7 +798,7 @@ let rec find_index_file :
       | Ok (`Folder _ | `Missing) | Error _ ->
         find_index_file (module F) { config with index_files = rest } pieces))
 
-let serve (module F : STORAGE) ?(config = default_config) () segments request =
+let serve (module F : STORAGE) ?(config = default_config) () request segments =
   let open Result.Syntax in
   let result =
     let* pieces =
@@ -933,4 +933,4 @@ let app (module F : STORAGE) ?config () request =
   let uri = Request.uri request in
   let path = Uri.path uri in
   let segments = String.split_on_char ~sep:'/' path in
-  serve (module F) ?config () segments request
+  serve (module F) ?config () request segments

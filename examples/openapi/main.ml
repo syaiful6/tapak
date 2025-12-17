@@ -50,7 +50,7 @@ let auth_headers_schema =
   and+ request_id = Schema.(option "X-Request-ID" (Field.str ())) in
   api_key, request_id
 
-let list_users search _req =
+let list_users search =
   let users =
     [ { id = 1; name = "Alice"; email = "alice@example.com" }
     ; { id = 2; name = "Bob"; email = "bob@example.com" }
@@ -74,18 +74,18 @@ let list_users search _req =
     in
     Response.of_json ~status:`OK (`List (List.map user_to_json paginated_users))
 
-let get_user id _req =
+let get_user id =
   Response.of_json
     ~status:`OK
     (user_to_json { id; name = "Alice"; email = "alice@example.com" })
 
-let create_user (name, email) (_api_key, _request_id) _req =
+let create_user (name, email) (_api_key, _request_id) =
   Response.of_json ~status:`Created (user_to_json { id = 2; name; email })
 
-let update_user (name, email) (_api_key, _request_id) id _req =
+let update_user (name, email) (_api_key, _request_id) id =
   Response.of_json ~status:`OK (user_to_json { id; name; email })
 
-let delete_user (_api_key, _request_id) id _req =
+let delete_user (_api_key, _request_id) id =
   Response.of_string ~body:(Format.sprintf "User %d deleted" id) `No_content
 
 let v1_api_routes =
@@ -130,7 +130,7 @@ let api_v1_routes =
   let open Router in
   [ scope (s "v1") v1_api_routes ]
 
-let openapi_schema ?base_path routes _ =
+let openapi_schema ?base_path routes =
   Response.of_json
     ~status:`OK
     (Openapi.generate
@@ -140,7 +140,7 @@ let openapi_schema ?base_path routes _ =
        ~base_path:(Option.value ~default:"" base_path)
        routes)
 
-let swagger_ui_handler _ =
+let swagger_ui_handler () =
   let html =
     {|<!DOCTYPE html>
 <html lang="en">
@@ -208,7 +208,7 @@ let app env =
   App.(
     routes
       [ scope (s "api") api_v1_routes
-      ; get (s "docs") |> into swagger_ui_handler
+      ; get (s "docs") |> unit |> into swagger_ui_handler
       ; get (s "openapi.json")
         |> into (openapi_schema ~base_path:"/api" api_v1_routes)
       ]

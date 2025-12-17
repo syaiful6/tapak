@@ -68,6 +68,37 @@ let extract_handler_name ~loc:_ pat =
       ~loc:pat.ppat_loc
       "Route handler must be a simple named function"
 
+let extract_function_params expr =
+  match expr.pexp_desc with
+  | Pexp_function (params, _constraint, _body_cases) ->
+    params
+    |> List.filter_map (fun param ->
+      match param.pparam_desc with
+      | Pparam_val (label, _default, desc) ->
+        let label_name =
+          match label with Labelled s | Optional s -> Some s | Nolabel -> None
+        in
+        (match label_name with
+        | Some name -> Some name
+        | None ->
+          (match desc.ppat_desc with
+          | Ppat_var { txt; _ } -> Some txt
+          | _ -> None))
+      | _ -> None)
+  | _ -> []
+
+let has_unit_param expr =
+  match expr with
+  | [%expr fun [%p? pattern] -> [%e? _body]] ->
+    (match pattern.ppat_desc with
+    | Ppat_construct ({ txt = Lident "()"; _ }, None) -> true
+    | _ -> false)
+  | _ -> false
+
+let needs_request expr =
+  let params = extract_function_params expr in
+  List.exists (fun name -> name = "request" || name = "req") params
+
 let validate_http_method ~loc method_str =
   match method_str with
   | "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "HEAD" | "ANY" -> ()
@@ -154,7 +185,91 @@ let extract_param_names segments =
       | Literal _ -> None)
     segments
 
-let generate_route_binding ~loc ~handler_name ~method_str ~route_pattern =
+let generate_handler_expr
+      ~loc
+      ~handler_name
+      ~param_names
+      ~needs_request
+      ~has_unit
+  =
+  let open Ast_builder.Default in
+  if List.length param_names = 0 && not needs_request
+  then
+    if has_unit
+    then evar ~loc handler_name
+    else
+      Location.raise_errorf
+        ~loc
+        "Handler '%s' must take unit parameter: let %s () = ..."
+        handler_name
+        handler_name
+  else if List.length param_names = 0 && needs_request
+  then evar ~loc handler_name
+  else if needs_request
+  then
+    let params_pattern = List.map (fun name -> pvar ~loc name) param_names in
+    let request_pattern = pvar ~loc "request" in
+    let all_patterns = request_pattern :: params_pattern in
+
+    let handler_call =
+      let base_call = evar ~loc handler_name in
+      let call_with_params =
+        List.fold_left
+          (fun acc param_name ->
+             pexp_apply ~loc acc [ Labelled param_name, evar ~loc param_name ])
+          base_call
+          param_names
+      in
+      pexp_apply ~loc call_with_params [ Nolabel, evar ~loc "request" ]
+    in
+
+    List.fold_right
+      (fun pattern acc -> [%expr fun [%p pattern] -> [%e acc]])
+      all_patterns
+      handler_call
+  else
+    let params_pattern = List.map (fun name -> pvar ~loc name) param_names in
+
+    let handler_call =
+      let base_call = evar ~loc handler_name in
+      List.fold_left
+        (fun acc param_name ->
+           pexp_apply ~loc acc [ Labelled param_name, evar ~loc param_name ])
+        base_call
+        param_names
+    in
+
+    List.fold_right
+      (fun pattern acc -> [%expr fun [%p pattern] -> [%e acc]])
+      params_pattern
+      handler_call
+
+let generate_route_expr
+      ~loc
+      ~method_expr
+      ~path_expr
+      ~param_names
+      ~needs_request
+      ~handler_expr
+  =
+  let base_route = [%expr [%e method_expr] [%e path_expr]] in
+  let with_request_or_unit =
+    if List.length param_names = 0 && not needs_request
+    then [%expr [%e base_route] |> Tapak.Router.unit]
+    else if needs_request
+    then [%expr [%e base_route] |> Tapak.Router.request]
+    else base_route
+  in
+  [%expr [%e with_request_or_unit] |> Tapak.Router.into [%e handler_expr]]
+
+let generate_route_binding
+      ~loc
+      ~handler_name
+      ~method_str
+      ~route_pattern
+      ~needs_request
+      ~handler_expr
+  =
   let open Ast_builder.Default in
   validate_http_method ~loc method_str;
   let segments = parse_route_pattern ~loc route_pattern in
@@ -164,31 +279,25 @@ let generate_route_binding ~loc ~handler_name ~method_str ~route_pattern =
   let route_var_name = handler_name ^ "_route" in
 
   let param_names = extract_param_names segments in
+  let has_unit = has_unit_param handler_expr in
 
   let handler_expr =
-    if List.length param_names = 0
-    then evar ~loc handler_name
-    else
-      let params_pattern = List.map (fun name -> pvar ~loc name) param_names in
-      let request_pattern = pvar ~loc "request" in
-      let all_patterns = params_pattern @ [ request_pattern ] in
+    generate_handler_expr
+      ~loc
+      ~handler_name
+      ~param_names
+      ~needs_request
+      ~has_unit
+  in
 
-      let handler_call =
-        let base_call = evar ~loc handler_name in
-        let call_with_params =
-          List.fold_left
-            (fun acc param_name ->
-               pexp_apply ~loc acc [ Labelled param_name, evar ~loc param_name ])
-            base_call
-            param_names
-        in
-        pexp_apply ~loc call_with_params [ Nolabel, evar ~loc "request" ]
-      in
-
-      List.fold_right
-        (fun pattern acc -> [%expr fun [%p pattern] -> [%e acc]])
-        all_patterns
-        handler_call
+  let route_expr =
+    generate_route_expr
+      ~loc
+      ~method_expr
+      ~path_expr
+      ~param_names
+      ~needs_request
+      ~handler_expr
   in
 
   (* Generate both path and route variables - handler_path: polymorphic path for
@@ -199,9 +308,7 @@ let generate_route_binding ~loc ~handler_name ~method_str ~route_pattern =
      specialized to the route type. By generating it twice, each can have its
      own polymorphic type. *)
   [ [%stri let [%p pvar ~loc path_var_name] = [%e path_expr]]
-  ; [%stri
-    let [%p pvar ~loc route_var_name] =
-      [%e method_expr] [%e path_expr] |> Tapak.Router.handle [%e handler_expr]]
+  ; [%stri let [%p pvar ~loc route_var_name] = [%e route_expr]]
   ]
 
 let expand_str_item str_item =
@@ -215,12 +322,15 @@ let expand_str_item str_item =
            | Some (method_str, route_pattern) ->
              let loc = vb.pvb_loc in
              let handler_name = extract_handler_name ~loc vb.pvb_pat in
+             let has_request = needs_request vb.pvb_expr in
              let generated =
                generate_route_binding
                  ~loc
                  ~handler_name
                  ~method_str
                  ~route_pattern
+                 ~needs_request:has_request
+                 ~handler_expr:vb.pvb_expr
              in
              (match generated with
              | [ path_binding; route_binding ] ->
@@ -252,7 +362,14 @@ let transform_structure structure =
                   | Some (method_str, route_pattern) ->
                     let loc = vb.pvb_loc in
                     let handler_name = extract_handler_name ~loc vb.pvb_pat in
-                    Some (loc, handler_name, method_str, route_pattern))
+                    let has_request = needs_request vb.pvb_expr in
+                    Some
+                      ( loc
+                      , handler_name
+                      , method_str
+                      , route_pattern
+                      , has_request
+                      , vb.pvb_expr ))
                bindings
            in
            infos, str_item
@@ -262,7 +379,12 @@ let transform_structure structure =
   let all_route_infos = List.concat_map fst route_infos_and_items in
   let all_paths =
     List.map
-      (fun (loc, handler_name, _method_str, route_pattern) ->
+      (fun ( loc
+           , handler_name
+           , _method_str
+           , route_pattern
+           , _has_request
+           , _handler_expr ) ->
          let segments = parse_route_pattern ~loc route_pattern in
          let path_expr = generate_path_expr ~loc segments in
          let path_var_name = handler_name ^ "_path" in
@@ -273,46 +395,39 @@ let transform_structure structure =
   let original_structure = List.map snd route_infos_and_items in
   let all_routes =
     List.map
-      (fun (loc, handler_name, method_str, route_pattern) ->
+      (fun ( loc
+           , handler_name
+           , method_str
+           , route_pattern
+           , has_request
+           , handler_expr_orig ) ->
          validate_http_method ~loc method_str;
          let segments = parse_route_pattern ~loc route_pattern in
          let path_expr = generate_path_expr ~loc segments in
          let method_expr = method_to_expr ~loc method_str in
          let route_var_name = handler_name ^ "_route" in
          let param_names = extract_param_names segments in
+         let has_unit = has_unit_param handler_expr_orig in
          let open Ast_builder.Default in
          let handler_expr =
-           if List.length param_names = 0
-           then evar ~loc handler_name
-           else
-             let params_pattern =
-               List.map (fun name -> pvar ~loc name) param_names
-             in
-             let request_pattern = pvar ~loc "request" in
-             let all_patterns = params_pattern @ [ request_pattern ] in
-             let handler_call =
-               let base_call = evar ~loc handler_name in
-               let call_with_params =
-                 List.fold_left
-                   (fun acc param_name ->
-                      pexp_apply
-                        ~loc
-                        acc
-                        [ Labelled param_name, evar ~loc param_name ])
-                   base_call
-                   param_names
-               in
-               pexp_apply ~loc call_with_params [ Nolabel, evar ~loc "request" ]
-             in
-             List.fold_right
-               (fun pattern acc -> [%expr fun [%p pattern] -> [%e acc]])
-               all_patterns
-               handler_call
+           generate_handler_expr
+             ~loc
+             ~handler_name
+             ~param_names
+             ~needs_request:has_request
+             ~has_unit
          in
-         [%stri
-         let [%p pvar ~loc route_var_name] =
-           [%e method_expr] [%e path_expr]
-           |> Tapak.Router.into [%e handler_expr]])
+
+         let route_expr =
+           generate_route_expr
+             ~loc
+             ~method_expr
+             ~path_expr
+             ~param_names
+             ~needs_request:has_request
+             ~handler_expr
+         in
+         [%stri let [%p pvar ~loc route_var_name] = [%e route_expr]])
       all_route_infos
   in
   let rec find_last_handler_index items index last_handler_index =

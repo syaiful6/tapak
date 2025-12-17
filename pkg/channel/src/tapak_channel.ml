@@ -1742,7 +1742,7 @@ module Endpoint = struct
   let routes : config -> Tapak_kernel.Router.route list =
    fun config ->
     let open Tapak_kernel.Router in
-    [ get (s "websocket") |> into (handler config) ]
+    [ get (s "websocket") |> request |> into (handler config) ]
 
   let disconnect : config -> Socket.id -> unit =
    fun config socket_id ->

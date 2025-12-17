@@ -15,7 +15,7 @@ let user_schema =
   in
   { name; email; age }
 
-let create_user user _req =
+let create_user user =
   let user_data =
     [ "name", `String user.name; "email", `String user.email ]
     @ match user.age with Some age -> [ "age", `Int age ] | None -> []
@@ -36,7 +36,7 @@ let update_schema =
   and+ email = Schema.option "email" (Schema.Field.str ()) in
   { name; email }
 
-let update_user update id _req =
+let update_user update id =
   let updates = [] in
   let updates =
     match update.name with
@@ -75,7 +75,7 @@ let login_schema =
   in
   { username; password }
 
-let login_form login _req =
+let login_form login =
   (* verify login.username and login.password against your user database *)
   let _password_to_verify = login.password in
   let response_json =
@@ -102,7 +102,7 @@ let contact_schema =
   and+ subscribe = Schema.bool ~default:false "subscribe" in
   { name; email; message; subscribe }
 
-let contact_form contact _req =
+let contact_form contact =
   let response_json =
     `Assoc
       [ "status", `String "received"
@@ -128,7 +128,7 @@ let upload_schema =
   and+ description = Schema.str ~default:"No description" "description" in
   { file; description }
 
-let upload_file upload _req =
+let upload_file upload =
   (* save the upload.file somewhere *)
   let _file_part = upload.file in
   let response_json =
@@ -277,10 +277,10 @@ let app env =
   let now () = Eio.Time.now clock in
   App.(
     routes
-      [ get (s "") |> into index_page
+      [ get (s "") |> unit |> into index_page
       ; scope
           (s "api")
-          [ get (s "users") |> into list_users
+          [ get (s "users") |> unit |> into list_users
           ; post (s "users") |> body Schema.Json user_schema |> into create_user
           ; put (s "users" / p "userId" int64)
             |> body Schema.Json update_schema

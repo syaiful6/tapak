@@ -11,22 +11,23 @@ let trusted_proxies =
     (* Ipaddr.Prefix.of_string_exn "192.168.0.0/16"; *)
   ]
 
-let about _request =
-  Response.of_string' "About Tapak - A composable web framework"
+let about () = Response.of_string' "About Tapak - A composable web framework"
 [@@route GET, "/about"]
 
-let get_user ~id _request =
-  Response.of_string' (Printf.sprintf "User ID: %d" id)
+let get_user ~id = Response.of_string' (Printf.sprintf "User ID: %d" id)
 [@@route GET, "/users/:id"]
 
-let create_user _request = Response.of_string' "User created"
-[@@route POST, "/users"]
+let create_user () = Response.of_string' "User created" [@@route POST, "/users"]
 
-let blog_post ~slug _request =
-  Response.of_string' (Printf.sprintf "Blog Post Slug: %s" slug)
+let blog_post ~slug req =
+  Response.of_string'
+    (Printf.sprintf
+       "Blog Post %s Slug: %s"
+       (Request.meth req |> Piaf.Method.to_string)
+       slug)
 [@@route GET, "/blog/<slug:slug>"]
 
-let home _request =
+let home () =
   Response.of_html
     ~status:`OK
     (Format.asprintf

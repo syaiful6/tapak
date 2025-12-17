@@ -270,7 +270,7 @@ let html_page =
 </body>
 </html>|}
 
-let home_handler _req = Response.of_html ~status:`OK html_page
+let home_handler () = Response.of_html ~status:`OK html_page
 
 let chat_stream_handler ~clock room req =
   let sw =
@@ -317,10 +317,11 @@ let () =
   let app =
     App.(
       routes
-        [ get (s "") |> into home_handler
-        ; get (s "chat") |> into (chat_stream_handler ~clock room)
+        [ get (s "") |> unit |> into home_handler
+        ; get (s "chat") |> request |> into (chat_stream_handler ~clock room)
         ; post (s "chat" / int)
-          |> into (fun user_id req -> post_message_handler room user_id req)
+          |> request
+          |> into (fun req user_id -> post_message_handler room user_id req)
         ]
         ())
   in

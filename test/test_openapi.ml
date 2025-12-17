@@ -1,6 +1,6 @@
 open Tapak
 
-let simple_handler _req = Response.of_string ~body:"OK" `OK
+let simple_handler () = Response.of_string ~body:"OK" `OK
 
 let test_basic_generation () =
   let open Router in
@@ -8,8 +8,10 @@ let test_basic_generation () =
     [ get (s "users")
       |> summary "List users"
       |> operation_id "listUsers"
+      |> unit
       |> into simple_handler
     ; post (s "users")
+      |> unit
       |> summary "Create user"
       |> operation_id "createUser"
       |> into simple_handler
@@ -31,7 +33,7 @@ let test_path_parameters () =
     [ get (s "users" / int)
       |> summary "Get user by ID"
       |> operation_id "getUser"
-      |> into (fun _id _req -> Response.of_string ~body:"User" `OK)
+      |> into (fun _id -> Response.of_string ~body:"User" `OK)
     ]
   in
   let spec = Openapi.generate routes in
@@ -51,7 +53,7 @@ let test_annotated_parameters () =
   let routes =
     [ get (s "users" / p "userId" int)
       |> summary "Get user by ID"
-      |> into (fun _id _req -> Response.of_string ~body:"User" `OK)
+      |> into (fun _id -> Response.of_string ~body:"User" `OK)
     ]
   in
   let spec = Openapi.generate routes in
@@ -78,8 +80,7 @@ let test_request_body () =
     [ post (s "users")
       |> body Schema.Json user_schema
       |> summary "Create user"
-      |> into (fun (_name, _age) _req ->
-        Response.of_string ~body:"Created" `Created)
+      |> into (fun (_name, _age) -> Response.of_string ~body:"Created" `Created)
     ]
   in
   let spec = Openapi.generate routes in
@@ -106,8 +107,8 @@ let test_scoped_routes () =
   let routes =
     [ scope
         (s "api" / s "v1")
-        [ get (s "users") |> into simple_handler
-        ; get (s "posts") |> into simple_handler
+        [ get (s "users") |> unit |> into simple_handler
+        ; get (s "posts") |> unit |> into simple_handler
         ]
     ]
   in
@@ -129,7 +130,7 @@ let test_scoped_routes () =
 
 let test_base_path () =
   let open Router in
-  let routes = [ get (s "users") |> into simple_handler ] in
+  let routes = [ get (s "users") |> unit |> into simple_handler ] in
   let spec = Openapi.generate ~base_path:"/api" routes in
   match spec with
   | `Assoc fields ->
@@ -145,7 +146,11 @@ let test_base_path () =
 let test_tags () =
   let open Router in
   let routes =
-    [ get (s "users") |> tags [ "Users"; "Management" ] |> into simple_handler ]
+    [ get (s "users")
+      |> tags [ "Users"; "Management" ]
+      |> unit
+      |> into simple_handler
+    ]
   in
   let spec = Openapi.generate routes in
   try
@@ -171,14 +176,17 @@ let test_include_in_schema () =
     [ get (s "users")
       |> summary "List users"
       |> operation_id "listUsers"
+      |> unit
       |> into simple_handler
     ; get (s "internal" / s "health")
       |> summary "Internal health check"
       |> include_in_schema false
+      |> unit
       |> into simple_handler
     ; post (s "users")
       |> summary "Create user"
       |> operation_id "createUser"
+      |> unit
       |> into simple_handler
     ]
   in
@@ -212,7 +220,7 @@ let test_query_parameters () =
     [ get (s "search")
       |> query search_schema
       |> summary "Search"
-      |> into (fun (_q, _limit, _tags) _req ->
+      |> into (fun (_q, _limit, _tags) ->
         Response.of_string ~body:"Results" `OK)
     ]
   in
@@ -316,8 +324,7 @@ let test_query_with_constraints () =
   let routes =
     [ get (s "items")
       |> query search_schema
-      |> into (fun (_page, _per_page) _req ->
-        Response.of_string ~body:"Items" `OK)
+      |> into (fun (_page, _per_page) -> Response.of_string ~body:"Items" `OK)
     ]
   in
   let spec = Openapi.generate routes in

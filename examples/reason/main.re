@@ -6,29 +6,29 @@ let trusted_proxies = [
 ];
 
 [@route (GET, "/")]
-let home = _request =>
+let home = () =>
   Response.of_string(~body="Welcome to Tapak with ReasonML!", `OK);
 
 [@route (POST, "/users")]
-let create_user = request => {
+let create_user = () => {
   let body = "User created successfully!";
   Response.of_string(~body, `Created);
 };
 
 [@route (PUT, "/users/<int64:id>")]
-let update_user = (~id, request) => {
+let update_user = (~id) => {
   let body = Printf.sprintf("User %Ld updated!", id);
   Response.of_string(~body, `OK);
 };
 
 [@route (DELETE, "/users/<int64:id>")]
-let delete_user = (~id, request) => {
+let delete_user = (~id) => {
   let body = Printf.sprintf("User %Ld deleted!", id);
   Response.of_string(~body, `OK);
 };
 
 [@route (GET, "/users/<int64:id>")]
-let get_user = (~id, request) => {
+let get_user = (~id) => {
   let edit_url = Router.sprintf(edit_user_path, id);
   let delete_url = Router.sprintf(delete_user_path, id);
 
@@ -44,7 +44,7 @@ let get_user = (~id, request) => {
 };
 
 [@route (GET, "/users/<int64:id>/edit")]
-let edit_user = (~id, request) => {
+let edit_user = (~id) => {
   let back_url = Router.sprintf(get_user_path, id);
 
   let body = Printf.sprintf("Edit User %Ld\nBack to: %s", id, back_url);
@@ -53,7 +53,7 @@ let edit_user = (~id, request) => {
 };
 
 [@route (GET, "/users")]
-let list_users = _request => {
+let list_users = () => {
   let user_1_url = Router.sprintf(get_user_path, 1L);
   let user_2_url = Router.sprintf(get_user_path, 2L);
   let user_3_url = Router.sprintf(get_user_path, 3L);
@@ -70,26 +70,26 @@ let list_users = _request => {
 };
 
 [@route (GET, "/posts/<slug:slug>")]
-let get_post = (~slug, request) => {
+let get_post = (~slug) => {
   let body = Printf.sprintf("Post: %s", slug);
   Response.of_string(~body, `OK);
 };
 
 [@route (GET, "/api/feature/<bool:enabled>")]
-let toggle_feature = (~enabled, request) => {
+let toggle_feature = (~enabled) => {
   let status = enabled ? "enabled" : "disabled";
   let body = Printf.sprintf("Feature is %s", status);
   Response.of_string(~body, `OK);
 };
 
 [@route (GET, "/search/<string:query>")]
-let search = (~query, request) => {
+let search = (~query) => {
   let body = Printf.sprintf("Searching for: %s", query);
   Response.of_string(~body, `OK);
 };
 
 [@route (GET, "/files/**")]
-let serve_file = (~splat, request) => {
+let serve_file = (~splat) => {
   let file_path = String.concat("/", splat);
   let body = Printf.sprintf("Serving file: %s", file_path);
   Response.of_string(~body, `OK);
@@ -103,8 +103,10 @@ let webhook_handler = request => {
 };
 
 [@route (ANY, "/api/resources/<int64:id>")]
-let resource_handler = (~id, request) => {
-  let method_str = Piaf.Method.to_string(Request.meth(request));
+let resource_handler = (~id) => {
+  // TODO: the ppx can't handle request parameter yet
+  // let method_str = Piaf.Method.to_string(Request.meth(request));
+  let method_str = "GET";
   let body = Printf.sprintf("Resource %Ld accessed via %s", id, method_str);
   Response.of_string(~body, `OK);
 };

@@ -431,8 +431,8 @@ val serve :
    (module STORAGE)
   -> ?config:config
   -> unit
-  -> string list
   -> Request.t
+  -> string list
   -> Response.t
 (** [serve (module STORAGE) ~config () segments] creates a
     static file handler that accepts path segments directly.

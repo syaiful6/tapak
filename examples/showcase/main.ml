@@ -12,7 +12,7 @@ let trusted_proxies =
     (* Ipaddr.Prefix.of_string_exn "192.168.0.0/16"; *)
   ]
 
-let home_handler _req =
+let home_handler () =
   Response.of_html
     ~status:`OK
     {|<h1>Tapak Showcases</h1>
@@ -24,7 +24,7 @@ let home_handler _req =
   <li><a href="/form">CSRF-Protected Form</a></li>
 </ul>|}
 
-let user_handler id _req =
+let user_handler id =
   let html = Printf.sprintf "<h1>User Profile</h1><p>User ID: %Ld</p>" id in
   Response.of_html ~status:`OK html
 
@@ -39,7 +39,7 @@ let api_version_handler req =
     | `Text -> Some ("text/plain", "Hello from Tapak!\nVersion: 1.0")
     | _ -> None)
 
-let files_handler path _req =
+let files_handler path =
   let html =
     Printf.sprintf "<h1>File Browser</h1><p>Requested path: %s</p>" path
   in
@@ -151,18 +151,18 @@ let form_post_handler req =
       "<h1>400 Bad Request</h1><p>Invalid form data</p><p><a \
        href=\"/form\">Try again</a></p>"
 
-let api_users_handler _req =
+let api_users_handler () =
   Response.of_string
     ~body:{|{"users": [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]}|}
     `OK
 
-let api_detail_user_handler id _req =
+let api_detail_user_handler id =
   match id with
   | 1L -> Response.of_string ~body:{|{"id": 1, "name": "Alice"}|} `OK
   | 2L -> Response.of_string ~body:{|{"id": 2, "name": "Bob"}|} `OK
   | _ -> Response.of_string ~body:{|{"error": "User not found"}|} `Not_found
 
-let api_update_user_handler id req =
+let api_update_user_handler req id =
   let body_content =
     Result.fold
       ~ok:Fun.id
@@ -192,11 +192,11 @@ let setup_app env =
   App.(
     routes
       ~not_found
-      [ get (s "") |> into home_handler
+      [ get (s "") |> unit |> into home_handler
       ; get (s "users" / int64) |> into user_handler
       ; scope
           (s "api")
-          [ get (s "version") |> into api_version_handler
+          [ get (s "version") |> request |> into api_version_handler
           ; scope
               ~middlewares:
                 [ use
@@ -204,16 +204,16 @@ let setup_app env =
                     (Limit_request_size.args ~max_bytes)
                 ]
               (s "users")
-              [ get (s "") |> into api_users_handler
+              [ get (s "") |> unit |> into api_users_handler
               ; get int64 |> into api_detail_user_handler
-              ; post int64 |> into api_update_user_handler
+              ; post int64 |> request |> into api_update_user_handler
               ]
           ]
       ; get (s "files" / str) |> into files_handler
-      ; post (s "echo") |> into echo_handler
-      ; put (s "echo") |> into echo_handler
-      ; get (s "form") |> into form_get_handler
-      ; post (s "form") |> into form_post_handler
+      ; post (s "echo") |> request |> into echo_handler
+      ; put (s "echo") |> request |> into echo_handler
+      ; get (s "form") |> request |> into form_get_handler
+      ; post (s "form") |> request |> into form_post_handler
       ]
       ()
     <++> [ use

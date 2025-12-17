@@ -53,9 +53,9 @@ type (_, _) schema =
       -> ('header -> 'a, 'b) schema
   | Response_model :
       { encoder : 'resp -> Response.t
-      ; rest : ('a, Request.t -> 'resp) schema
+      ; rest : ('a, 'resp) schema
       }
-      -> ('a, Request.t -> Response.t) schema
+      -> ('a, Response.t) schema
   | Body :
       { input_type : 'input Schema.input
       ; schema : 'validated Schema.t
@@ -75,7 +75,7 @@ type (_, _) schema =
 
 type route =
   | Route :
-      { schema : ('a, Request.t -> Response.t) schema
+      { schema : ('a, Response.t) schema
       ; handler : 'a
       }
       -> route
@@ -130,13 +130,15 @@ val body :
 val query : 'query Schema.t -> ('a, 'b) schema -> ('query -> 'a, 'b) schema
 val header : 'a Schema.t -> ('b, 'c) schema -> ('a -> 'b, 'c) schema
 val guard : 'g Request_guard.t -> ('a, 'b) schema -> ('g -> 'a, 'b) schema
+val request : ('a, 'b) schema -> (Request.t -> 'a, 'b) schema
+val unit : ('a, 'b) schema -> (unit -> 'a, 'b) schema
 
 val response_model :
    ('resp -> Response.t)
-  -> ('a, Request.t -> 'resp) schema
-  -> ('a, Request.t -> Response.t) schema
+  -> ('a, 'resp) schema
+  -> ('a, Response.t) schema
 
-val into : 'a -> ('a, Request.t -> Response.t) schema -> route
+val into : 'a -> ('a, Response.t) schema -> route
 val operation_id : string -> ('a, 'b) schema -> ('a, 'b) schema
 val summary : string -> ('a, 'b) schema -> ('a, 'b) schema
 val description : string -> ('a, 'b) schema -> ('a, 'b) schema
@@ -163,10 +165,10 @@ module type Resource = sig
   val index : Handler.t
   val new_ : Handler.t
   val create : Handler.t
-  val get : id -> Handler.t
-  val edit : id -> Handler.t
-  val update : id -> Handler.t
-  val delete : id -> Handler.t
+  val get : Request.t -> id -> Response.t
+  val edit : Request.t -> id -> Response.t
+  val update : Request.t -> id -> Response.t
+  val delete : Request.t -> id -> Response.t
 end
 
 val resource :

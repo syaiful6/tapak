@@ -474,7 +474,7 @@ let test_serve_simple_file () =
       ~modified_time:date1
       ();
     let request = make_request [ "test.txt" ] in
-    let response = Static.serve (module MockFile) () [ "test.txt" ] request in
+    let response = Static.serve (module MockFile) () request [ "test.txt" ] in
     Alcotest.(check int)
       "status 200"
       200
@@ -488,7 +488,7 @@ let test_serve_not_found () =
     MockFile.reset ();
     let request = make_request [ "missing.txt" ] in
     let response =
-      Static.serve (module MockFile) () [ "missing.txt" ] request
+      Static.serve (module MockFile) () request [ "missing.txt" ]
     in
     Alcotest.(check int)
       "status 404"
@@ -509,7 +509,7 @@ let test_serve_with_encoding () =
       ();
     let request = make_request [ "style.css.gz" ] in
     let response =
-      Static.serve (module MockFile) () [ "style.css.gz" ] request
+      Static.serve (module MockFile) () request [ "style.css.gz" ]
     in
     Alcotest.(check int)
       "status 200"
@@ -537,7 +537,7 @@ let test_serve_with_etag () =
       ~hash:"abc123"
       ();
     let request = make_request [ "file.txt" ] in
-    let response = Static.serve (module MockFile) () [ "file.txt" ] request in
+    let response = Static.serve (module MockFile) () request [ "file.txt" ] in
     let headers = Response.headers response in
     Alcotest.(check (option string))
       "ETag present"
@@ -558,7 +558,7 @@ let test_serve_if_none_match () =
     let request =
       make_request ~headers:[ "If-None-Match", "\"abc123\"" ] [ "file.txt" ]
     in
-    let response = Static.serve (module MockFile) () [ "file.txt" ] request in
+    let response = Static.serve (module MockFile) () request [ "file.txt" ] in
     Alcotest.(check int)
       "status 304"
       304
@@ -577,7 +577,7 @@ let test_serve_range_request () =
     let request =
       make_request ~headers:[ "Range", "bytes=2-5" ] [ "file.txt" ]
     in
-    let response = Static.serve (module MockFile) () [ "file.txt" ] request in
+    let response = Static.serve (module MockFile) () request [ "file.txt" ] in
     Alcotest.(check int)
       "status 206"
       206
@@ -599,7 +599,7 @@ let test_serve_nested_path () =
       ();
     let request = make_request [ "css"; "style.css" ] in
     let response =
-      Static.serve (module MockFile) () [ "css"; "style.css" ] request
+      Static.serve (module MockFile) () request [ "css"; "style.css" ]
     in
     Alcotest.(check int)
       "status 200"
@@ -623,7 +623,7 @@ let test_serve_empty_segments () =
       ~mime_type:"text/html"
       ();
     let request = make_request [] in
-    let response = Static.serve (module MockFile) () [] request in
+    let response = Static.serve (module MockFile) () request [] in
     (* With empty path, it serves the file at root *)
     Alcotest.(check int)
       "status"
@@ -646,7 +646,7 @@ let test_serve_cache_control () =
     let request = make_request [ "file.txt" ] in
     let config = { Static.default_config with max_age = `Seconds 3600 } in
     let response =
-      Static.serve (module MockFile) ~config () [ "file.txt" ] request
+      Static.serve (module MockFile) ~config () request [ "file.txt" ]
     in
     let headers = Response.headers response in
     Alcotest.(check (option string))
