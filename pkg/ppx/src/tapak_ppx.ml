@@ -191,14 +191,13 @@ let generate_route_binding ~loc ~handler_name ~method_str ~route_pattern =
         handler_call
   in
 
-  (* Generate both path and route variables
-     - handler_path: polymorphic path for sprintf
-     - handler_route: complete route with method and handler
+  (* Generate both path and route variables - handler_path: polymorphic path for
+     sprintf - handler_route: complete route with method and handler
 
-     Important: We duplicate the path expression to avoid specialization.
-     When the same path value is used in both route and sprintf contexts,
-     it gets specialized to the route type. By generating it twice,
-     each can have its own polymorphic type. *)
+     Important: We duplicate the path expression to avoid specialization. When
+     the same path value is used in both route and sprintf contexts, it gets
+     specialized to the route type. By generating it twice, each can have its
+     own polymorphic type. *)
   [ [%stri let [%p pvar ~loc path_var_name] = [%e path_expr]]
   ; [%stri
     let [%p pvar ~loc route_var_name] =

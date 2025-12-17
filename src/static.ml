@@ -428,13 +428,11 @@ end = struct
       | Some etag_str -> ETag.parse etag_str
     in
 
-    (* RFC 7232 precedence order for conditional requests:
-       1. If-Match (if present, must match for request to proceed)
-       2. If-Unmodified-Since (if no If-Match)
-       3. If-None-Match (if present, must NOT match to proceed)
-       4. If-Modified-Since (if no If-None-Match)
-       5. If-Range (for range requests only)
-    *)
+    (* RFC 7232 precedence order for conditional requests: 1. If-Match (if
+       present, must match for request to proceed) 2. If-Unmodified-Since (if no
+       If-Match) 3. If-None-Match (if present, must NOT match to proceed) 4.
+       If-Modified-Since (if no If-None-Match) 5. If-Range (for range requests
+       only) *)
     let mcondition =
       match if_match request_headers finfo.Finfo.size etag_opt with
       | Some res -> Some res
@@ -653,8 +651,8 @@ let filesystem ?(follow = true) root =
           }
 
     let mime_type (File { path; _ }) =
-      (* For compressed files (e.g., style.css.gz), we need to detect the MIME type
-         of the original content (style.css), not the compressed format.
+      (* For compressed files (e.g., style.css.gz), we need to detect the MIME
+         type of the original content (style.css), not the compressed format.
          get_content_extension strips compression extensions before extracting
          the content extension. *)
       match Path.split path with
@@ -849,7 +847,8 @@ let serve (module F : STORAGE) ?(config = default_config) () segments request =
         (match find_index_file (module F) config pieces with
         | Some index_file -> Ok index_file
         | None ->
-          (* TODO: Implement directory listing if config.show_directory_listing *)
+          (* TODO: Implement directory listing if
+             config.show_directory_listing *)
           Error (Response.create `Forbidden))
       | `File file ->
         (match F.finfo file with
@@ -907,8 +906,8 @@ let serve (module F : STORAGE) ?(config = default_config) () segments request =
               ~start:offset
               ~end_:(Some (Int64.sub (Int64.add offset length) 1L))
         | None ->
-          (* Fallback for tests: create a temporary switch.
-             Note: This will block until content is fully read. *)
+          (* Fallback for tests: create a temporary switch. Note: This will
+             block until content is fully read. *)
           Eio.Switch.run (fun sw ->
             if offset = 0L && length = finfo.size
             then F.content ~sw file

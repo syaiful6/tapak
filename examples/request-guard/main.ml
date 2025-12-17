@@ -149,35 +149,21 @@ let user_list_handler admin pagination _req =
 
 (* TODO: PPX support for [@guard] attribute not yet implemented *)
 
-(*
-   (** PPX Example 1: Simple guard with attribute *)
-let api_status (api_key : string) (_req : Request.t) : Response.t =
-  let body = Printf.sprintf
-    {|{"status": "operational", "api_key": "%s"}|}
-    api_key
-  in
-  Response.of_string' ~status:`OK body
-[@@route GET, "/api/status"]
-[@@guard api_key_guard]
+(* (** PPX Example 1: Simple guard with attribute *) let api_status (api_key :
+   string) (_req : Request.t) : Response.t = let body = Printf.sprintf
+   {|{"status": "operational", "api_key": "%s"}|} api_key in Response.of_string'
+   ~status:`OK body [@@route GET, "/api/status"] [@@guard api_key_guard]
 
-(** PPX Example 2: User profile with path param *)
-let get_user ~id (user : user) (_req : Request.t) : Response.t =
-  let body = Printf.sprintf
-    {|{"requested_id": %Ld, "authenticated_user": "%s"}|}
-    id user.name
-  in
-  Response.of_string' ~status:`OK body
-[@@route GET, "/users/:id"]
-[@@guard user_guard]
+   (** PPX Example 2: User profile with path param *) let get_user ~id (user :
+   user) (_req : Request.t) : Response.t = let body = Printf.sprintf
+   {|{"requested_id": %Ld, "authenticated_user": "%s"}|} id user.name in
+   Response.of_string' ~status:`OK body [@@route GET, "/users/:id"] [@@guard
+   user_guard]
 
-(** PPX Example 3: Admin dashboard *)
-let admin_dashboard (admin : user) (_req : Request.t) : Response.t =
-  Response.of_string'
-    ~status:`OK
-    {|{"message": "Admin dashboard", "admin": true}|}
-[@@route GET, "/admin/dashboard"]
-[@@guard admin_guard]
-*)
+   (** PPX Example 3: Admin dashboard *) let admin_dashboard (admin : user)
+   (_req : Request.t) : Response.t = Response.of_string' ~status:`OK
+   {|{"message": "Admin dashboard", "admin": true}|} [@@route GET,
+   "/admin/dashboard"] [@@guard admin_guard] *)
 
 let home_handler _req =
   Response.of_html

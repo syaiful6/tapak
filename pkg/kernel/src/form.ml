@@ -263,8 +263,8 @@ module Urlencoded = struct
       match node, path with
       | _, [] -> ()
       | Object h, [ key ] ->
-        (* If a value for the same key already exists, this will overwrite.
-           This is standard behavior; the last value sent wins. *)
+        (* If a value for the same key already exists, this will overwrite. This
+           is standard behavior; the last value sent wins. *)
         Hashtbl.replace h key (Value values)
       | Object h, key :: rest ->
         let next_node =
@@ -285,12 +285,12 @@ module Urlencoded = struct
       | Array l, "" :: rest ->
         (match rest with
         | [] ->
-          (* Simple array of values: tags[]=foo&tags[]=bar
-             Add each value as a separate element to the array. *)
+          (* Simple array of values: tags[]=foo&tags[]=bar Add each value as a
+             separate element to the array. *)
           List.iter (fun v -> l := !l @ [ Value [ v ] ]) values
         | _ ->
-          (* Array of objects: items[][id]=1&items[][name]=foo
-             Create a new object and recurse into it. *)
+          (* Array of objects: items[][id]=1&items[][name]=foo Create a new
+             object and recurse into it. *)
           let new_obj = Object (Hashtbl.create 4) in
           l := !l @ [ new_obj ];
           insert new_obj rest values)
@@ -312,8 +312,9 @@ module Urlencoded = struct
           | x :: _ when i = 0 -> x
           | _ :: xs -> get_or_create_at_idx (i - 1) xs
           | [] ->
-            (* This case handles sparse arrays, e.g. items[2] when items[0] and items[1] don't exist.
-               We pad with `Value []` which will become `null`. *)
+            (* This case handles sparse arrays, e.g. items[2] when items[0] and
+               items[1] don't exist. We pad with `Value []` which will become
+               `null`. *)
             let rec pad_and_create n =
               if n < 0
               then failwith "Invalid array index"

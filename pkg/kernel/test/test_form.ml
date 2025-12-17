@@ -43,7 +43,8 @@ let test_of_string_multiple_params () =
 
 let test_of_string_multiple_values () =
   let result = Form.Urlencoded.of_string "color=red&color=blue&color=green" in
-  (* Uri.query_of_encoded returns duplicate keys as separate entries, not merged *)
+  (* Uri.query_of_encoded returns duplicate keys as separate entries, not
+     merged *)
   Alcotest.(check urlencoded_testable)
     "Multiple values for same key"
     [ "color", [ "red" ]; "color", [ "blue" ]; "color", [ "green" ] ]

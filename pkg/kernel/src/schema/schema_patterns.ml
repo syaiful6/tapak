@@ -1,6 +1,7 @@
 let email_re =
   Re.compile (Re.Perl.re "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$")
-(* Simplified version, in the future we will implement email validator with angstrom *)
+(* Simplified version, in the future we will implement email validator with
+   angstrom *)
 
 let date_re = Re.(compile (Perl.re "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"))
 (* Format: YYYY-MM-DD *)

@@ -543,9 +543,9 @@ module Date = struct
     | None -> Error "Invalid date/time values"
 
   let of_ptime ptime =
-    (* Truncate to second precision to match HTTP date format.
-       This ensures correct If-Modified-Since comparisons by dropping
-       subsecond precision that filesystems may provide. *)
+    (* Truncate to second precision to match HTTP date format. This ensures
+       correct If-Modified-Since comparisons by dropping subsecond precision
+       that filesystems may provide. *)
     let ptime_truncated = Ptime.truncate ~frac_s:0 ptime in
     let (year, month_int, day), ((hour, minute, second), _tz_offset_s) =
       Ptime.to_date_time ptime_truncated
