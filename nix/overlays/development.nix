@@ -13,7 +13,7 @@ in
 {
   tapak = prev.tapak.overrideScope (
     final': prev': {
-      checks.formatting = treefmtEval.config.build.check ../../.;
+      checks.formatting = treefmtEval.config.build.check (final.lib.cleanSource ../../.);
       treefmt = treefmtEval.config.build.wrapper;
       dev-shell = final'.callPackage ../packages/dev-shell.nix { };
     }
