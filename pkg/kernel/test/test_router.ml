@@ -864,6 +864,165 @@ let test_route_header_validation () =
   with
   | Router.Validation_failed _ -> ()
 
+let test_url_encoded_path_space () =
+  let open Router in
+  let captured = ref "" in
+  let route =
+    get (s "files" / str)
+    |> into (fun filename ->
+      captured := filename;
+      Response.of_string ~body:filename `OK)
+  in
+  let request = make_request "/files/hello%20world.txt" in
+  match match' [ route ] request with
+  | Some _ ->
+    Alcotest.(check string)
+      "URL-encoded %20 should be decoded to space"
+      "hello world.txt"
+      !captured
+  | None -> Alcotest.fail "route should have matched URL-encoded path"
+
+let test_url_encoded_path_unicode () =
+  let open Router in
+  let captured = ref "" in
+  let route =
+    get (s "posts" / str)
+    |> into (fun slug ->
+      captured := slug;
+      Response.of_string ~body:slug `OK)
+  in
+  let request = make_request "/posts/caf%C3%A9" in
+  match match' [ route ] request with
+  | Some _ ->
+    Alcotest.(check string)
+      "URL-encoded UTF-8 should be decoded to café"
+      "café"
+      !captured
+  | None -> Alcotest.fail "route should have matched URL-encoded UTF-8 path"
+
+let test_url_encoded_path_special_chars () =
+  let open Router in
+  let captured = ref "" in
+  let route =
+    get (s "api" / str)
+    |> into (fun value ->
+      captured := value;
+      Response.of_string ~body:value `OK)
+  in
+  let request = make_request "/api/hello%2Fworld" in
+  match match' [ route ] request with
+  | Some _ ->
+    Alcotest.(check string)
+      "URL-encoded %2F should be decoded to /"
+      "hello/world"
+      !captured
+  | None -> Alcotest.fail "route should have matched URL-encoded path"
+
+let test_url_encoded_multiple_params () =
+  let open Router in
+  let captured1 = ref "" in
+  let captured2 = ref "" in
+  let route =
+    get (s "users" / str / s "files" / str)
+    |> into (fun username filename ->
+      captured1 := username;
+      captured2 := filename;
+      Response.of_string ~body:"ok" `OK)
+  in
+  let request = make_request "/users/john%20doe/files/my%20document.pdf" in
+  match match' [ route ] request with
+  | Some _ ->
+    Alcotest.(check string)
+      "First param should be decoded"
+      "john doe"
+      !captured1;
+    Alcotest.(check string)
+      "Second param should be decoded"
+      "my document.pdf"
+      !captured2
+  | None -> Alcotest.fail "route should have matched"
+
+let test_url_encoded_literal_match () =
+  let open Router in
+  let route =
+    get (s "api" / s "test route")
+    |> unit
+    |> into (fun () -> Response.of_string ~body:"ok" `OK)
+  in
+  let request = make_request "/api/test%20route" in
+  match match' [ route ] request with
+  | Some _ -> ()
+  | None -> Alcotest.fail "encoded literal should match decoded route literal"
+
+let test_url_encoded_international_chars () =
+  let open Router in
+  let captured = ref "" in
+  let route =
+    get (s "search" / str)
+    |> into (fun query ->
+      captured := query;
+      Response.of_string ~body:query `OK)
+  in
+  let request = make_request "/search/%E6%97%A5%E6%9C%AC%E8%AA%9E" in
+  match match' [ route ] request with
+  | Some _ ->
+    Alcotest.(check string)
+      "Japanese characters should be decoded"
+      "日本語"
+      !captured
+  | None -> Alcotest.fail "route should have matched international characters"
+
+let test_url_encoded_mixed_encoded_unencoded () =
+  let open Router in
+  let captured = ref "" in
+  let route =
+    get (s "items" / str)
+    |> into (fun item ->
+      captured := item;
+      Response.of_string ~body:item `OK)
+  in
+  let request = make_request "/items/hello%20world-123_test" in
+  match match' [ route ] request with
+  | Some _ ->
+    Alcotest.(check string)
+      "Mixed encoded/unencoded should work"
+      "hello world-123_test"
+      !captured
+  | None -> Alcotest.fail "route should have matched"
+
+let test_url_encoded_plus_sign () =
+  let open Router in
+  let captured = ref "" in
+  let route =
+    get (s "data" / str)
+    |> into (fun value ->
+      captured := value;
+      Response.of_string ~body:value `OK)
+  in
+  let request = make_request "/data/a%2Bb" in
+  match match' [ route ] request with
+  | Some _ ->
+    Alcotest.(check string) "Plus sign should be decoded" "a+b" !captured
+  | None -> Alcotest.fail "route should have matched"
+
+let test_url_no_encoding_needed () =
+  let open Router in
+  let captured = ref "" in
+  let route =
+    get (s "files" / str)
+    |> into (fun filename ->
+      captured := filename;
+      Response.of_string ~body:filename `OK)
+  in
+  let request = make_request "/files/normal-file_name.txt" in
+  match match' [ route ] request with
+  | Some _ ->
+    Alcotest.(check string)
+      "Unencoded path should work normally"
+      "normal-file_name.txt"
+      !captured
+  | None -> Alcotest.fail "route should have matched"
+
 let tests =
   [ "Simple route", `Quick, test_simple_route
   ; "Int64 parameter", `Quick, test_int64_param
@@ -912,6 +1071,21 @@ let tests =
   ; "Route multiple headers", `Quick, test_route_multiple_headers
   ; "Route optional header", `Quick, test_route_optional_header
   ; "Route header validation", `Quick, test_route_header_validation
+  ; "URL-encoded path with space", `Quick, test_url_encoded_path_space
+  ; "URL-encoded path with unicode", `Quick, test_url_encoded_path_unicode
+  ; ( "URL-encoded path with special chars"
+    , `Quick
+    , test_url_encoded_path_special_chars )
+  ; "URL-encoded multiple parameters", `Quick, test_url_encoded_multiple_params
+  ; "URL-encoded literal matching", `Quick, test_url_encoded_literal_match
+  ; ( "URL-encoded international chars"
+    , `Quick
+    , test_url_encoded_international_chars )
+  ; ( "URL-encoded mixed encoded/unencoded"
+    , `Quick
+    , test_url_encoded_mixed_encoded_unencoded )
+  ; "URL-encoded plus sign", `Quick, test_url_encoded_plus_sign
+  ; "URL no encoding needed", `Quick, test_url_no_encoding_needed
   ]
   |> List.map (fun (name, speed, fn) -> Alcotest.test_case name speed fn)
   |> fun tests -> "Router", tests
