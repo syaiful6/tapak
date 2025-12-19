@@ -319,6 +319,7 @@ module Path_cursor = struct
       then next { t with pos = end_pos + 1 }
       else
         let segment = String.sub t.path t.pos (end_pos - t.pos) in
+        let segment = Uri.pct_decode segment in
         let next_pos = if end_pos < t.len then end_pos + 1 else end_pos in
         Some (segment, { t with pos = next_pos })
 
