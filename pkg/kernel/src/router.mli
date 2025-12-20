@@ -77,6 +77,7 @@ type route =
   | Route :
       { schema : ('a, Response.t) schema
       ; handler : 'a
+      ; middlewares : Middleware.t list
       }
       -> route
   | Scope :
@@ -139,6 +140,7 @@ val response_model :
   -> ('a, Response.t) schema
 
 val into : 'a -> ('a, Response.t) schema -> route
+val recover : (Request.t -> exn -> Response.t option) -> route -> route
 val operation_id : string -> ('a, 'b) schema -> ('a, 'b) schema
 val summary : string -> ('a, 'b) schema -> ('a, 'b) schema
 val description : string -> ('a, 'b) schema -> ('a, 'b) schema
