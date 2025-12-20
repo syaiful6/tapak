@@ -22,7 +22,6 @@ buildDunePackage {
     fs.toSource {
       root = ../..;
       fileset = fs.unions [
-        ../../pkg/kernel
         ../../pkg/compressions
         ../../tapak-compressions.opam
         ../../dune-project
