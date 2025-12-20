@@ -4,7 +4,8 @@
 > the API is not yet stable. Breaking changes may occur between releases.
 > Not recommended for production use at this time.
 
-Tapak is a web framework for OCaml 5, built on EIO (effect-based I/O).
+Tapak is a modern, type-safe, contract-first web framework for OCaml 5,
+built on EIO (effect-based I/O).
 
 ## Documentation
 
@@ -20,21 +21,31 @@ The OCaml ecosystem has several excellent web frameworks, each with different de
 | **[Opium](https://github.com/rgrinberg/opium)**        | Lwt               | String patterns    | Sinatra-like micro-framework  | Stable           |
 | **[Eliom](https://ocsigen.org/eliom/)**                | Lwt               | Type-safe          | Multi-tier, full-stack        | Stable           |
 | **[tiny_httpd](https://github.com/c-cube/tiny_httpd)** | Threads           | GADT type-safe     | Minimalist, thin dependencies | Stable\*         |
-| **Tapak**                                              | **EIO (OCaml 5)** | **GADT type-safe** | Composable Service/Filter     | **Experimental** |
+| **Tapak**                                              | **EIO (OCaml 5)** | **GADT type-safe** | type-safe, contract-first     | **Experimental** |
 
 - - Dream is stable but still evolving, it hasn't reached v1.0 yet.
 - - Tiny_httpd looks stable, but I haven't used it personally.
 
 ### Why Tapak?
 
-With OCaml 5's effect handlers and **EIO** (effect-based I/O), we now have a foundation
+With OCaml 5's effect handlers and EIO (effect-based I/O), we now have a foundation
 for writing concurrent code that is both ergonomic (direct style, no monads) and performant
 (no heap allocations for context switching).
 
-Tapak explores what a **modern, practical web framework** looks like when built on this foundation.
+Tapak explores what a modern, practical web framework looks like when built on this foundation.
 
 This is an experiment in pushing the boundaries of typed functional web development
-while keeping pragmatism and real-world usage in mind.
+while keeping pragmatism and real-world usage in mind. It offers:
+
+- [Type-level routing](./examples/showcase/main.ml): Define your handlers as taking inputs, we will
+  extract and parse them from the request path, query parameters, and headers for you, all without
+  sacrificing type-safety.
+- [Request validation](./examples/body-parsing/main.ml): Tapak validates requests against your schema
+  before they reach your handlers.
+- [Realtime communication](./examples/live-cursors/main.ml): Built-in support for WebSockets, and [Server-Sent Events](./examples/sse-chat/main.ml)
+  (SSE) for building interactive, real-time web applications.
+- [OpenAPI documentation](./examples/openapi/main.ml): Tapak generates OpenAPI documentation from
+  your route definitions. Ensuring your API documentation are always accurate and up-to-date.
 
 ## Installation
 
