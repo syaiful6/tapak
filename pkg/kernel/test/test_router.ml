@@ -1023,6 +1023,203 @@ let test_url_no_encoding_needed () =
       !captured
   | None -> Alcotest.fail "route should have matched"
 
+let test_recover_validation_failed () =
+  let open Router in
+  let open Schema in
+  let schema =
+    let open Schema.Syntax in
+    let+ age = int ~constraint_:(Constraint.int_range 18 100) "age" in
+    age
+  in
+  let route =
+    post (s "users")
+    |> body Schema.Json schema
+    |> into (fun age -> Response.of_string ~body:(string_of_int age) `Created)
+    |> recover (fun _request -> function
+      | Validation_failed errors ->
+        let error_msg =
+          errors
+          |> List.map (fun (field, msg) -> Printf.sprintf "%s: %s" field msg)
+          |> String.concat ", "
+        in
+        Some (Response.of_string ~body:error_msg `Bad_request)
+      | _ -> None)
+  in
+  let request =
+    Request.create
+      ~headers:(Piaf.Headers.of_list [ "content-type", "application/json" ])
+      ~scheme:`HTTP
+      ~version:Piaf.Versions.HTTP.HTTP_1_1
+      ~meth:`POST
+      ~body:(Piaf.Body.of_string {|{"age": 15}|})
+      "/users"
+  in
+  match match' [ route ] request with
+  | Some response ->
+    Alcotest.(check bool)
+      "recover should catch validation error"
+      true
+      (Response.status response = `Bad_request)
+  | None -> Alcotest.fail "route should have matched"
+
+let test_recover_bad_request () =
+  let open Router in
+  let open Schema in
+  let schema = int "value" in
+  let route =
+    post (s "data")
+    |> body Schema.Json schema
+    |> into (fun value -> Response.of_string ~body:(string_of_int value) `OK)
+    |> recover (fun _request -> function
+      | Bad_request msg ->
+        Some
+          (Response.of_string
+             ~body:(Printf.sprintf "Error: %s" msg)
+             `Bad_request)
+      | _ -> None)
+  in
+  let request =
+    Request.create
+      ~headers:(Piaf.Headers.of_list [ "content-type", "text/plain" ])
+      ~scheme:`HTTP
+      ~version:Piaf.Versions.HTTP.HTTP_1_1
+      ~meth:`POST
+      ~body:(Piaf.Body.of_string "invalid")
+      "/data"
+  in
+  match match' [ route ] request with
+  | Some response ->
+    Alcotest.(check bool)
+      "recover should catch bad request error"
+      true
+      (Response.status response = `Bad_request)
+  | None -> Alcotest.fail "route should have matched"
+
+let test_recover_reraises_when_none () =
+  let open Router in
+  let open Schema in
+  let schema = int ~constraint_:(Constraint.int_range 1 10) "num" in
+  let route =
+    post (s "test")
+    |> body Schema.Json schema
+    |> into (fun num -> Response.of_string ~body:(string_of_int num) `OK)
+    |> recover (fun _request -> function
+      | Bad_request _ -> Some (Response.of_string ~body:"handled" `Bad_request)
+      | _ -> None (* Don't handle Validation_failed *))
+  in
+  let request =
+    Request.create
+      ~headers:(Piaf.Headers.of_list [ "content-type", "application/json" ])
+      ~scheme:`HTTP
+      ~version:Piaf.Versions.HTTP.HTTP_1_1
+      ~meth:`POST
+      ~body:(Piaf.Body.of_string {|{"num": 99}|})
+      "/test"
+  in
+  try
+    let _ = match' [ route ] request in
+    Alcotest.fail "should have re-raised Validation_failed"
+  with
+  | Router.Validation_failed _ -> ()
+
+let test_recover_has_request_access () =
+  let open Router in
+  let open Schema in
+  let schema = int "value" in
+  let captured_path = ref "" in
+  let route =
+    post (s "api" / s "data")
+    |> body Schema.Json schema
+    |> into (fun value -> Response.of_string ~body:(string_of_int value) `OK)
+    |> recover (fun request -> function
+      | Validation_failed _ ->
+        captured_path := Request.target request;
+        Some (Response.of_string ~body:"error" `Bad_request)
+      | _ -> None)
+  in
+  let request =
+    Request.create
+      ~headers:(Piaf.Headers.of_list [ "content-type", "application/json" ])
+      ~scheme:`HTTP
+      ~version:Piaf.Versions.HTTP.HTTP_1_1
+      ~meth:`POST
+      ~body:(Piaf.Body.of_string {|{"value": "invalid"}|})
+      "/api/data"
+  in
+  (match match' [ route ] request with
+  | Some _ -> ()
+  | None -> Alcotest.fail "route should have matched");
+  Alcotest.(check string)
+    "recover handler should have access to request"
+    "/api/data"
+    !captured_path
+
+let test_recover_on_scope () =
+  let open Router in
+  let open Schema in
+  let schema = int ~constraint_:(Constraint.int_range 1 100) "age" in
+  let route =
+    scope
+      (s "api")
+      [ post (s "users")
+        |> body Schema.Json schema
+        |> into (fun age ->
+          Response.of_string ~body:(string_of_int age) `Created)
+      ]
+    |> recover (fun _request -> function
+      | Validation_failed _ ->
+        Some (Response.of_string ~body:"scope error handler" `Bad_request)
+      | _ -> None)
+  in
+  let request =
+    Request.create
+      ~headers:(Piaf.Headers.of_list [ "content-type", "application/json" ])
+      ~scheme:`HTTP
+      ~version:Piaf.Versions.HTTP.HTTP_1_1
+      ~meth:`POST
+      ~body:(Piaf.Body.of_string {|{"age": 150}|})
+      "/api/users"
+  in
+  match match' [ route ] request with
+  | Some response ->
+    let body = Response.body response |> Piaf.Body.to_string |> Result.get_ok in
+    Alcotest.(check string)
+      "scope-level recover should catch errors"
+      "scope error handler"
+      body
+  | None -> Alcotest.fail "route should have matched"
+
+let test_recover_success_path () =
+  let open Router in
+  let open Schema in
+  let schema = int "value" in
+  let route =
+    post (s "data")
+    |> body Schema.Json schema
+    |> into (fun value -> Response.of_string ~body:(string_of_int value) `OK)
+    |> recover (fun _request -> function
+      | Validation_failed _ ->
+        Some (Response.of_string ~body:"error" `Bad_request)
+      | _ -> None)
+  in
+  let request =
+    Request.create
+      ~headers:(Piaf.Headers.of_list [ "content-type", "application/json" ])
+      ~scheme:`HTTP
+      ~version:Piaf.Versions.HTTP.HTTP_1_1
+      ~meth:`POST
+      ~body:(Piaf.Body.of_string {|{"value": 42}|})
+      "/data"
+  in
+  match match' [ route ] request with
+  | Some response ->
+    let body = Response.body response |> Piaf.Body.to_string |> Result.get_ok in
+    Alcotest.(check string)
+      "recover should not interfere with successful requests"
+      "42"
+      body
+  | None -> Alcotest.fail "route should have matched"
+
 let tests =
   [ "Simple route", `Quick, test_simple_route
   ; "Int64 parameter", `Quick, test_int64_param
@@ -1086,6 +1283,12 @@ let tests =
     , test_url_encoded_mixed_encoded_unencoded )
   ; "URL-encoded plus sign", `Quick, test_url_encoded_plus_sign
   ; "URL no encoding needed", `Quick, test_url_no_encoding_needed
+  ; "Recover catches Validation_failed", `Quick, test_recover_validation_failed
+  ; "Recover catches Bad_request", `Quick, test_recover_bad_request
+  ; "Recover re-raises when None", `Quick, test_recover_reraises_when_none
+  ; "Recover has request access", `Quick, test_recover_has_request_access
+  ; "Recover on scope", `Quick, test_recover_on_scope
+  ; "Recover doesn't affect success", `Quick, test_recover_success_path
   ]
   |> List.map (fun (name, speed, fn) -> Alcotest.test_case name speed fn)
   |> fun tests -> "Router", tests

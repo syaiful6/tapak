@@ -157,6 +157,7 @@ type route =
   | Route :
       { schema : ('a, Response.t) schema
       ; handler : 'a
+      ; middlewares : Middleware.t list
       }
       -> route
   | Scope :
@@ -414,7 +415,29 @@ let rec get_method : type a b. (a, b) schema -> Piaf.Method.t = function
   | Response_model { rest; _ } -> get_method rest
 
 let into : type a. a -> (a, Response.t) schema -> route =
- fun handler schema -> Route { schema; handler }
+ fun handler schema -> Route { schema; handler; middlewares = [] }
+
+let recover_middleware handler next a =
+  match next a with
+  | b -> b
+  | exception e ->
+    (match handler a e with Some resp -> resp | None -> raise e)
+
+let recover : (Request.t -> exn -> Response.t option) -> route -> route =
+ fun handler route ->
+  match route with
+  | Route { schema; handler = h; middlewares } ->
+    Route
+      { schema
+      ; handler = h
+      ; middlewares = middlewares @ [ recover_middleware handler ]
+      }
+  | Scope { prefix; routes; middlewares } ->
+    Scope
+      { prefix
+      ; routes
+      ; middlewares = middlewares @ [ recover_middleware handler ]
+      }
 
 let evaluate_body_schema : type a b.
   a Schema.input
@@ -534,14 +557,14 @@ module Trie = struct
 
   let rec flatten_route prefix_len prefix middlewares route =
     match route with
-    | Route { schema; handler } ->
+    | Route { schema; handler; middlewares = route_mws } ->
       let method_, segments = extract_path_segments_and_method schema in
       [ Flat_route
           { schema
           ; handler
           ; method_str = Piaf.Method.to_string method_ (* Cache method string *)
           ; segments = prefix @ segments
-          ; middlewares
+          ; middlewares = middlewares @ route_mws
           ; prefix_len
           }
       ]
