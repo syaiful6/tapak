@@ -2,7 +2,7 @@ open Tapak_kernel
 
 type parameter =
   { name : string
-  ; in_ : [ `Path | `Query | `Header ]
+  ; in_ : [ `Path | `Query | `Header | `Cookie ]
   ; description : string option
   ; required : bool
   ; schema : Yojson.Safe.t
@@ -127,6 +127,7 @@ let rec extract_metadata : type a b. (a, b) Router.schema -> Router.metadata =
     }
   | Query { rest; _ } -> extract_metadata rest
   | Header { rest; _ } -> extract_metadata rest
+  | Cookie { rest; _ } -> extract_metadata rest
   | Body { rest; _ } -> extract_metadata rest
   | Guard { rest; _ } -> extract_metadata rest
   | Response_model { rest; _ } -> extract_metadata rest
@@ -362,6 +363,45 @@ let rec schema_to_header_parameters : type a. a Schema.t -> parameter list =
     schema_to_header_parameters left @ schema_to_header_parameters right
   | Map { tree; _ } -> schema_to_header_parameters tree
 
+let rec schema_to_cookie_parameters : type a. a Schema.t -> parameter list =
+ fun schema ->
+  match schema with
+  | Pure _ -> []
+  | Field { field; name } ->
+    let is_required, param_schema =
+      match field with
+      | Option inner -> false, field_to_openapi_schema inner
+      | List { default; _ } ->
+        ( (match default with Some _ -> false | None -> true)
+        , field_to_openapi_schema field )
+      | _ ->
+        let has_default =
+          match field with
+          | Str { default = Some _; _ }
+          | Int { default = Some _; _ }
+          | Int32 { default = Some _; _ }
+          | Int64 { default = Some _; _ }
+          | Bool { default = Some _ }
+          | Float { default = Some _; _ }
+          | Choice { default = Some _; _ } ->
+            true
+          | _ -> false
+        in
+        not has_default, field_to_openapi_schema field
+    in
+    [ { name
+      ; in_ = `Cookie
+      ; description = None
+      ; required = is_required
+      ; schema = param_schema
+      ; style = None
+      ; explode = None
+      }
+    ]
+  | App (left, right) ->
+    schema_to_cookie_parameters left @ schema_to_cookie_parameters right
+  | Map { tree; _ } -> schema_to_cookie_parameters tree
+
 let rec extract_query_parameters : type a b.
   (a, b) Router.schema -> parameter list
   =
@@ -371,6 +411,7 @@ let rec extract_query_parameters : type a b.
   | Query { schema = query_schema; rest } ->
     schema_to_query_parameters query_schema @ extract_query_parameters rest
   | Header { rest; _ } -> extract_query_parameters rest
+  | Cookie { rest; _ } -> extract_query_parameters rest
   | Body { rest; _ } -> extract_query_parameters rest
   | Guard { rest; _ } -> extract_query_parameters rest
   | Response_model { rest; _ } -> extract_query_parameters rest
@@ -385,10 +426,26 @@ let rec extract_header_parameters : type a b.
   | Query { rest; _ } -> extract_header_parameters rest
   | Header { schema = header_schema; rest } ->
     schema_to_header_parameters header_schema @ extract_header_parameters rest
+  | Cookie { rest; _ } -> extract_header_parameters rest
   | Body { rest; _ } -> extract_header_parameters rest
   | Guard { rest; _ } -> extract_header_parameters rest
   | Response_model { rest; _ } -> extract_header_parameters rest
   | Meta { rest; _ } -> extract_header_parameters rest
+
+let rec extract_cookie_parameters : type a b.
+  (a, b) Router.schema -> parameter list
+  =
+ fun schema ->
+  match schema with
+  | Method _ -> []
+  | Query { rest; _ } -> extract_cookie_parameters rest
+  | Header { rest; _ } -> extract_cookie_parameters rest
+  | Cookie { schema = cookie_schema; rest } ->
+    schema_to_cookie_parameters cookie_schema @ extract_cookie_parameters rest
+  | Body { rest; _ } -> extract_cookie_parameters rest
+  | Guard { rest; _ } -> extract_cookie_parameters rest
+  | Response_model { rest; _ } -> extract_cookie_parameters rest
+  | Meta { rest; _ } -> extract_cookie_parameters rest
 
 let rec extract_request_body : type a b.
   (a, b) Router.schema -> request_body option
@@ -398,6 +455,7 @@ let rec extract_request_body : type a b.
   | Method _ -> None
   | Query { rest; _ } -> extract_request_body rest
   | Header { rest; _ } -> extract_request_body rest
+  | Cookie { rest; _ } -> extract_request_body rest
   | Body { input_type; schema; _ } ->
     let content_type =
       match input_type with
@@ -424,6 +482,7 @@ let schema_to_operation : type a b. (a, b) Router.schema -> operation =
     | Method (_, path) -> path_to_string path
     | Query { rest; _ } -> get_path rest
     | Header { rest; _ } -> get_path rest
+    | Cookie { rest; _ } -> get_path rest
     | Body { rest; _ } -> get_path rest
     | Guard { rest; _ } -> get_path rest
     | Response_model { rest; _ } -> get_path rest
@@ -432,7 +491,10 @@ let schema_to_operation : type a b. (a, b) Router.schema -> operation =
   let _, path_parameters = get_path schema in
   let query_parameters = extract_query_parameters schema in
   let header_parameters = extract_header_parameters schema in
-  let all_parameters = path_parameters @ query_parameters @ header_parameters in
+  let cookie_parameters = extract_cookie_parameters schema in
+  let all_parameters =
+    path_parameters @ query_parameters @ header_parameters @ cookie_parameters
+  in
   let request_body =
     match extract_request_body schema with
     | Some body -> Some { body with description = metadata.body_description }
@@ -465,6 +527,7 @@ let parameter_to_json param =
     | `Path -> "path"
     | `Query -> "query"
     | `Header -> "header"
+    | `Cookie -> "cookie"
   in
   let base =
     [ "name", `String param.name
@@ -622,6 +685,7 @@ let rec extract_paths ?(prefix = "") (routes : Router.route list) :
             prefix ^ path_str, meth
           | Query { rest; _ } -> get_path_and_method rest
           | Header { rest; _ } -> get_path_and_method rest
+          | Cookie { rest; _ } -> get_path_and_method rest
           | Body { rest; _ } -> get_path_and_method rest
           | Guard { rest; _ } -> get_path_and_method rest
           | Response_model { rest; _ } -> get_path_and_method rest
@@ -695,7 +759,7 @@ let generate
       ]
   in
   `Assoc
-    [ "openapi", `String "3.0.0"; "info", info; "paths", `Assoc paths_json ]
+    [ "openapi", `String "3.1.0"; "info", info; "paths", `Assoc paths_json ]
 
 let to_string ?title ?version ?description ?base_path routes =
   generate ?title ?version ?description ?base_path routes

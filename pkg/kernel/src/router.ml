@@ -51,6 +51,11 @@ type (_, _) schema =
       ; rest : ('a, 'b) schema
       }
       -> ('header -> 'a, 'b) schema
+  | Cookie :
+      { schema : 'cookie Schema.t
+      ; rest : ('a, 'b) schema
+      }
+      -> ('cookie -> 'a, 'b) schema
   | Response_model :
       { encoder : 'resp -> Response.t
       ; rest : ('a, 'resp) schema
@@ -237,6 +242,9 @@ let query : type a b c. a Schema.t -> (b, c) schema -> (a -> b, c) schema =
 let header : type a b c. a Schema.t -> (b, c) schema -> (a -> b, c) schema =
  fun schema rest -> Header { schema; rest }
 
+let cookie : type a b c. a Schema.t -> (b, c) schema -> (a -> b, c) schema =
+ fun schema rest -> Cookie { schema; rest }
+
 let guard : type a b g. g Request_guard.t -> (a, b) schema -> (g -> a, b) schema
   =
  fun guard schema -> Guard { guard; rest = schema }
@@ -409,6 +417,7 @@ let rec get_method : type a b. (a, b) schema -> Piaf.Method.t = function
   | Method (m, _) -> m
   | Query { rest; _ } -> get_method rest
   | Header { rest; _ } -> get_method rest
+  | Cookie { rest; _ } -> get_method rest
   | Body { rest; _ } -> get_method rest
   | Guard { rest; _ } -> get_method rest
   | Meta { rest; _ } -> get_method rest
@@ -438,6 +447,42 @@ let recover : (Request.t -> exn -> Response.t option) -> route -> route =
       ; routes
       ; middlewares = middlewares @ [ recover_middleware handler ]
       }
+
+module Cookie_parser = struct
+  let parse request =
+    let header = Request.headers request in
+    let cookies = Piaf.Cookies.Cookie.parse header in
+    let tbl = Hashtbl.create 16 in
+    List.iter
+      (fun (key, value) ->
+         let existing_key =
+           Hashtbl.fold
+             (fun k _ acc -> if String.equal k key then Some k else acc)
+             tbl
+             None
+         in
+         match existing_key with
+         | Some k ->
+           let values = Hashtbl.find tbl k in
+           Hashtbl.replace tbl k (value :: values)
+         | None -> Hashtbl.add tbl key [ value ])
+      cookies;
+    Hashtbl.fold (fun k v acc -> (k, v) :: acc) tbl []
+
+  let to_yojson request =
+    let forms = parse request in
+    let fields =
+      List.map
+        (fun (key, values) ->
+           match values with
+           | [] -> key, `Null
+           | [ single ] -> key, `String single
+           | multiple ->
+             key, `List (List.map (fun v -> `String v) (List.rev multiple)))
+        forms
+    in
+    `Assoc fields
+end
 
 let evaluate_body_schema : type a b.
   a Schema.input
@@ -486,6 +531,10 @@ let rec evaluate_schema : type a b.
          (Schema_headers.to_yojson (Request.headers request))
      with
     | Ok header_data -> evaluate_schema rest cursor (k header_data) request
+    | Error errors -> raise (Validation_failed errors))
+  | Cookie { schema; rest } ->
+    (match Schema.eval Schema.Json schema (Cookie_parser.to_yojson request) with
+    | Ok cookie_data -> evaluate_schema rest cursor (k cookie_data) request
     | Error errors -> raise (Validation_failed errors))
   | Body { input_type; schema; rest } ->
     (match validate_content_type input_type request with
@@ -550,6 +599,7 @@ module Trie = struct
     | Method (m, pattern) -> m, extract_path_segments pattern
     | Query { rest; _ } -> extract_path_segments_and_method rest
     | Header { rest; _ } -> extract_path_segments_and_method rest
+    | Cookie { rest; _ } -> extract_path_segments_and_method rest
     | Body { rest; _ } -> extract_path_segments_and_method rest
     | Response_model { rest; _ } -> extract_path_segments_and_method rest
     | Guard { rest; _ } -> extract_path_segments_and_method rest

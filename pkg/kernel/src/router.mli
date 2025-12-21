@@ -51,6 +51,11 @@ type (_, _) schema =
       ; rest : ('a, 'b) schema
       }
       -> ('header -> 'a, 'b) schema
+  | Cookie :
+      { schema : 'cookie Schema.t
+      ; rest : ('a, 'b) schema
+      }
+      -> ('cookie -> 'a, 'b) schema
   | Response_model :
       { encoder : 'resp -> Response.t
       ; rest : ('a, 'resp) schema
@@ -130,6 +135,7 @@ val body :
 
 val query : 'query Schema.t -> ('a, 'b) schema -> ('query -> 'a, 'b) schema
 val header : 'a Schema.t -> ('b, 'c) schema -> ('a -> 'b, 'c) schema
+val cookie : 'a Schema.t -> ('b, 'c) schema -> ('a -> 'b, 'c) schema
 val guard : 'g Request_guard.t -> ('a, 'b) schema -> ('g -> 'a, 'b) schema
 val request : ('a, 'b) schema -> (Request.t -> 'a, 'b) schema
 val unit : ('a, 'b) schema -> (unit -> 'a, 'b) schema
