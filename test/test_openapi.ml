@@ -23,7 +23,7 @@ let test_basic_generation () =
     let openapi_version = List.assoc "openapi" fields in
     Alcotest.(check string)
       "openapi version"
-      "3.0.0"
+      "3.1.0"
       (match openapi_version with `String v -> v | _ -> "")
   | _ -> Alcotest.fail "Expected object"
 
@@ -237,7 +237,6 @@ let test_query_parameters () =
       (match List.assoc "parameters" op_fields with
       | `List params ->
         Alcotest.(check int) "has 3 query parameters" 3 (List.length params);
-        (* Check first parameter (q - required string) *)
         (match List.nth params 0 with
         | `Assoc param_fields ->
           Alcotest.(check string)
@@ -257,7 +256,6 @@ let test_query_parameters () =
             | `Bool r -> r
             | _ -> false)
         | _ -> Alcotest.fail "Expected parameter object");
-        (* Check second parameter (limit - optional with default) *)
         (match List.nth params 1 with
         | `Assoc param_fields ->
           Alcotest.(check string)
@@ -273,7 +271,6 @@ let test_query_parameters () =
             | `Bool r -> r
             | _ -> true)
         | _ -> Alcotest.fail "Expected parameter object");
-        (* Check third parameter (tags - array with explode) *)
         (match List.nth params 2 with
         | `Assoc param_fields ->
           Alcotest.(check string)
@@ -339,7 +336,6 @@ let test_query_with_constraints () =
     | `Assoc op_fields ->
       (match List.assoc "parameters" op_fields with
       | `List params ->
-        (* Check page parameter has constraints *)
         (match List.nth params 0 with
         | `Assoc param_fields ->
           (match List.assoc "schema" param_fields with
@@ -353,6 +349,86 @@ let test_query_with_constraints () =
               true
               (List.mem_assoc "maximum" schema_fields)
           | _ -> Alcotest.fail "Expected schema object")
+        | _ -> Alcotest.fail "Expected parameter object")
+      | _ -> Alcotest.fail "Expected parameters array")
+    | _ -> Alcotest.fail "Expected get operation object"
+  with
+  | Not_found -> Alcotest.fail "Missing required field in spec"
+
+let test_cookie_parameters () =
+  let open Router in
+  let open Schema.Syntax in
+  let cookie_schema =
+    let+ session_id =
+      Schema.(str ~constraint_:(Constraint.min_length 16) "session_id")
+    and+ theme = Schema.(option "theme" (Field.str ())) in
+    session_id, theme
+  in
+  let routes =
+    [ get (s "profile")
+      |> cookie cookie_schema
+      |> summary "Get user profile"
+      |> into (fun (_session_id, _theme) ->
+        Response.of_string ~body:"Profile" `OK)
+    ]
+  in
+  let spec = Openapi.generate routes in
+  try
+    let operation =
+      List.fold_left
+        (fun acc name -> Yojson.Safe.Util.member name acc)
+        spec
+        [ "paths"; "/profile"; "get" ]
+    in
+    match operation with
+    | `Assoc op_fields ->
+      (match List.assoc "parameters" op_fields with
+      | `List params ->
+        Alcotest.(check int) "has 2 cookie parameters" 2 (List.length params);
+        (match List.nth params 0 with
+        | `Assoc param_fields ->
+          Alcotest.(check string)
+            "session_id parameter name"
+            "session_id"
+            (match List.assoc "name" param_fields with
+            | `String n -> n
+            | _ -> "");
+          Alcotest.(check string)
+            "session_id parameter in cookie"
+            "cookie"
+            (match List.assoc "in" param_fields with `String i -> i | _ -> "");
+          Alcotest.(check bool)
+            "session_id parameter required"
+            true
+            (match List.assoc "required" param_fields with
+            | `Bool r -> r
+            | _ -> false);
+          (match List.assoc "schema" param_fields with
+          | `Assoc schema_fields ->
+            Alcotest.(check bool)
+              "session_id has minLength constraint"
+              true
+              (List.mem_assoc "minLength" schema_fields)
+          | _ -> Alcotest.fail "Expected schema object")
+        | _ -> Alcotest.fail "Expected parameter object");
+        (match List.nth params 1 with
+        | `Assoc param_fields ->
+          Alcotest.(check string)
+            "theme parameter name"
+            "theme"
+            (match List.assoc "name" param_fields with
+            | `String n -> n
+            | _ -> "");
+          Alcotest.(check string)
+            "theme parameter in cookie"
+            "cookie"
+            (match List.assoc "in" param_fields with `String i -> i | _ -> "");
+          Alcotest.(check bool)
+            "theme parameter not required"
+            false
+            (match List.assoc "required" param_fields with
+            | `Bool r -> r
+            | _ -> true)
         | _ -> Alcotest.fail "Expected parameter object")
       | _ -> Alcotest.fail "Expected parameters array")
     | _ -> Alcotest.fail "Expected get operation object"
@@ -377,5 +453,6 @@ let tests =
           "Query with constraints"
           `Quick
           test_query_with_constraints
+      ; Alcotest.test_case "Cookie parameters" `Quick test_cookie_parameters
       ] )
   ]
