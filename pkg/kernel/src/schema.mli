@@ -129,7 +129,6 @@ type _ field =
   | Object : 'a t -> 'a field
 
 and _ t =
-  | Pure : 'a -> 'a t
   | Field :
       { field : 'a field
       ; name : string
@@ -209,7 +208,6 @@ end
 
 val validate : ('a -> ('b, string list) result) -> 'a t -> 'b t
 val map : ('a -> 'b) -> 'a t -> 'b t
-val return : 'a -> 'a t
 val field : string -> 'a field -> 'a t
 val int : ?default:int -> ?constraint_:int Constraint.t -> string -> int t
 

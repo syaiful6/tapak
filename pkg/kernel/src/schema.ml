@@ -53,7 +53,6 @@ type _ field =
   | Object : 'a t -> 'a field
 
 and _ t =
-  | Pure : 'a -> 'a t
   | Field :
       { field : 'a field
       ; name : string
@@ -111,7 +110,6 @@ let validate : type a b. (a -> (b, string list) result) -> a t -> b t =
 let map : type a b. (a -> b) -> a t -> b t =
  fun f -> validate (fun v -> Ok (f v))
 
-let return : type a. a -> a t = fun v -> Pure v
 let field name field = Field { field; name }
 
 let int ?default ?constraint_ name =
@@ -415,7 +413,6 @@ let rec eval_tree_internal : type a b.
     { eval = (fun tree input -> eval_tree_internal (module FI) tree input) }
   in
   match tree with
-  | Pure v -> Ok v
   | Field { field; name } ->
     (match FI.get_input name input with
     | Ok value -> FI.eval interp field value
@@ -441,7 +438,6 @@ let rec evaluate : type a b.
   =
  fun (type b) (module FI : FIELD_INTERPRETER with type input = b) tree input ->
   match tree with
-  | Pure v -> Ok v
   | Field { field; name } ->
     (match eval_tree_internal (module FI) (Field { field; name }) input with
     | Ok v -> Ok v
