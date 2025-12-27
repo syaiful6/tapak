@@ -82,8 +82,6 @@ module type FIELD_INTERPRETER = sig
 end
 
 module Field = struct
-  type 'a t = 'a field
-
   let str ?default ?constraint_ () = Str { default; constraint_ }
   let int ?default ?constraint_ () = Int { default; constraint_ }
   let int32 ?default ?constraint_ () = Int32 { default; constraint_ }
@@ -94,6 +92,7 @@ module Field = struct
   let option field = Option field
   let choice ?default choices = Choice { choices; default }
   let file () = File
+  let obj schema = Object schema
 end
 
 let validate : type a b. (a -> (b, string list) result) -> a t -> b t =

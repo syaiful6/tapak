@@ -21,6 +21,42 @@ let user_schema =
   and+ email = Schema.(str ~constraint_:(Constraint.format `Email) "email") in
   name, email
 
+let user_response_schema =
+  let open Schema.Syntax in
+  let+ id = Schema.int "id"
+  and+ name =
+    Schema.(
+      str
+        ~constraint_:
+          (Constraint.all_of
+             [ Constraint.min_length 1; Constraint.max_length 125 ])
+        "name")
+  and+ email = Schema.(str ~constraint_:(Constraint.format `Email) "email") in
+  { id; name; email }
+
+let user_list_response_schema =
+  Schema.(list "users" (Field.obj user_response_schema))
+
+type delete_response = { message : string }
+
+let delete_response_schema =
+  let open Schema.Syntax in
+  let+ message = Schema.str "message" in
+  { message }
+
+type profile_response =
+  { session_id : string
+  ; theme : string
+  ; message : string
+  }
+
+let profile_response_schema =
+  let open Schema.Syntax in
+  let+ session_id = Schema.str "session_id"
+  and+ theme = Schema.str "theme"
+  and+ message = Schema.str "message" in
+  { session_id; theme; message }
+
 type search =
   { q : string option
   ; limit : int
@@ -43,13 +79,6 @@ let search_schema =
   in
   { q; limit; offset }
 
-let auth_headers_schema =
-  let open Schema.Syntax in
-  let+ api_key =
-    Schema.(str ~constraint_:(Constraint.min_length 32) "X-API-Key")
-  and+ request_id = Schema.(option "X-Request-ID" (Field.str ())) in
-  api_key, request_id
-
 let session_cookies_schema =
   let open Schema.Syntax in
   let+ session_id =
@@ -64,46 +93,31 @@ let list_users search =
     ]
   in
   if search.offset >= List.length users
-  then Response.of_json ~status:`OK (`List [])
+  then []
   else
-    let paginated_users =
-      users
-      |> List.drop search.offset
-      |> List.take search.limit
-      |>
-      match search.q with
-      | None -> Fun.id
-      | Some query ->
-        (* the search use starting with for simplicity *)
-        List.filter (fun user ->
-          String.starts_with ~prefix:query user.name
-          || String.starts_with ~prefix:query user.email)
-    in
-    Response.of_json ~status:`OK (`List (List.map user_to_json paginated_users))
+    users
+    |> List.drop search.offset
+    |> List.take search.limit
+    |>
+    match search.q with
+    | None -> Fun.id
+    | Some query ->
+      (* the search use starting with for simplicity *)
+      List.filter (fun user ->
+        String.starts_with ~prefix:query user.name
+        || String.starts_with ~prefix:query user.email)
 
-let get_user id =
-  Response.of_json
-    ~status:`OK
-    (user_to_json { id; name = "Alice"; email = "alice@example.com" })
-
-let create_user (name, email) (_api_key, _request_id) =
-  Response.of_json ~status:`Created (user_to_json { id = 2; name; email })
-
-let update_user (name, email) (_api_key, _request_id) id =
-  Response.of_json ~status:`OK (user_to_json { id; name; email })
-
-let delete_user (_api_key, _request_id) id =
-  Response.of_string ~body:(Format.sprintf "User %d deleted" id) `No_content
+let get_user id = { id; name = "Alice"; email = "alice@example.com" }
+let create_user (name, email) = { id = 2; name; email }
+let update_user (name, email) id = { id; name; email }
+let delete_user id = { message = Format.sprintf "User %d deleted" id }
 
 let get_user_profile (session_id, theme) =
   let theme_value = Option.value theme ~default:"light" in
-  Response.of_json
-    ~status:`OK
-    (`Assoc
-        [ "session_id", `String session_id
-        ; "theme", `String theme_value
-        ; "message", `String "User profile retrieved successfully"
-        ])
+  { session_id
+  ; theme = theme_value
+  ; message = "User profile retrieved successfully"
+  }
 
 let v1_api_routes =
   let open Router in
@@ -112,34 +126,52 @@ let v1_api_routes =
     |> summary "List all users"
     |> operation_id "listUsers"
     |> tags [ "Users" ]
+    |> response_model
+         ~status:`OK
+         ~schema:user_list_response_schema
+         ~encoder:(fun users ->
+           `Assoc [ "users", `List (List.map user_to_json users) ])
     |> into list_users
   ; get (s "users" / p "userId" int)
     |> summary "Get a user by ID"
     |> operation_id "getUser"
     |> tags [ "Users" ]
+    |> response_model
+         ~status:`OK
+         ~schema:user_response_schema
+         ~encoder:user_to_json
     |> into get_user
   ; post (s "users")
-    |> header auth_headers_schema
     |> body Schema.Json user_schema
     |> summary "Create a new user"
     |> description "Requires authentication via X-API-Key header"
     |> operation_id "createUser"
     |> tags [ "Users" ]
+    |> response_model
+         ~status:`Created
+         ~schema:user_response_schema
+         ~encoder:user_to_json
     |> into create_user
   ; put (s "users" / p "userId" int)
-    |> header auth_headers_schema
     |> body Schema.Json user_schema
     |> summary "Update a user"
     |> description "Requires authentication via X-API-Key header"
     |> operation_id "updateUser"
     |> tags [ "Users" ]
+    |> response_model
+         ~status:`OK
+         ~schema:user_response_schema
+         ~encoder:user_to_json
     |> into update_user
   ; delete (s "users" / p "userId" int)
-    |> header auth_headers_schema
     |> summary "Delete a user"
     |> description "Requires authentication via X-API-Key header"
     |> operation_id "deleteUser"
     |> tags [ "Users" ]
+    |> response_model
+         ~status:`No_content
+         ~schema:delete_response_schema
+         ~encoder:(fun { message } -> `Assoc [ "message", `String message ])
     |> into delete_user
   ; get (s "profile")
     |> cookie session_cookies_schema
@@ -147,6 +179,15 @@ let v1_api_routes =
     |> description "Returns user profile information from session cookies"
     |> operation_id "getUserProfile"
     |> tags [ "Users" ]
+    |> response_model
+         ~status:`OK
+         ~schema:profile_response_schema
+         ~encoder:(fun { session_id; theme; message } ->
+           `Assoc
+             [ "session_id", `String session_id
+             ; "theme", `String theme
+             ; "message", `String message
+             ])
     |> into get_user_profile
   ]
 

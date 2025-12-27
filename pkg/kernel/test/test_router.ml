@@ -644,10 +644,12 @@ let test_any_method_with_params () =
 
 let test_response_model () =
   let open Router in
+  let string_schema = Schema.str "message" in
   let route =
     get (s "users" / int64)
     |> request
-    |> response_model (fun body -> Response.of_string ~body `OK)
+    |> response_model ~status:`OK ~schema:string_schema ~encoder:(fun body ->
+      `String body)
     |> into (fun request id ->
       let headers = Request.headers request in
       let ua =
@@ -667,9 +669,10 @@ let test_response_model () =
   match match' [ route ] request with
   | Some response ->
     let body = Response.body response |> Piaf.Body.to_string |> Result.get_ok in
+    let expected = "\"User 100 with ua: alcotest\"" in
     Alcotest.(check string)
-      "response body should be the user id and ua"
-      "User 100 with ua: alcotest"
+      "response body should be the user id and ua as JSON string"
+      expected
       body
   | None -> Alcotest.fail "Route should have matched"
 
