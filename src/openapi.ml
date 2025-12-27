@@ -254,7 +254,6 @@ let rec field_to_openapi_schema : type a. a Schema.field -> Yojson.Safe.t =
 and schema_to_openapi_schema : type a. a Schema.t -> Yojson.Safe.t =
  fun schema ->
   match schema with
-  | Pure _ -> `Assoc [ "type", `String "object" ]
   | Field { field; name } ->
     let field_schema = field_to_openapi_schema field in
     `Assoc
@@ -282,7 +281,6 @@ and schema_to_openapi_schema : type a. a Schema.t -> Yojson.Safe.t =
 let rec schema_to_query_parameters : type a. a Schema.t -> parameter list =
  fun schema ->
   match schema with
-  | Pure _ -> []
   | Field { field; name } ->
     let is_required, param_schema =
       match field with
@@ -324,7 +322,6 @@ let rec schema_to_query_parameters : type a. a Schema.t -> parameter list =
 let rec schema_to_header_parameters : type a. a Schema.t -> parameter list =
  fun schema ->
   match schema with
-  | Pure _ -> []
   | Field { field; name } ->
     let is_required, param_schema =
       match field with
@@ -366,7 +363,6 @@ let rec schema_to_header_parameters : type a. a Schema.t -> parameter list =
 let rec schema_to_cookie_parameters : type a. a Schema.t -> parameter list =
  fun schema ->
   match schema with
-  | Pure _ -> []
   | Field { field; name } ->
     let is_required, param_schema =
       match field with
