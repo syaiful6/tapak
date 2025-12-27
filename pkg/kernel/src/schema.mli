@@ -165,8 +165,6 @@ module Multipart_interpreter :
 module Header_interpreter : FIELD_INTERPRETER with type input = Yojson.Safe.t
 
 module Field : sig
-  type 'a t = 'a field
-
   val str :
      ?default:string
     -> ?constraint_:string Constraint.t
@@ -204,6 +202,7 @@ module Field : sig
   val option : 'a field -> 'a option field
   val choice : ?default:'a -> (string * 'a) list -> ('a * int) list field
   val file : unit -> Form.Multipart.part field
+  val obj : 'a t -> 'a field
 end
 
 val validate : ('a -> ('b, string list) result) -> 'a t -> 'b t

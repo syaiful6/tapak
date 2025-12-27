@@ -469,6 +469,28 @@ let rec extract_request_body : type a b.
   | Response_model { rest; _ } -> extract_request_body rest
   | Meta { rest; _ } -> extract_request_body rest
 
+type response_info =
+  { status_code : int
+  ; schema : Yojson.Safe.t
+  }
+
+let rec extract_response_info : type a b.
+  (a, b) Router.schema -> response_info option
+  =
+ fun schema ->
+  match schema with
+  | Method _ -> None
+  | Query { rest; _ } -> extract_response_info rest
+  | Header { rest; _ } -> extract_response_info rest
+  | Cookie { rest; _ } -> extract_response_info rest
+  | Body { rest; _ } -> extract_response_info rest
+  | Guard { rest; _ } -> extract_response_info rest
+  | Response_model { status; schema = resp_schema; _ } ->
+    let status_code = Piaf.Status.to_code status in
+    let openapi_schema = schema_to_openapi_schema resp_schema in
+    Some { status_code; schema = openapi_schema }
+  | Meta { rest; _ } -> extract_response_info rest
+
 let schema_to_operation : type a b. (a, b) Router.schema -> operation =
  fun schema ->
   let metadata = extract_metadata schema in
@@ -496,13 +518,19 @@ let schema_to_operation : type a b. (a, b) Router.schema -> operation =
     | Some body -> Some { body with description = metadata.body_description }
     | None -> None
   in
-  { operation_id = metadata.operation_id
-  ; summary = metadata.summary
-  ; description = metadata.description
-  ; tags = metadata.tags
-  ; parameters = all_parameters
-  ; request_body
-  ; responses =
+  let responses =
+    match extract_response_info schema with
+    | Some { status_code; schema = resp_schema } ->
+      `Assoc
+        [ ( string_of_int status_code
+          , `Assoc
+              [ "description", `String "Successful response"
+              ; ( "content"
+                , `Assoc
+                    [ "application/json", `Assoc [ "schema", resp_schema ] ] )
+              ] )
+        ]
+    | None ->
       `Assoc
         [ ( "200"
           , `Assoc
@@ -515,6 +543,14 @@ let schema_to_operation : type a b. (a, b) Router.schema -> operation =
                     ] )
               ] )
         ]
+  in
+  { operation_id = metadata.operation_id
+  ; summary = metadata.summary
+  ; description = metadata.description
+  ; tags = metadata.tags
+  ; parameters = all_parameters
+  ; request_body
+  ; responses
   }
 
 let parameter_to_json param =

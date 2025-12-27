@@ -57,7 +57,9 @@ type (_, _) schema =
       }
       -> ('cookie -> 'a, 'b) schema
   | Response_model :
-      { encoder : 'resp -> Response.t
+      { encoder : 'resp -> Yojson.Safe.t
+      ; schema : 'resp Schema.t
+      ; status : Piaf.Status.t
       ; rest : ('a, 'resp) schema
       }
       -> ('a, Response.t) schema
@@ -250,9 +252,14 @@ let guard : type a b g. g Request_guard.t -> (a, b) schema -> (g -> a, b) schema
  fun guard schema -> Guard { guard; rest = schema }
 
 let response_model : type a resp.
-  (resp -> Response.t) -> (a, resp) schema -> (a, Response.t) schema
+  status:Piaf.Status.t
+  -> schema:resp Schema.t
+  -> encoder:(resp -> Yojson.Safe.t)
+  -> (a, resp) schema
+  -> (a, Response.t) schema
   =
- fun encoder rest -> Response_model { encoder; rest }
+ fun ~status ~schema ~encoder rest ->
+  Response_model { encoder; schema; status; rest }
 
 let request : type a b. (a, b) schema -> (Request.t -> a, b) schema =
  fun schema -> Guard { guard = Result.ok; rest = schema }
@@ -544,9 +551,15 @@ let rec evaluate_schema : type a b.
       | Ok validated_data ->
         evaluate_schema rest cursor (k validated_data) request
       | Error errors -> raise (Validation_failed errors)))
-  | Response_model { encoder; rest } ->
+  | Response_model { encoder; status; rest; _ } ->
     (match evaluate_schema rest cursor k request with
-    | Some data -> Some (encoder data)
+    | Some data ->
+      let json = encoder data in
+      let body = Yojson.Safe.to_string json in
+      let headers =
+        Piaf.Headers.of_list [ "content-type", "application/json" ]
+      in
+      Some (Response.of_string ~headers ~body status)
     | None -> None)
   | Guard { guard; rest } ->
     (match guard request with

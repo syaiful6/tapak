@@ -57,7 +57,9 @@ type (_, _) schema =
       }
       -> ('cookie -> 'a, 'b) schema
   | Response_model :
-      { encoder : 'resp -> Response.t
+      { encoder : 'resp -> Yojson.Safe.t
+      ; schema : 'resp Schema.t
+      ; status : Piaf.Status.t
       ; rest : ('a, 'resp) schema
       }
       -> ('a, Response.t) schema
@@ -141,7 +143,9 @@ val request : ('a, 'b) schema -> (Request.t -> 'a, 'b) schema
 val unit : ('a, 'b) schema -> (unit -> 'a, 'b) schema
 
 val response_model :
-   ('resp -> Response.t)
+   status:Piaf.Status.t
+  -> schema:'resp Schema.t
+  -> encoder:('resp -> Yojson.Safe.t)
   -> ('a, 'resp) schema
   -> ('a, Response.t) schema
 
