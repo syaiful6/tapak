@@ -2,6 +2,12 @@ exception Not_found
 exception Bad_request of string
 exception Validation_failed of (string * string) list
 
+type extractor_error = ..
+
+exception Extraction_failed of extractor_error
+
+type 'a extractor = Request.t -> ('a, extractor_error) result
+
 type (_, _) path =
   | Nil : ('a, 'a) path
   | Literal : string * ('a, 'b) path -> ('a, 'b) path
@@ -69,8 +75,8 @@ type (_, _) schema =
       ; rest : ('a, 'b) schema
       }
       -> ('validated -> 'a, 'b) schema
-  | Guard :
-      { guard : 'g Request_guard.t
+  | Extract :
+      { extractor : 'g extractor
       ; rest : ('a, 'b) schema
       }
       -> ('g -> 'a, 'b) schema
@@ -247,9 +253,8 @@ let header : type a b c. a Schema.t -> (b, c) schema -> (a -> b, c) schema =
 let cookie : type a b c. a Schema.t -> (b, c) schema -> (a -> b, c) schema =
  fun schema rest -> Cookie { schema; rest }
 
-let guard : type a b g. g Request_guard.t -> (a, b) schema -> (g -> a, b) schema
-  =
- fun guard schema -> Guard { guard; rest = schema }
+let extract : type a b g. g extractor -> (a, b) schema -> (g -> a, b) schema =
+ fun extractor schema -> Extract { extractor; rest = schema }
 
 let response_model : type a resp.
   status:Piaf.Status.t
@@ -262,10 +267,10 @@ let response_model : type a resp.
   Response_model { encoder; schema; status; rest }
 
 let request : type a b. (a, b) schema -> (Request.t -> a, b) schema =
- fun schema -> Guard { guard = Result.ok; rest = schema }
+ fun schema -> Extract { extractor = Result.ok; rest = schema }
 
 let unit : type a b. (a, b) schema -> (unit -> a, b) schema =
- fun schema -> Guard { guard = (fun _ -> Result.ok ()); rest = schema }
+ fun schema -> Extract { extractor = (fun _ -> Result.ok ()); rest = schema }
 
 let empty_metadata =
   { operation_id = None
@@ -426,7 +431,7 @@ let rec get_method : type a b. (a, b) schema -> Piaf.Method.t = function
   | Header { rest; _ } -> get_method rest
   | Cookie { rest; _ } -> get_method rest
   | Body { rest; _ } -> get_method rest
-  | Guard { rest; _ } -> get_method rest
+  | Extract { rest; _ } -> get_method rest
   | Meta { rest; _ } -> get_method rest
   | Response_model { rest; _ } -> get_method rest
 
@@ -561,10 +566,10 @@ let rec evaluate_schema : type a b.
       in
       Some (Response.of_string ~headers ~body status)
     | None -> None)
-  | Guard { guard; rest } ->
-    (match guard request with
+  | Extract { extractor; rest } ->
+    (match extractor request with
     | Ok g -> evaluate_schema rest cursor (k g) request
-    | Error e -> raise (Request_guard.Failed e))
+    | Error e -> raise (Extraction_failed e))
   | Meta { rest; _ } -> evaluate_schema rest cursor k request
 
 module Trie = struct
@@ -615,7 +620,7 @@ module Trie = struct
     | Cookie { rest; _ } -> extract_path_segments_and_method rest
     | Body { rest; _ } -> extract_path_segments_and_method rest
     | Response_model { rest; _ } -> extract_path_segments_and_method rest
-    | Guard { rest; _ } -> extract_path_segments_and_method rest
+    | Extract { rest; _ } -> extract_path_segments_and_method rest
     | Meta { rest; _ } -> extract_path_segments_and_method rest
 
   let rec flatten_route prefix_len prefix middlewares route =

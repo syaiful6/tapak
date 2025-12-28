@@ -1,6 +1,6 @@
 (executable
  (name main)
- (public_name tapak-request-guard)
+ (public_name tapak-custom-extractor)
  (package tapak)
  (enabled_if
   (= %{profile} dev))
