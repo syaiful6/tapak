@@ -18,21 +18,6 @@
 (documentation https://syaiful6.github.io/tapak/)
 
 (package
- (name simdutf)
- (synopsis "OCaml bindings for simdutf")
- (description
-  "simdutf is a high-performance library for validating and transcoding UTF-8, UTF-16, and UTF-32 text. This package provides OCaml bindings to the simdutf library, allowing OCaml developers to leverage its capabilities for efficient text processing.")
- (depends
-  (ocaml
-   (>= 5.2.0))
-  (ctypes
-   (>= 0.14.0))
-  dune
-  dune-configurator
-  (alcotest :with-test)
-  (odoc :with-doc)))
-
-(package
  (name tapak)
  (synopsis "Composable framework for building web applications in OCaml")
  (description

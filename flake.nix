@@ -47,7 +47,6 @@
             tapak
             tapak-compressions
             tapak-ppx
-            simdutf
             ;
         }
       );
