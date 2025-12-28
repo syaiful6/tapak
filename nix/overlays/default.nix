@@ -10,9 +10,6 @@ let
     tapak-ppx = final'.callPackage ../packages/tapak-ppx.nix {
       inherit (final.tapak) doCheck;
     };
-    simdutf = final'.callPackage ../packages/simdutf.nix {
-      inherit (final.tapak) doCheck;
-    };
   };
 in
 {

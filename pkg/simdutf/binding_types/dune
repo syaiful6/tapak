@@ -1,4 +1,0 @@
-(library
- (name simdutf_bindings_types)
- (public_name simdutf.bindings.types)
- (libraries ctypes.stubs ctypes))

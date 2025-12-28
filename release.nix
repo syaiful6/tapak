@@ -47,7 +47,6 @@ let
     "tapak"
     "tapak-compressions"
     "tapak-ppx"
-    "simdutf"
   ];
   outputs = pkgs.lib.genAttrs ocamlPackageSets (
     ocamlPackages: pkgs.lib.genAttrs packageNames (package: pkgs.ocaml-ng.${ocamlPackages}.${package})
