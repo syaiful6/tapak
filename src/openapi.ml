@@ -129,7 +129,7 @@ let rec extract_metadata : type a b. (a, b) Router.schema -> Router.metadata =
   | Header { rest; _ } -> extract_metadata rest
   | Cookie { rest; _ } -> extract_metadata rest
   | Body { rest; _ } -> extract_metadata rest
-  | Guard { rest; _ } -> extract_metadata rest
+  | Extract { rest; _ } -> extract_metadata rest
   | Response_model { rest; _ } -> extract_metadata rest
   | Meta { meta; rest } ->
     let base_meta = extract_metadata rest in
@@ -409,7 +409,7 @@ let rec extract_query_parameters : type a b.
   | Header { rest; _ } -> extract_query_parameters rest
   | Cookie { rest; _ } -> extract_query_parameters rest
   | Body { rest; _ } -> extract_query_parameters rest
-  | Guard { rest; _ } -> extract_query_parameters rest
+  | Extract { rest; _ } -> extract_query_parameters rest
   | Response_model { rest; _ } -> extract_query_parameters rest
   | Meta { rest; _ } -> extract_query_parameters rest
 
@@ -424,7 +424,7 @@ let rec extract_header_parameters : type a b.
     schema_to_header_parameters header_schema @ extract_header_parameters rest
   | Cookie { rest; _ } -> extract_header_parameters rest
   | Body { rest; _ } -> extract_header_parameters rest
-  | Guard { rest; _ } -> extract_header_parameters rest
+  | Extract { rest; _ } -> extract_header_parameters rest
   | Response_model { rest; _ } -> extract_header_parameters rest
   | Meta { rest; _ } -> extract_header_parameters rest
 
@@ -439,7 +439,7 @@ let rec extract_cookie_parameters : type a b.
   | Cookie { schema = cookie_schema; rest } ->
     schema_to_cookie_parameters cookie_schema @ extract_cookie_parameters rest
   | Body { rest; _ } -> extract_cookie_parameters rest
-  | Guard { rest; _ } -> extract_cookie_parameters rest
+  | Extract { rest; _ } -> extract_cookie_parameters rest
   | Response_model { rest; _ } -> extract_cookie_parameters rest
   | Meta { rest; _ } -> extract_cookie_parameters rest
 
@@ -465,7 +465,7 @@ let rec extract_request_body : type a b.
       ; required = true
       ; content = [ content_type, body_schema ]
       }
-  | Guard { rest; _ } -> extract_request_body rest
+  | Extract { rest; _ } -> extract_request_body rest
   | Response_model { rest; _ } -> extract_request_body rest
   | Meta { rest; _ } -> extract_request_body rest
 
@@ -484,7 +484,7 @@ let rec extract_response_info : type a b.
   | Header { rest; _ } -> extract_response_info rest
   | Cookie { rest; _ } -> extract_response_info rest
   | Body { rest; _ } -> extract_response_info rest
-  | Guard { rest; _ } -> extract_response_info rest
+  | Extract { rest; _ } -> extract_response_info rest
   | Response_model { status; schema = resp_schema; _ } ->
     let status_code = Piaf.Status.to_code status in
     let openapi_schema = schema_to_openapi_schema resp_schema in
@@ -502,7 +502,7 @@ let schema_to_operation : type a b. (a, b) Router.schema -> operation =
     | Header { rest; _ } -> get_path rest
     | Cookie { rest; _ } -> get_path rest
     | Body { rest; _ } -> get_path rest
-    | Guard { rest; _ } -> get_path rest
+    | Extract { rest; _ } -> get_path rest
     | Response_model { rest; _ } -> get_path rest
     | Meta { rest; _ } -> get_path rest
   in
@@ -719,7 +719,7 @@ let rec extract_paths ?(prefix = "") (routes : Router.route list) :
           | Header { rest; _ } -> get_path_and_method rest
           | Cookie { rest; _ } -> get_path_and_method rest
           | Body { rest; _ } -> get_path_and_method rest
-          | Guard { rest; _ } -> get_path_and_method rest
+          | Extract { rest; _ } -> get_path_and_method rest
           | Response_model { rest; _ } -> get_path_and_method rest
           | Meta { rest; _ } -> get_path_and_method rest
         in

@@ -2,6 +2,12 @@ exception Not_found
 exception Bad_request of string
 exception Validation_failed of (string * string) list
 
+type extractor_error = ..
+
+exception Extraction_failed of extractor_error
+
+type 'a extractor = Request.t -> ('a, extractor_error) result
+
 type metadata =
   { operation_id : string option
   ; summary : string option
@@ -69,8 +75,8 @@ type (_, _) schema =
       ; rest : ('a, 'b) schema
       }
       -> ('validated -> 'a, 'b) schema
-  | Guard :
-      { guard : 'g Request_guard.t
+  | Extract :
+      { extractor : 'g extractor
       ; rest : ('a, 'b) schema
       }
       -> ('g -> 'a, 'b) schema
@@ -138,7 +144,7 @@ val body :
 val query : 'query Schema.t -> ('a, 'b) schema -> ('query -> 'a, 'b) schema
 val header : 'a Schema.t -> ('b, 'c) schema -> ('a -> 'b, 'c) schema
 val cookie : 'a Schema.t -> ('b, 'c) schema -> ('a -> 'b, 'c) schema
-val guard : 'g Request_guard.t -> ('a, 'b) schema -> ('g -> 'a, 'b) schema
+val extract : 'g extractor -> ('a, 'b) schema -> ('g -> 'a, 'b) schema
 val request : ('a, 'b) schema -> (Request.t -> 'a, 'b) schema
 val unit : ('a, 'b) schema -> (unit -> 'a, 'b) schema
 
