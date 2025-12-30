@@ -3,11 +3,15 @@ open Tapak
 let make_finfo ~name ~size ~modified_time ?(encoding = `Identity) () =
   { Static.Finfo.name; size; modified_time; encoding }
 
-let make_date year month day hour minute second weekday =
-  { Header_parser.Date.year; month; day; hour; minute; second; weekday }
+let make_ptime year month day hour minute second =
+  match
+    Ptime.of_date_time ((year, month, day), ((hour, minute, second), 0))
+  with
+  | Some pt -> pt
+  | None -> Ptime.epoch
 
-let date1 = make_date 2024 `Jan 1 12 0 0 `Mon
-let date2 = make_date 2024 `Jan 2 12 0 0 `Tue
+let date1 = make_ptime 2024 1 1 12 0 0
+let date2 = make_ptime 2024 1 2 12 0 0
 let finfo1 = make_finfo ~name:"test.txt" ~size:1000L ~modified_time:date1 ()
 
 let test_etag_parse_strong () =
@@ -341,7 +345,7 @@ module MockFile = struct
   type file_data =
     { name : string
     ; content : string
-    ; modified_time : Header_parser.Date.t
+    ; modified_time : Ptime.t
     ; encoding : Static.content_encoding
     ; mime_type : string
     ; hash : string option

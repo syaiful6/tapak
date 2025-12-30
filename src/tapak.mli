@@ -10,7 +10,6 @@ module Middleware = Middleware
 module App = App
 module Form = Form
 module Server = Server
-module Header_parser = Header_parser
 module Cookies = Cookies
 module Csrf = Csrf
 module Versions = Versions
