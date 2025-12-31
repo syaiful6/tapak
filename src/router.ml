@@ -7,4 +7,5 @@ let routes
         fun _req -> Response.of_string' ~status:`Not_found "Not Found")
       route_list
   =
- fun req -> try router route_list req with Not_found -> not_found req
+  let matcher = router route_list in
+  fun req -> try matcher req with Not_found -> not_found req

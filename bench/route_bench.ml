@@ -142,7 +142,7 @@ let () =
   Printf.printf "========================================\n\n";
 
   Printf.printf "--- Simple Routes (10 routes, literals only) ---\n";
-  let router = Router.router simple_routes in
+  let router = Router.routes simple_routes in
   let req = create_mock_request ~meth:`GET ~path:"/api/v1/users" in
   let results =
     throughputN ~repeat:3 2 [ "Router", bench_router, (router, req) ]
@@ -151,7 +151,7 @@ let () =
   Printf.printf "\n";
 
   Printf.printf "--- Routes with Captures (5 routes) ---\n";
-  let router = Router.router capture_routes in
+  let router = Router.routes capture_routes in
   let req = create_mock_request ~meth:`GET ~path:"/users/123/posts/456" in
   let results =
     throughputN ~repeat:3 2 [ "Router", bench_router, (router, req) ]
@@ -160,7 +160,7 @@ let () =
   Printf.printf "\n";
 
   Printf.printf "--- Mixed Routes (10 routes, literals + captures) ---\n";
-  let router = Router.router mixed_routes in
+  let router = Router.routes mixed_routes in
   let req = create_mock_request ~meth:`GET ~path:"/api/users/123/profile" in
   let results =
     throughputN ~repeat:3 2 [ "Router", bench_router, (router, req) ]
@@ -169,7 +169,7 @@ let () =
   Printf.printf "\n";
 
   Printf.printf "--- Large Route Set (30 routes) - Early Match ---\n";
-  let router = Router.router large_routes in
+  let router = Router.routes large_routes in
   let req = create_mock_request ~meth:`GET ~path:"/api/v1/users" in
   let results =
     throughputN ~repeat:3 2 [ "Router", bench_router, (router, req) ]
@@ -178,7 +178,7 @@ let () =
   Printf.printf "\n";
 
   Printf.printf "--- Large Route Set - Middle Match ---\n";
-  let router = Router.router large_routes in
+  let router = Router.routes large_routes in
   let req = create_mock_request ~meth:`GET ~path:"/api/v1/posts/456/comments" in
   let results =
     throughputN ~repeat:3 2 [ "Router", bench_router, (router, req) ]
@@ -187,7 +187,7 @@ let () =
   Printf.printf "\n";
 
   Printf.printf "--- Large Route Set - Late Match (Worst Case) ---\n";
-  let router = Router.router large_routes in
+  let router = Router.routes large_routes in
   let req = create_mock_request ~meth:`GET ~path:"/assets/images/logo.png" in
   let results =
     throughputN ~repeat:3 2 [ "Router", bench_router, (router, req) ]
@@ -196,7 +196,7 @@ let () =
   Printf.printf "\n";
 
   Printf.printf "--- Multiple HTTP Methods (4 requests) ---\n";
-  let router = Router.router mixed_routes in
+  let router = Router.routes mixed_routes in
   let get_req = create_mock_request ~meth:`GET ~path:"/api/users/123" in
   let post_req = create_mock_request ~meth:`POST ~path:"/api/users" in
   let put_req = create_mock_request ~meth:`PUT ~path:"/api/users/123" in
@@ -212,7 +212,7 @@ let () =
   Printf.printf "\n";
 
   Printf.printf "--- Deep Path (5 segments) ---\n";
-  let router = Router.router large_routes in
+  let router = Router.routes large_routes in
   let req = create_mock_request ~meth:`GET ~path:"/api/v1/users/123/profile" in
   let results =
     throughputN ~repeat:3 2 [ "Router", bench_router, (router, req) ]
