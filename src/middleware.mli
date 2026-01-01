@@ -48,7 +48,7 @@ module Request_logger : sig
     ; referer : string option
     ; user_agent : string option
     ; request_id : string option
-    ; duration_ms : float
+    ; duration_seconds : float
     }
 
   type formatter = log_info -> string

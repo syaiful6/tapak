@@ -13,7 +13,7 @@ type log_info =
   ; referer : string option
   ; user_agent : string option
   ; request_id : string option
-  ; duration_ms : float
+  ; duration_seconds : float
   }
 
 type formatter = log_info -> string
@@ -40,7 +40,7 @@ let apache_common_log_format (info : log_info) : string =
     bytes
     referer
     user_agent
-    info.duration_ms
+    info.duration_seconds
 
 type t =
   { now : unit -> float
@@ -51,7 +51,7 @@ type t =
 let args ~now ~trusted_proxies ?(formatter = apache_common_log_format) () : t =
   { now; trusted_proxies; formatter }
 
-let build_log_info ~args ~duration_ms request response =
+let build_log_info ~args ~duration_seconds request response =
   let client_ip =
     Request.client_ip ~trusted_proxies:args.trusted_proxies request
   in
@@ -72,13 +72,13 @@ let build_log_info ~args ~duration_ms request response =
   ; referer
   ; user_agent
   ; request_id
-  ; duration_ms
+  ; duration_seconds
   }
 
 let call args next request =
   let start_time = args.now () in
   let response = next request in
-  let duration_ms = args.now () -. start_time in
-  let log_info = build_log_info ~args ~duration_ms request response in
+  let duration_seconds = args.now () -. start_time in
+  let log_info = build_log_info ~args ~duration_seconds request response in
   Log.info (fun m -> m "%s" (args.formatter log_info));
   response

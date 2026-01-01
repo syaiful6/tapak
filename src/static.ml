@@ -474,7 +474,9 @@ end = struct
       `With_body { status; headers = rsp_headers; offset; length }
 end
 
-let filesystem ?(follow = true) root =
+type fs_env = < clock : float Eio.Time.clock_ty Eio.Std.r >
+
+let filesystem ~env:fs_env ?(follow = true) ?(ttl_seconds = 45.0) root =
   let open Eio in
   let ( / ) = Path.( / ) in
   let module File_system = struct
@@ -484,6 +486,48 @@ let filesystem ?(follow = true) root =
           ; stat : File.Stat.t
           }
           -> t
+
+    module Path_key = struct
+      type t = Piece.t list
+
+      let equal p1 p2 =
+        List.equal (fun a b -> Piece.to_string a = Piece.to_string b) p1 p2
+
+      let hash pieces = Hashtbl.hash (List.map Piece.to_string pieces)
+    end
+
+    module Stat_key = struct
+      type t = Piece.t list * content_encoding option
+
+      let equal (p1, e1) (p2, e2) =
+        let pieces_equal =
+          List.equal (fun a b -> Piece.to_string a = Piece.to_string b) p1 p2
+        in
+        pieces_equal && e1 = e2
+
+      let hash (pieces, encoding) =
+        Hashtbl.hash (List.map Piece.to_string pieces, encoding)
+    end
+
+    module Stat_entry = struct
+      type t = File.Stat.t
+
+      let weight _ = 1
+    end
+
+    module Stat_cache = Lru.Make_ttl (Stat_key) (Stat_entry)
+
+    module Encodings_entry = struct
+      type t = content_encoding list
+
+      let weight _ = 1
+    end
+
+    module Encodings_cache = Lru.Make_ttl (Path_key) (Encodings_entry)
+
+    let stat_cache = Stat_cache.create ~ttl_seconds 512
+    let encodings_cache = Encodings_cache.create ~ttl_seconds 512
+    let get_current_time () = Eio.Time.now fs_env#clock
 
     let attempt_stat path =
       try
@@ -495,6 +539,18 @@ let filesystem ?(follow = true) root =
       | Unix.Unix_error (Unix.ENOENT, _, _) -> Error `Not_found
       | Unix.Unix_error (Unix.EACCES, _, _) -> Error `Permission_denied
       | e -> Error (`IO_error (Printexc.to_string e))
+
+    let attempt_stat_cached pieces encoding path =
+      let now = get_current_time () in
+      let cache_key = pieces, encoding in
+      match Stat_cache.find ~now cache_key stat_cache with
+      | Some cached -> Ok cached
+      | None ->
+        (match attempt_stat path with
+        | Ok stat ->
+          Stat_cache.add ~now cache_key stat stat_cache;
+          Ok stat
+        | Error _ as e -> e)
 
     let of_path_name path =
       match Path.split path with
@@ -511,41 +567,45 @@ let filesystem ?(follow = true) root =
       | `Zstd -> ".zst"
 
     let available_encodings pieces =
-      try
-        let base_path =
-          List.fold_left (fun acc p -> acc / Piece.to_string p) root pieces
-        in
-        let encodings = ref [] in
-        (match attempt_stat base_path with
-        | Ok stat when stat.File.Stat.kind = `Regular_file ->
-          encodings := `Identity :: !encodings
-        | _ -> ());
-        List.iter
-          (fun enc ->
-             let ext = encoding_to_extension enc in
-             if ext <> ""
-             then
-               let encoded_path =
-                 match Path.split base_path with
-                 | Some (dir, basename) -> dir / (basename ^ ext)
-                 | None -> base_path
-               in
-               match attempt_stat encoded_path with
-               | Ok stat when stat.File.Stat.kind = `Regular_file ->
-                 encodings := enc :: !encodings
-               | _ -> ())
-          [ `Gzip; `Br; `Deflate; `Zstd ];
-        Ok !encodings
-      with
-      | Exn.Io (Fs.E (Not_found _), _) -> Error `Not_found
-      | Exn.Io (Fs.E (Permission_denied _), _) -> Error `Permission_denied
-      | e -> Error (`IO_error (Printexc.to_string e))
+      let now = get_current_time () in
+      match Encodings_cache.find ~now pieces encodings_cache with
+      | Some cached -> Ok cached
+      | None ->
+        (try
+           let base_path =
+             List.fold_left (fun acc p -> acc / Piece.to_string p) root pieces
+           in
+           let encodings = ref [] in
+           (match attempt_stat base_path with
+           | Ok stat when stat.File.Stat.kind = `Regular_file ->
+             encodings := `Identity :: !encodings
+           | _ -> ());
+           List.iter
+             (fun enc ->
+                let ext = encoding_to_extension enc in
+                if ext <> ""
+                then
+                  let encoded_path =
+                    match Path.split base_path with
+                    | Some (dir, basename) -> dir / (basename ^ ext)
+                    | None -> base_path
+                  in
+                  match attempt_stat encoded_path with
+                  | Ok stat when stat.File.Stat.kind = `Regular_file ->
+                    encodings := enc :: !encodings
+                  | _ -> ())
+             [ `Gzip; `Br; `Deflate; `Zstd ];
+           Encodings_cache.add ~now pieces !encodings encodings_cache;
+           Ok !encodings
+         with
+        | Exn.Io (Fs.E (Not_found _), _) -> Error `Not_found
+        | Exn.Io (Fs.E (Permission_denied _), _) -> Error `Permission_denied
+        | e -> Error (`IO_error (Printexc.to_string e)))
 
     let _lookup ?encoding pieces =
       let base_path =
         List.fold_left (fun acc p -> acc / Piece.to_string p) root pieces
       in
-      (* Apply encoding suffix if requested *)
       let path =
         match encoding with
         | Some enc ->
@@ -558,28 +618,30 @@ let filesystem ?(follow = true) root =
             | None -> base_path)
         | None -> base_path
       in
-      let stat = Path.stat ~follow path in
-      match stat.File.Stat.kind with
-      | `Regular_file -> Ok (`File (File { path; stat }))
-      | `Directory ->
-        let basename = of_path_name path in
-        let contents =
-          Path.read_dir path
-          |> List.filter_map (fun rel ->
-            match attempt_stat (path / rel) with
-            | Ok rstat ->
-              (match rstat.File.Stat.kind with
-              | `Regular_file ->
-                Some (`File (File { path = path / rel; stat = rstat }))
-              | `Directory ->
-                let folder_name = of_path_name (path / rel) in
-                Some (`Folder (folder_name, []))
-                (* Only one level listing *)
-              | _ -> None)
-            | Error _ -> None)
-        in
-        Ok (`Folder (basename, contents))
-      | _ -> Ok `Missing
+      match attempt_stat_cached pieces encoding path with
+      | Error _ as e -> e
+      | Ok stat ->
+        (match stat.File.Stat.kind with
+        | `Regular_file -> Ok (`File (File { path; stat }))
+        | `Directory ->
+          let basename = of_path_name path in
+          let contents =
+            Path.read_dir path
+            |> List.filter_map (fun rel ->
+              match attempt_stat (path / rel) with
+              | Ok rstat ->
+                (match rstat.File.Stat.kind with
+                | `Regular_file ->
+                  Some (`File (File { path = path / rel; stat = rstat }))
+                | `Directory ->
+                  let folder_name = of_path_name (path / rel) in
+                  Some (`Folder (folder_name, []))
+                  (* Only one level listing *)
+                | _ -> None)
+              | Error _ -> None)
+          in
+          Ok (`Folder (basename, contents))
+        | _ -> Ok `Missing)
 
     let lookup ?encoding pieces =
       try _lookup ?encoding pieces with

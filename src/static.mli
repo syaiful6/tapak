@@ -407,7 +407,14 @@ val serve :
     router's splat parameter, accepting a [string list]
     representing path components. *)
 
-val filesystem : ?follow:bool -> _ Eio.Path.t -> (module STORAGE)
+type fs_env = < clock : float Eio.Time.clock_ty Eio.Std.r >
+
+val filesystem :
+   env:fs_env
+  -> ?follow:bool
+  -> ?ttl_seconds:float
+  -> _ Eio.Path.t
+  -> (module STORAGE)
 (** [filesystem ~follow root] creates a filesystem-based static
     file backend.
 
