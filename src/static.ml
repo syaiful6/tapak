@@ -71,7 +71,7 @@ module Finfo = struct
   type t =
     { name : string
     ; size : int64
-    ; modified_time : Header_parser.Date.t
+    ; modified_time : Ptime.t
     ; encoding : content_encoding
       (** The encoding of the file. If `Identity, file is
             uncompressed. Otherwise, file is pre-compressed in
@@ -213,7 +213,7 @@ end = struct
     | `With_body of response
     ]
 
-  let parse_http_date str = P.Date.parse str |> Result.to_option
+  let parse_http_date str = Http_date.parse str |> Result.to_option
 
   module ETag = struct
     type t =
@@ -321,7 +321,7 @@ end = struct
     let open Option.Syntax in
     let* ims = _if_modified_since headers in
     Option.some
-      (if P.Date.equal mtime ims = false
+      (if Http_date.equal mtime ims = false
        then
          `With_body
            { status = `OK; headers = Headers.empty; offset = 0L; length = size }
@@ -331,7 +331,7 @@ end = struct
     let open Option.Syntax in
     let* ius = _if_unmodified_since headers in
     Option.some
-      (if P.Date.equal ius mtime
+      (if Http_date.equal ius mtime
        then unconditional headers size
        else `Without_body `Precondition_failed)
 
@@ -389,7 +389,7 @@ end = struct
     | `Date req_date ->
       let* rng = Headers.get headers "Range" in
       Option.some
-        (if P.Date.equal req_date mtime
+        (if Http_date.equal req_date mtime
          then parse_range rng size
          else
            `With_body
@@ -427,6 +427,11 @@ end = struct
       | None -> None
       | Some etag_str -> ETag.parse etag_str
     in
+    let modified_time =
+      match Http_date.of_ptime finfo.Finfo.modified_time with
+      | Ok pt -> pt
+      | Error _ -> Result.get_ok (Http_date.of_ptime Ptime.epoch)
+    in
 
     (* RFC 7232 precedence order for conditional requests: 1. If-Match (if
        present, must match for request to proceed) 2. If-Unmodified-Since (if no
@@ -437,30 +442,18 @@ end = struct
       match if_match request_headers finfo.Finfo.size etag_opt with
       | Some res -> Some res
       | None ->
-        (match
-           if_unmodified
-             request_headers
-             finfo.Finfo.size
-             finfo.Finfo.modified_time
-         with
+        (match if_unmodified request_headers finfo.Finfo.size modified_time with
         | Some res -> Some res
         | None ->
           (match if_none_match request_headers finfo.Finfo.size etag_opt with
           | Some res -> Some res
           | None ->
             (match
-               if_modified
-                 request_headers
-                 finfo.Finfo.size
-                 finfo.Finfo.modified_time
+               if_modified request_headers finfo.Finfo.size modified_time
              with
             | Some res -> Some res
             | None ->
-              if_range
-                request_headers
-                finfo.Finfo.size
-                finfo.Finfo.modified_time
-                etag_opt)))
+              if_range request_headers finfo.Finfo.size modified_time etag_opt)))
     in
     let condition =
       Option.value
@@ -474,7 +467,7 @@ end = struct
         Headers.add_unless_exists
           response_headers
           "Last-Modified"
-          (Format.asprintf "%a" P.Date.pp finfo.Finfo.modified_time)
+          (Format.asprintf "%a" Http_date.pp modified_time)
         |> fun hs ->
         add_content_headers ~offset ~len:length ~size:finfo.Finfo.size hs
       in
@@ -636,12 +629,9 @@ let filesystem ?(follow = true) root =
           | _ -> `Identity
         in
         let modified_time =
-          let modified_http_date =
-            match Ptime.of_float_s stat.File.Stat.mtime with
-            | None -> Header_parser.Date.of_ptime Ptime.epoch
-            | Some pt -> Header_parser.Date.of_ptime pt
-          in
-          Result.get_ok modified_http_date
+          match Ptime.of_float_s stat.File.Stat.mtime with
+          | None -> Ptime.epoch
+          | Some pt -> pt
         in
         Some
           { Finfo.name = of_path_name path |> Piece.to_string

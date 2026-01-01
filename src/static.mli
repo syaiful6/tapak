@@ -1,37 +1,3 @@
-(** Static file serving module.
-
-    This module provides a file server implementation that's
-    backend-agnostic. It supports multiple storage backends
-    (filesystem, S3, embedded files) through a simple module
-    interface.
-
-    {1 Usage Example}
-
-    {[
-      (* Create a static file handler *)
-      let static_handler =
-        Static.serve
-          (module My_filesystem_backend)
-          ~config:
-            {
-              Static.default_config with
-              max_age = `Seconds 3600;
-              use_weak_etags = true;
-            }
-          ()
-
-      (* Mount in router *)
-      let app =
-        Router.(
-          scope []
-            [
-              get (s "api" / s "users") @-> api_handler;
-              get (s "static" / splat) @-> static_handler;
-            ])
-    ]} *)
-
-(** {1 Path Components} *)
-
 module Piece : sig
   type t
   (** A safe path component that cannot contain '/', cannot
@@ -87,7 +53,7 @@ module Finfo : sig
   type t =
     { name : string
     ; size : int64
-    ; modified_time : Header_parser.Date.t
+    ; modified_time : Ptime.t
     ; encoding : content_encoding
       (** The encoding of the file content.
 
