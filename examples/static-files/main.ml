@@ -20,7 +20,9 @@ let () =
   let cwd = Eio.Stdenv.cwd env in
 
   let public_dir = Eio.Path.(cwd / "examples" / "static-files" / "public") in
-  let fs_backend = Static.filesystem ~follow:false public_dir in
+  let fs_backend =
+    Static.filesystem ~env:(env :> Static.fs_env) ~follow:false public_dir
+  in
   let now () = Eio.Time.now (Eio.Stdenv.clock env) in
 
   let static_config =
