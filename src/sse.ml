@@ -68,7 +68,7 @@ let keep_alive
   output_stream
 
 let stream
-      ?(version = Versions.HTTP.HTTP_1_1)
+      ?(version = Piaf.Versions.HTTP.HTTP_1_1)
       ?(headers = Headers.empty)
       ?(context = Context.empty)
       event_stream
@@ -80,7 +80,8 @@ let stream
     Headers.add_list
       headers
       (match version with
-      | Versions.HTTP.HTTP_1_0 -> ("Connection", "keep-alive") :: base_headers
+      | Piaf.Versions.HTTP.HTTP_1_0 ->
+        ("Connection", "keep-alive") :: base_headers
       | _ -> base_headers)
   in
   let string_stream = Piaf.Stream.map ~f:Event.to_string event_stream in

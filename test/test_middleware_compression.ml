@@ -26,7 +26,7 @@ let make_request ?accept_encoding () =
   in
   Request.create
     ~scheme:`HTTP
-    ~version:Versions.HTTP.HTTP_1_1
+    ~version:Piaf.Versions.HTTP.HTTP_1_1
     ~headers
     ~meth:`GET
     ~body:Body.empty
@@ -49,7 +49,7 @@ let make_response ?vary ?content_length ?content_encoding body =
     h
   in
   Response.create
-    ~version:Versions.HTTP.HTTP_1_1
+    ~version:Piaf.Versions.HTTP.HTTP_1_1
     ~headers
     ~body:(Body.of_string body)
     `OK

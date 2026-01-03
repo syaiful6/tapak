@@ -43,7 +43,7 @@ let add_to_list_header (k, v) t =
 let of_string'
       ?(content_type = "text/plain")
       ?version
-      ?(status : Status.t = `OK)
+      ?(status = `OK)
       ?(headers = Headers.empty)
       ?(context = Context.empty)
       body
