@@ -59,7 +59,7 @@ val keep_alive :
     of inactivity. *)
 
 val stream :
-   ?version:Versions.HTTP.t
+   ?version:Piaf.Versions.HTTP.t
   -> ?headers:Headers.t
   -> ?context:Context.t
   -> Event.t Piaf.Stream.t
