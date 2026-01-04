@@ -1,5 +1,3 @@
-open Tapak
-
 type user_input =
   { name : string
   ; email : string
@@ -7,11 +5,13 @@ type user_input =
   }
 
 let user_schema =
-  let open Schema.Syntax in
-  let+ name = Schema.(str ~constraint_:(Constraint.min_length 3) "name")
-  and+ email = Schema.(str ~constraint_:(Constraint.format `Email) "email")
+  let open Tapak.Schema.Syntax in
+  let+ name = Tapak.Schema.(str ~constraint_:(Constraint.min_length 3) "name")
+  and+ email =
+    Tapak.Schema.(str ~constraint_:(Constraint.format `Email) "email")
   and+ age =
-    Schema.(option "age" (Field.int ~constraint_:(Constraint.int_min 18) ()))
+    Tapak.Schema.(
+      option "age" (Field.int ~constraint_:(Constraint.int_min 18) ()))
   in
   { name; email; age }
 
@@ -23,7 +23,7 @@ let create_user user =
   let response_json =
     `Assoc [ "status", `String "created"; "user", `Assoc user_data ]
   in
-  Response.of_json ~status:`Created response_json
+  Tapak.json ~status:`Created response_json
 
 type user_update =
   { name : string option
@@ -31,9 +31,9 @@ type user_update =
   }
 
 let update_schema =
-  let open Schema.Syntax in
-  let+ name = Schema.option "name" (Schema.Field.str ())
-  and+ email = Schema.option "email" (Schema.Field.str ()) in
+  let open Tapak.Schema.Syntax in
+  let+ name = Tapak.Schema.(option "name" (Field.str ()))
+  and+ email = Tapak.Schema.(option "email" (Field.str ())) in
   { name; email }
 
 let update_user update id =
@@ -55,7 +55,7 @@ let update_user update id =
       ; "updates", `Assoc updates
       ]
   in
-  Response.of_json ~status:`OK response_json
+  Tapak.json ~status:`OK response_json
 
 type login_input =
   { username : string
@@ -63,10 +63,11 @@ type login_input =
   }
 
 let login_schema =
-  let open Schema.Syntax in
-  let+ username = Schema.(str ~constraint_:(Constraint.min_length 3) "username")
+  let open Tapak.Schema.Syntax in
+  let+ username =
+    Tapak.Schema.(str ~constraint_:(Constraint.min_length 3) "username")
   and+ password =
-    Schema.(
+    Tapak.Schema.(
       str
         ~constraint_:
           (Constraint.all_of
@@ -85,7 +86,7 @@ let login_form login =
       ; "message", `String "Login successful"
       ]
   in
-  Response.of_json ~status:`OK response_json
+  Tapak.json ~status:`OK response_json
 
 type contact_input =
   { name : string
@@ -95,11 +96,13 @@ type contact_input =
   }
 
 let contact_schema =
-  let open Schema.Syntax in
-  let+ name = Schema.(str ~constraint_:(Constraint.min_length 1) "name")
-  and+ email = Schema.(str ~constraint_:(Constraint.format `Email) "email")
-  and+ message = Schema.(str ~constraint_:(Constraint.min_length 1) "message")
-  and+ subscribe = Schema.bool ~default:false "subscribe" in
+  let open Tapak.Schema.Syntax in
+  let+ name = Tapak.Schema.(str ~constraint_:(Constraint.min_length 1) "name")
+  and+ email =
+    Tapak.Schema.(str ~constraint_:(Constraint.format `Email) "email")
+  and+ message =
+    Tapak.Schema.(str ~constraint_:(Constraint.min_length 1) "message")
+  and+ subscribe = Tapak.Schema.bool ~default:false "subscribe" in
   { name; email; message; subscribe }
 
 let contact_form contact =
@@ -115,17 +118,17 @@ let contact_form contact =
             ] )
       ]
   in
-  Response.of_json ~status:`OK response_json
+  Tapak.json response_json
 
 type upload_input =
-  { file : Form.Multipart.part
+  { file : Tapak.Form.Multipart.part
   ; description : string
   }
 
 let upload_schema =
-  let open Schema.Syntax in
-  let+ file = Schema.file "file"
-  and+ description = Schema.str ~default:"No description" "description" in
+  let open Tapak.Schema.Syntax in
+  let+ file = Tapak.Schema.file "file"
+  and+ description = Tapak.Schema.str ~default:"No description" "description" in
   { file; description }
 
 let upload_file upload =
@@ -138,7 +141,7 @@ let upload_file upload =
       ; "description", `String upload.description
       ]
   in
-  Response.of_json ~status:`OK response_json
+  Tapak.json response_json
 
 let list_users _req =
   let users =
@@ -147,7 +150,7 @@ let list_users _req =
       ; `Assoc [ "id", `Int 2; "name", `String "Bob" ]
       ]
   in
-  Response.of_json ~status:`OK users
+  Tapak.json users
 
 let html_page title body =
   Printf.sprintf
@@ -250,11 +253,11 @@ let index_page _req =
   </ul>
   |}
   in
-  Response.of_html ~status:`OK (html_page "Body Parsing Example" body)
+  Tapak.html (html_page "Body Parsing Example" body)
 
 let error_handler next request =
   try next request with
-  | Router.Validation_failed errors ->
+  | Tapak.Router.Validation_failed errors ->
     let body =
       `Assoc
         [ ( "errors"
@@ -265,43 +268,45 @@ let error_handler next request =
                  errors) )
         ]
     in
-    Response.of_json ~status:`Bad_request body
-  | Router.Bad_request msg ->
+    Tapak.json ~status:`Bad_request body
+  | Tapak.Router.Bad_request msg ->
     let body = `Assoc [ "error", `String msg ] in
-    Response.of_json ~status:`Bad_request body
+    Tapak.json ~status:`Bad_request body
 
 let app env =
-  let open Router in
-  let open Middleware in
   let clock = Eio.Stdenv.clock env in
   let now () = Eio.Time.now clock in
-  App.(
-    routes
-      [ get (s "") |> unit |> into index_page
-      ; scope
-          (s "api")
-          [ get (s "users") |> unit |> into list_users
-          ; post (s "users") |> body Schema.Json user_schema |> into create_user
-          ; put (s "users" / p "userId" int64)
-            |> body Schema.Json update_schema
-            |> into update_user
-          ]
-      ; post (s "login")
-        |> body Schema.Urlencoded login_schema
-        |> into login_form
-      ; post (s "contact")
-        |> body Schema.Urlencoded contact_schema
-        |> into contact_form
-      ; post (s "upload")
-        |> body Schema.Multipart upload_schema
-        |> into upload_file
-      ]
-      ()
-    <++> [ use
-             (module Request_logger)
-             (Request_logger.args ~now ~trusted_proxies:[] ())
-         ; error_handler
-         ])
+  Tapak.(
+    Router.(
+      routes
+        [ get (s "") |> unit |> into index_page
+        ; scope
+            (s "api")
+            [ get (s "users") |> unit |> into list_users
+            ; post (s "users")
+              |> body Schema.Json user_schema
+              |> into create_user
+            ; put (s "users" / p "userId" int64)
+              |> body Schema.Json update_schema
+              |> into update_user
+            ]
+        ; post (s "login")
+          |> body Schema.Urlencoded login_schema
+          |> into login_form
+        ; post (s "contact")
+          |> body Schema.Urlencoded contact_schema
+          |> into contact_form
+        ; post (s "upload")
+          |> body Schema.Multipart upload_schema
+          |> into upload_file
+        ])
+    |> pipe
+         ~through:
+           [ use
+               (module Middleware.Request_logger)
+               (Middleware.Request_logger.args ~now ~trusted_proxies:[] ())
+           ; error_handler
+           ])
 
 let () =
   Logs_threaded.enable ();
@@ -313,4 +318,4 @@ let () =
   let config = Piaf.Server.Config.create address in
   Logs.info (fun m -> m "Body Parsing Example");
   Logs.info (fun m -> m "Listening on http://localhost:8080");
-  ignore (Server.run_with ~config ~env (app env))
+  ignore (Tapak.run_with ~config ~env (app env))

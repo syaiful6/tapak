@@ -1,5 +1,3 @@
-open Tapak
-
 (**
    Custom Extractors Example
 
@@ -24,16 +22,16 @@ type user =
 
 type admin = user
 
-type Router.extractor_error +=
+type Tapak.Router.extractor_error +=
   | Missing_auth_header
   | Invalid_bearer_token
   | Invalid_token
   | Forbidden_not_admin
   | Invalid_api_key
 
-let user : user Router.extractor =
+let user : user Tapak.Router.extractor =
  fun req ->
-  match Request.header "Authorization" req with
+  match Tapak.Request.header "Authorization" req with
   | Some auth when String.starts_with ~prefix:"Bearer " auth ->
     let token = String.sub auth 7 (String.length auth - 7) in
     (* In real app: validate JWT, query database, etc. *)
@@ -45,7 +43,7 @@ let user : user Router.extractor =
   | Some _ -> Error Invalid_bearer_token
   | None -> Error Missing_auth_header
 
-let admin : admin Router.extractor =
+let admin : admin Tapak.Router.extractor =
  fun req ->
   match user req with
   | Ok u when u.role = "admin" -> Ok u
@@ -53,46 +51,42 @@ let admin : admin Router.extractor =
   | Error e -> Error e
 
 (** API key extractor example *)
-let api_key : string Router.extractor =
+let api_key : string Tapak.Router.extractor =
  fun req ->
-  match Request.header "x-api-key" req with
+  match Tapak.Request.header "x-api-key" req with
   | Some key when String.length key > 0 -> Ok key
   | _ -> Error Invalid_api_key
 
 let api_info_handler key =
-  Response.of_string'
-    ~status:`OK
-    (Printf.sprintf {|{"message": "API access granted", "key": "%s"}|} key)
+  Tapak.json
+    (`Assoc [ "message", `String "API access granted"; "key", `String key ])
 
 let profile_handler user =
-  Response.of_string'
-    ~status:`OK
-    (Printf.sprintf
-       {|{"id": %d, "name": "%s", "role": "%s"}|}
-       user.id
-       user.name
-       user.role)
+  Tapak.json
+    (`Assoc
+        [ "id", `Int user.id
+        ; "name", `String user.name
+        ; "role", `String user.role
+        ])
 
 (** Handler receives extracted Admin directly - guaranteed to be admin *)
 let admin_dashboard_handler admin =
-  Response.of_string'
-    ~status:`OK
-    (Printf.sprintf
-       {|{"message": "Welcome to admin dashboard", "admin": "%s"}|}
-       admin.name)
+  Tapak.json
+    (`Assoc
+        [ "meessage", `String "Welcome to admin dashboard"
+        ; "admin", `String admin.name
+        ])
 
 let get_user_handler user user_id =
-  Response.of_string'
-    ~status:`OK
-    (Printf.sprintf
-       {|{"requested_user_id": %Ld, "authenticated_as": "%s (id=%d)"}|}
-       user_id
-       user.name
-       user.id)
+  Tapak.json
+    (`Assoc
+        [ "requested_user_id", `String (Int64.to_string user_id)
+        ; ( "authenticated_as"
+          , `String (Printf.sprintf "%s (id=%d)" user.name user.id) )
+        ])
 
 let home_handler _req =
-  Response.of_html
-    ~status:`OK
+  Tapak.html
     {|<h1>Custom Extractors Example</h1>
 <p>This example demonstrates custom extractors similar to Axum/Warp in Rust.</p>
 
@@ -158,37 +152,38 @@ try next req with
 |}
 
 let not_found _req =
-  Response.of_string' ~status:`Not_found {|{"error": "Not found"}|}
+  Tapak.json ~status:`Not_found (`Assoc [ "error", `String "Not found" ])
 
-let extractor_error_middleware :
-  (Request.t -> Response.t) -> Request.t -> Response.t
-  =
+let extractor_error_middleware : Tapak.middleware =
  fun next req ->
   try next req with
-  | Router.Extraction_failed Missing_auth_header ->
-    Response.of_string'
+  | Tapak.Router.Extraction_failed Missing_auth_header ->
+    Tapak.json
       ~status:`Unauthorized
-      {|{"error": "Missing Authorization header"}|}
-  | Router.Extraction_failed Invalid_bearer_token ->
-    Response.of_string'
+      (`Assoc [ "error", `String "Missing Authorization header" ])
+  | Tapak.Router.Extraction_failed Invalid_bearer_token ->
+    Tapak.json
       ~status:`Unauthorized
-      {|{"error": "Invalid Bearer token format"}|}
-  | Router.Extraction_failed Invalid_token ->
-    Response.of_string' ~status:`Unauthorized {|{"error": "Invalid token"}|}
-  | Router.Extraction_failed Forbidden_not_admin ->
-    Response.of_string'
+      (`Assoc [ "error", `String "Invalid Bearer token format" ])
+  | Tapak.Router.Extraction_failed Invalid_token ->
+    Tapak.json
+      ~status:`Unauthorized
+      (`Assoc [ "error", `String "Invalid token" ])
+  | Tapak.Router.Extraction_failed Forbidden_not_admin ->
+    Tapak.json
       ~status:`Forbidden
-      {|{"error": "Admin access required"}|}
-  | Router.Extraction_failed Invalid_api_key ->
-    Response.of_string'
+      (`Assoc [ "error", `String "Admin access required" ])
+  | Tapak.Router.Extraction_failed Invalid_api_key ->
+    Tapak.json
       ~status:`Unauthorized
-      {|{"error": "Invalid or missing API key"}|}
-  | Router.Extraction_failed _ ->
-    Response.of_string' ~status:`Bad_request {|{"error": "Extractor failed"}|}
+      (`Assoc [ "error", `String "Invalid or missing API key" ])
+  | Tapak.Router.Extraction_failed _ ->
+    Tapak.json
+      ~status:`Bad_request
+      (`Assoc [ "error", `String "Extractor failed" ])
 
 let setup_app () =
-  let open Router in
-  App.(
+  Tapak.Router.(
     routes
       ~not_found
       [ get (s "") |> unit |> into home_handler
@@ -198,9 +193,8 @@ let setup_app () =
         |> extract admin
         |> into admin_dashboard_handler
       ; get (s "users" / int64) |> extract user |> into get_user_handler
-      ]
-      ()
-    <++> [ extractor_error_middleware ])
+      ])
+  |> extractor_error_middleware
 
 let setup_log level =
   Fmt_tty.setup_std_outputs ();
@@ -219,4 +213,4 @@ let () =
   let config = Piaf.Server.Config.create ~domains:1 address in
 
   let app = setup_app () in
-  ignore (Tapak.Server.run_with ~config ~env app)
+  ignore (Tapak.run_with ~config ~env app)

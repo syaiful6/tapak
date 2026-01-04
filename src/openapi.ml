@@ -792,7 +792,3 @@ let generate
   in
   `Assoc
     [ "openapi", `String "3.1.0"; "info", info; "paths", `Assoc paths_json ]
-
-let to_string ?title ?version ?description ?base_path routes =
-  generate ?title ?version ?description ?base_path routes
-  |> Yojson.Safe.pretty_to_string

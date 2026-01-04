@@ -31,6 +31,18 @@ module Event = struct
     Format.fprintf fmt "\n"
 
   let to_string t = Format.asprintf "%a" pp t
+
+  let make ?id ?data ?event ?comment ?retry () =
+    { id; data; event; comment; retry }
+
+  let text ?id ?event ?comment ?retry data =
+    { id; data = Some (`Text data); event; comment; retry }
+
+  let json ?id ?event ?comment ?retry data =
+    { id; data = Some (`Json data); event; comment; retry }
+
+  let comment text =
+    { id = None; data = None; event = None; comment = Some text; retry = None }
 end
 
 let keep_alive
@@ -41,15 +53,7 @@ let keep_alive
       event_stream
   =
   let output_stream, push = Piaf.Stream.create 4 in
-  let keep_alive_event =
-    Event.
-      { id = None
-      ; data = None
-      ; event = None
-      ; comment = Some comment
-      ; retry = None
-      }
-  in
+  let keep_alive_event = Event.comment comment in
   Eio.Fiber.fork ~sw (fun () ->
     let rec loop () =
       match

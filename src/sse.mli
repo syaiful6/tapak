@@ -1,32 +1,3 @@
-(** Server-Sent Events (SSE) support.
-
-    The primary API is {!stream}, which takes an [Event.t Piaf.Stream.t] and returns
-    a [Response.t] configured for Server-Sent Events with proper headers.
-
-    {b: Basic usage: }
-
-    {[
-      open Tapak
-
-      let sse_events () =
-        Piaf.Stream.of_list [
-          Event.{ id = Some "1"; data = Some (`Text "Hello"); event = None; comment = None; retry = None };
-          Event.{ id = Some "2"; data = Some (`Json (`Assoc [("message", `String "World")])); event = Some "greeting"; comment = None; retry = None };
-        ]
-
-      let app =
-        let open Router in
-        App.(
-          routes [ get (s "sse") @-> (fun _req -> Sse.stream (sse_events ())) ]
-        )
-    ]}
-
-    For long-lived connections, use {!keep_alive} to wrap your event stream and
-    automatically send keep-alive comments during periods of inactivity.
-
-    See examples/sse-chat for a complete chat application using SSE. See also the {{:https://developer.mozilla.org/en-US/docs/Web/API/EventSource} {b EventSource}}
-*)
-
 module Event : sig
   type data =
     [ `Json of Yojson.Safe.t
@@ -43,6 +14,33 @@ module Event : sig
 
   val pp : Format.formatter -> t -> unit
   val to_string : t -> string
+
+  val make :
+     ?id:string
+    -> ?data:data
+    -> ?event:string
+    -> ?comment:string
+    -> ?retry:int
+    -> unit
+    -> t
+
+  val text :
+     ?id:string
+    -> ?event:string
+    -> ?comment:string
+    -> ?retry:int
+    -> string
+    -> t
+
+  val json :
+     ?id:string
+    -> ?event:string
+    -> ?comment:string
+    -> ?retry:int
+    -> Yojson.Safe.t
+    -> t
+
+  val comment : string -> t
 end
 
 val keep_alive :

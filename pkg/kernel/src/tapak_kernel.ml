@@ -1,4 +1,3 @@
-module App = App
 module Body = Body
 module Context = Context
 module Filter = Filter
