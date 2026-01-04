@@ -1,5 +1,3 @@
-open Tapak
-
 type user_input =
   { name : string
   ; email : string
@@ -7,14 +5,17 @@ type user_input =
   }
 
 let user_schema =
-  let open Schema.Syntax in
-  let+ name = Schema.(str ~constraint_:(Constraint.min_length 3) "name")
-  and+ email = Schema.(str ~constraint_:(Constraint.format `Email) "email")
-  and+ age = Schema.(int ~constraint_:(Constraint.int_range 18 120) "age") in
+  let open Tapak.Schema.Syntax in
+  let+ name = Tapak.Schema.(str ~constraint_:(Constraint.min_length 3) "name")
+  and+ email =
+    Tapak.Schema.(str ~constraint_:(Constraint.format `Email) "email")
+  and+ age =
+    Tapak.Schema.(int ~constraint_:(Constraint.int_range 18 120) "age")
+  in
   { name; email; age }
 
 let create_user_json user =
-  Response.of_json
+  Tapak.json
     ~status:`Created
     (`Assoc
         [ "id", `Int 123
@@ -36,13 +37,13 @@ let create_user_html user =
       user.email
       user.age
   in
-  Response.of_html ~status:`Created html
+  Tapak.html ~status:`Created html
 
 let json_error_handler _request exn =
   match exn with
-  | Router.Validation_failed errors ->
+  | Tapak.Router.Validation_failed errors ->
     Some
-      (Response.of_json
+      (Tapak.json
          ~status:`Bad_request
          (`Assoc
              [ ( "errors"
@@ -53,14 +54,13 @@ let json_error_handler _request exn =
                            [ "field", `String field; "message", `String msg ])
                       errors) )
              ]))
-  | Router.Bad_request msg ->
-    Some
-      (Response.of_json ~status:`Bad_request (`Assoc [ "error", `String msg ]))
+  | Tapak.Router.Bad_request msg ->
+    Some (Tapak.json ~status:`Bad_request (`Assoc [ "error", `String msg ]))
   | _ -> None
 
 let html_error_handler _request exn =
   match exn with
-  | Router.Validation_failed errors ->
+  | Tapak.Router.Validation_failed errors ->
     let error_items =
       errors
       |> List.map (fun (field, msg) ->
@@ -76,8 +76,8 @@ let html_error_handler _request exn =
 </div>|}
         error_items
     in
-    Some (Response.of_html ~status:`Bad_request html)
-  | Router.Bad_request msg ->
+    Some (Tapak.html ~status:`Bad_request html)
+  | Tapak.Router.Bad_request msg ->
     let html =
       Printf.sprintf
         {|<div class="error-box">
@@ -87,14 +87,14 @@ let html_error_handler _request exn =
 </div>|}
         msg
     in
-    Some (Response.of_html ~status:`Bad_request html)
+    Some (Tapak.html ~status:`Bad_request html)
   | _ -> None
 
 let negotiated_error_handler request exn =
   match exn with
-  | Router.Validation_failed errors ->
+  | Tapak.Router.Validation_failed errors ->
     Some
-      (Response.negotiate ~status:`Bad_request request (fun format ->
+      (Tapak.Response.negotiate ~status:`Bad_request request (fun format ->
          match format with
          | `Json ->
            let json =
@@ -126,9 +126,9 @@ let negotiated_error_handler request exn =
            in
            Some ("text/html; charset=utf-8", html)
          | _ -> None))
-  | Router.Bad_request msg ->
+  | Tapak.Router.Bad_request msg ->
     Some
-      (Response.negotiate ~status:`Bad_request request (fun format ->
+      (Tapak.Response.negotiate ~status:`Bad_request request (fun format ->
          match format with
          | `Json ->
            Some
@@ -222,13 +222,13 @@ curl -X POST http://localhost:8080/register \
 </body>
 </html>|}
   in
-  Response.of_html ~status:`OK html
+  Tapak.html ~status:`OK html
 
 let handle_admin_errors _req exn =
   match exn with
-  | Router.Validation_failed _ ->
+  | Tapak.Router.Validation_failed _ ->
     Some
-      (Response.of_json
+      (Tapak.json
          ~status:`Bad_request
          (`Assoc
              [ "error", `String "Admin validation failed"
@@ -236,32 +236,36 @@ let handle_admin_errors _req exn =
              ]))
   | _ -> None
 
-let app _env =
-  let open Router in
-  App.(
-    routes
-      [ get (s "") |> unit |> into home_page
-      ; post (s "api" / s "users")
-        |> body Schema.Json user_schema
-        |> into create_user_json
-        |> recover json_error_handler
-      ; post (s "signup")
-        |> body Schema.Json user_schema
-        |> into create_user_html
-        |> recover html_error_handler
-      ; post (s "register")
-        |> body Schema.Json user_schema
-        |> into create_user_json
-        |> recover negotiated_error_handler
-      ; scope
-          (s "admin")
-          [ post (s "users")
-            |> body Schema.Json user_schema
-            |> into create_user_json
-          ]
-        |> recover handle_admin_errors
-      ]
-      ())
+let app env =
+  let clock = Eio.Stdenv.clock env in
+  let now () = Eio.Time.now clock in
+  Tapak.(
+    Router.(
+      routes
+        [ get (s "") |> unit |> into home_page
+        ; post (s "api" / s "users")
+          |> body Schema.Json user_schema
+          |> into create_user_json
+          |> recover json_error_handler
+        ; post (s "signup")
+          |> body Schema.Json user_schema
+          |> into create_user_html
+          |> recover html_error_handler
+        ; post (s "register")
+          |> body Schema.Json user_schema
+          |> into create_user_json
+          |> recover negotiated_error_handler
+        ; scope
+            (s "admin")
+            [ post (s "users")
+              |> body Schema.Json user_schema
+              |> into create_user_json
+            ]
+          |> recover handle_admin_errors
+        ])
+    |> use
+         (module Middleware.Request_logger)
+         (Middleware.Request_logger.args ~now ~trusted_proxies:[] ()))
 
 let () =
   Logs_threaded.enable ();
@@ -274,4 +278,4 @@ let () =
   Logs.info (fun m -> m "Error Handling Example");
   Logs.info (fun m -> m "Listening on http://localhost:8080");
   Logs.info (fun m -> m "Try the examples shown on the home page!");
-  ignore (Server.run_with ~config ~env (app env))
+  ignore (Tapak.run_with ~config ~env (app env))

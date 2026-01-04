@@ -1,4 +1,3 @@
-open Tapak
 module Log = (val Logs.src_log Logs.default : Logs.LOG)
 
 let trusted_proxies =
@@ -13,7 +12,7 @@ let trusted_proxies =
   ]
 
 let home_handler () =
-  Response.of_html
+  Tapak.html
     ~status:`OK
     {|<h1>Tapak Showcases</h1>
 <ul>
@@ -22,14 +21,15 @@ let home_handler () =
   <li><a href="/files/docs/readme.md">File Browser</a></li>
   <li><a href="/echo">Echo (POST with body)</a></li>
   <li><a href="/form">CSRF-Protected Form</a></li>
+  <li><a href="/download/users.csv">Streaming CSV Download</a></li>
 </ul>|}
 
 let user_handler id =
   let html = Printf.sprintf "<h1>User Profile</h1><p>User ID: %Ld</p>" id in
-  Response.of_html ~status:`OK html
+  Tapak.html ~status:`OK html
 
 let api_version_handler req =
-  Response.negotiate req (function
+  Tapak.Response.negotiate req (function
     | `Json ->
       Some
         ( "application/json"
@@ -43,9 +43,10 @@ let files_handler path =
   let html =
     Printf.sprintf "<h1>File Browser</h1><p>Requested path: %s</p>" path
   in
-  Response.of_string' ~content_type:"text/html" ~status:`OK html
+  Tapak.html ~status:`OK html
 
 let echo_handler req =
+  let open Tapak in
   let method_ = Request.meth req in
 
   match method_ with
@@ -76,7 +77,7 @@ let echo_handler req =
       "Please POST or PUT data to this endpoint"
 
 let form_get_handler req =
-  let token, secret = Csrf.input req in
+  let token, secret = Tapak.Csrf.input req in
   let html =
     Printf.sprintf
       {|<h1>CSRF-Protected Form</h1>
@@ -109,9 +110,10 @@ let form_get_handler req =
       token
       token
   in
-  Response.of_html ~status:`OK html |> Csrf.with_cookie secret
+  Tapak.html ~status:`OK html |> Tapak.Csrf.with_cookie secret
 
 let form_post_handler req =
+  let open Tapak in
   let form_data =
     Form.Urlencoded.of_body (Request.body req)
     |> Result.map Form.Urlencoded.normalize
@@ -151,76 +153,121 @@ let form_post_handler req =
       "<h1>400 Bad Request</h1><p>Invalid form data</p><p><a \
        href=\"/form\">Try again</a></p>"
 
+let stream_csv_handler req =
+  let open Tapak in
+  let sw =
+    match (Request.info req).sw with
+    | Some sw -> sw
+    | None -> failwith "No switch available in request"
+  in
+  let headers =
+    Headers.of_list
+      [ "Content-Type", "text/csv"
+      ; "Content-Disposition", "attachment; filename=\"users.csv\""
+      ]
+  in
+  stream ~sw ~headers (fun write ->
+    (* Write CSV header *)
+    write (Some "id,username,email,created_at,status\n");
+
+    (* Stream 10,000 user records *)
+    for i = 1 to 10_000 do
+      let timestamp = Unix.gettimeofday () -. (float_of_int i *. 3600.) in
+      let status = if i mod 3 = 0 then "inactive" else "active" in
+      let row =
+        Printf.sprintf
+          "%d,user%d,user%d@example.com,%.0f,%s\n"
+          i
+          i
+          i
+          timestamp
+          status
+      in
+      write (Some row);
+
+      (* Yield every 100 rows to allow other fibers to run *)
+      if i mod 100 = 0 then Eio.Fiber.yield ()
+    done;
+
+    (* Signal end of stream *)
+    write None)
+
 let api_users_handler () =
-  Response.of_string
-    ~body:{|{"users": [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]}|}
-    `OK
+  Tapak.json
+    (`List
+        [ `Assoc [ "id", `Int 1; "name", `String "Alice" ]
+        ; `Assoc [ "id", `Int 2; "name", `String "Bob" ]
+        ])
 
 let api_detail_user_handler id =
   match id with
-  | 1L -> Response.of_string ~body:{|{"id": 1, "name": "Alice"}|} `OK
-  | 2L -> Response.of_string ~body:{|{"id": 2, "name": "Bob"}|} `OK
-  | _ -> Response.of_string ~body:{|{"error": "User not found"}|} `Not_found
+  | 1L -> Tapak.json (`Assoc [ "id", `Int 1; "name", `String "Alice" ])
+  | 2L -> Tapak.json (`Assoc [ "id", `Int 2; "name", `String "Bob" ])
+  | _ ->
+    Tapak.json ~status:`Not_found (`Assoc [ "error", `String "User not found" ])
 
 let api_update_user_handler req id =
   let body_content =
     Result.fold
       ~ok:Fun.id
       ~error:(fun _ -> "")
-      (Body.to_string (Request.body req))
+      Tapak.(Body.to_string (Request.body req))
   in
-  let response_text =
-    Printf.sprintf
-      {|{"message": "User %Ld updated", "data": %s}|}
-      id
-      (String.escaped body_content)
+  let json =
+    `Assoc
+      [ "message", `String (Printf.sprintf "User %Ld updated" id)
+      ; "data", `String body_content
+      ]
   in
-  Response.of_string' ~status:`OK response_text
+  Tapak.json ~status:`OK json
 
 let not_found _req =
-  Response.of_string'
+  Tapak.html
     ~status:`Not_found
     "<h1>404 Not Found</h1><p>The page you requested could not be found.</p>"
 
 let setup_app env =
-  let open Middleware in
-  let open Router in
   let now () = Eio.Time.now (Eio.Stdenv.clock env) in
   let decoder = Tapak_compressions.decoder in
   let max_bytes = Int64.mul 10L (Int64.mul 1024L 1024L) in
 
-  App.(
-    routes
-      ~not_found
-      [ get (s "") |> unit |> into home_handler
-      ; get (s "users" / int64) |> into user_handler
-      ; scope
-          (s "api")
-          [ get (s "version") |> request |> into api_version_handler
-          ; scope
-              ~middlewares:
-                [ use
-                    (module Limit_request_size)
-                    (Limit_request_size.args ~max_bytes)
+  Tapak.(
+    Router.(
+      routes
+        ~not_found
+        [ get (s "") |> unit |> into home_handler
+        ; get (s "users" / int64) |> into user_handler
+        ; scope
+            (s "api")
+            [ get (s "version") |> request |> into api_version_handler
+            ; scope
+                ~middlewares:
+                  [ use
+                      (module Middleware.Limit_request_size)
+                      (Middleware.Limit_request_size.args ~max_bytes)
+                  ]
+                (s "users")
+                [ get (s "") |> unit |> into api_users_handler
+                ; get int64 |> into api_detail_user_handler
+                ; post int64 |> request |> into api_update_user_handler
                 ]
-              (s "users")
-              [ get (s "") |> unit |> into api_users_handler
-              ; get int64 |> into api_detail_user_handler
-              ; post int64 |> request |> into api_update_user_handler
-              ]
-          ]
-      ; get (s "files" / str) |> into files_handler
-      ; post (s "echo") |> request |> into echo_handler
-      ; put (s "echo") |> request |> into echo_handler
-      ; get (s "form") |> request |> into form_get_handler
-      ; post (s "form") |> request |> into form_post_handler
-      ]
-      ()
-    <++> [ use
-             (module Request_logger)
-             (Request_logger.args ~now ~trusted_proxies ())
-         ; use (module Decompression) decoder
-         ])
+            ]
+        ; get (s "files" / str) |> into files_handler
+        ; post (s "echo") |> request |> into echo_handler
+        ; put (s "echo") |> request |> into echo_handler
+        ; get (s "form") |> request |> into form_get_handler
+        ; post (s "form") |> request |> into form_post_handler
+        ; get (s "download" / s "users.csv")
+          |> request
+          |> into stream_csv_handler
+        ])
+    |> pipe
+         ~through:
+           [ use
+               (module Middleware.Request_logger)
+               (Middleware.Request_logger.args ~now ~trusted_proxies ())
+           ; use (module Middleware.Decompression) decoder
+           ])
 
 let setup_log ?(threaded = false) ?style_renderer level =
   let () = if threaded then Logs_threaded.enable () else () in
@@ -252,8 +299,8 @@ let () =
       log
         "Starting with systemd socket activation support (domains: %d)"
         domains);
-    ignore (Server.run_with_systemd_socket ~config ~env (setup_app env)))
+    ignore (Tapak.run_with_systemd_socket ~config ~env (setup_app env)))
   else (
     Log.warn (fun log ->
       log "Starting Tapak Showcase WITHOUT systemd support on port %d" port);
-    ignore (Server.run_with ~config ~env (setup_app env)))
+    ignore (Tapak.run_with ~config ~env (setup_app env)))

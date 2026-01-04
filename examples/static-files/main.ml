@@ -1,4 +1,3 @@
-open Tapak
 module Log = (val Logs.src_log Logs.default : Logs.LOG)
 
 let trusted_proxies =
@@ -20,13 +19,10 @@ let () =
   let cwd = Eio.Stdenv.cwd env in
 
   let public_dir = Eio.Path.(cwd / "examples" / "static-files" / "public") in
-  let fs_backend =
-    Static.filesystem ~env:(env :> Static.fs_env) ~follow:false public_dir
-  in
   let now () = Eio.Time.now (Eio.Stdenv.clock env) in
 
   let static_config =
-    { Static.default_config with
+    { Tapak.Static.default_config with
       max_age = `Seconds 3600 (* Cache for 1 hour *)
     ; use_weak_etags = true
     ; serve_hidden_files = false
@@ -37,32 +33,34 @@ let () =
 
   let api_handler () =
     let json_body =
-      {|{"message":"Hello from API","timestamp":"|}
-      ^ Float.to_string (Ptime_clock.now () |> Ptime.to_float_s)
-      ^ {|"}|}
+      `Assoc
+        [ "message", `String "Hello from API"
+        ; "timestamp", `Float (Ptime_clock.now () |> Ptime.to_float_s)
+        ]
     in
     let headers =
       Piaf.Headers.of_list [ "Content-Type", "application/json; charset=utf-8" ]
     in
-    Response.of_string ~headers ~body:json_body `OK
+    Tapak.json ~headers json_body
   in
 
-  let open Router in
-  let app =
-    App.(
-      routes
-        [ get (s "api" / s "hello") |> unit |> into api_handler
-        ; get splat
-          |> request
-          |> into (Static.serve fs_backend ~config:static_config ())
-        ]
-        ()
-      <++> [ Middleware.(
-               use
-                 (module Request_logger)
-                 (Request_logger.args ~now ~trusted_proxies ()))
-           ; Middleware.head
-           ])
+  let handler =
+    Tapak.(
+      Router.(
+        routes
+          [ get (s "api" / s "hello") |> unit |> into api_handler
+          ; get splat
+            |> request
+            |> into
+                 (Tapak.static
+                    ~env:(env :> Tapak.Static.fs_env)
+                    ~config:static_config
+                    public_dir
+                    ())
+          ])
+      |> use
+           (module Middleware.Request_logger)
+           (Middleware.Request_logger.args ~now ~trusted_proxies ()))
   in
 
   let port = 8080 in
@@ -73,4 +71,4 @@ let () =
   Log.info (fun m ->
     m "Serving files from: %s" (Eio.Path.native_exn public_dir));
 
-  ignore (Server.run_with ~config ~env app)
+  ignore (Tapak.run_with ~config ~env handler)

@@ -1,5 +1,3 @@
-open Tapak
-
 type user =
   { id : int
   ; name : string
@@ -10,38 +8,42 @@ let user_to_json { id; name; email } =
   `Assoc [ "id", `Int id; "name", `String name; "email", `String email ]
 
 let user_schema =
-  let open Schema.Syntax in
+  let open Tapak.Schema.Syntax in
   let+ name =
-    Schema.(
+    Tapak.Schema.(
       str
         ~constraint_:
           (Constraint.all_of
              [ Constraint.min_length 1; Constraint.max_length 125 ])
         "name")
-  and+ email = Schema.(str ~constraint_:(Constraint.format `Email) "email") in
+  and+ email =
+    Tapak.Schema.(str ~constraint_:(Constraint.format `Email) "email")
+  in
   name, email
 
 let user_response_schema =
-  let open Schema.Syntax in
-  let+ id = Schema.int "id"
+  let open Tapak.Schema.Syntax in
+  let+ id = Tapak.Schema.int "id"
   and+ name =
-    Schema.(
+    Tapak.Schema.(
       str
         ~constraint_:
           (Constraint.all_of
              [ Constraint.min_length 1; Constraint.max_length 125 ])
         "name")
-  and+ email = Schema.(str ~constraint_:(Constraint.format `Email) "email") in
+  and+ email =
+    Tapak.Schema.(str ~constraint_:(Constraint.format `Email) "email")
+  in
   { id; name; email }
 
 let user_list_response_schema =
-  Schema.(list "users" (Field.obj user_response_schema))
+  Tapak.Schema.(list "users" (Field.obj user_response_schema))
 
 type delete_response = { message : string }
 
 let delete_response_schema =
-  let open Schema.Syntax in
-  let+ message = Schema.str "message" in
+  let open Tapak.Schema.Syntax in
+  let+ message = Tapak.Schema.str "message" in
   { message }
 
 type profile_response =
@@ -51,10 +53,10 @@ type profile_response =
   }
 
 let profile_response_schema =
-  let open Schema.Syntax in
-  let+ session_id = Schema.str "session_id"
-  and+ theme = Schema.str "theme"
-  and+ message = Schema.str "message" in
+  let open Tapak.Schema.Syntax in
+  let+ session_id = Tapak.Schema.str "session_id"
+  and+ theme = Tapak.Schema.str "theme"
+  and+ message = Tapak.Schema.str "message" in
   { session_id; theme; message }
 
 type search =
@@ -64,7 +66,7 @@ type search =
   }
 
 let search_schema =
-  let open Schema in
+  let open Tapak.Schema in
   let open Syntax in
   let+ q = option "q" (Field.str ())
   and+ limit =
@@ -80,10 +82,10 @@ let search_schema =
   { q; limit; offset }
 
 let session_cookies_schema =
-  let open Schema.Syntax in
+  let open Tapak.Schema.Syntax in
   let+ session_id =
-    Schema.(str ~constraint_:(Constraint.min_length 16) "session_id")
-  and+ user_pref = Schema.(option "theme" (Field.str ())) in
+    Tapak.Schema.(str ~constraint_:(Constraint.min_length 16) "session_id")
+  and+ user_pref = Tapak.Schema.(option "theme" (Field.str ())) in
   session_id, user_pref
 
 let list_users search =
@@ -120,85 +122,83 @@ let get_user_profile (session_id, theme) =
   }
 
 let v1_api_routes =
-  let open Router in
-  [ get (s "users")
-    |> query search_schema
-    |> summary "List all users"
-    |> operation_id "listUsers"
-    |> tags [ "Users" ]
-    |> response_model
-         ~status:`OK
-         ~schema:user_list_response_schema
-         ~encoder:(fun users ->
-           `Assoc [ "users", `List (List.map user_to_json users) ])
-    |> into list_users
-  ; get (s "users" / p "userId" int)
-    |> summary "Get a user by ID"
-    |> operation_id "getUser"
-    |> tags [ "Users" ]
-    |> response_model
-         ~status:`OK
-         ~schema:user_response_schema
-         ~encoder:user_to_json
-    |> into get_user
-  ; post (s "users")
-    |> body Schema.Json user_schema
-    |> summary "Create a new user"
-    |> description "Requires authentication via X-API-Key header"
-    |> operation_id "createUser"
-    |> tags [ "Users" ]
-    |> response_model
-         ~status:`Created
-         ~schema:user_response_schema
-         ~encoder:user_to_json
-    |> into create_user
-  ; put (s "users" / p "userId" int)
-    |> body Schema.Json user_schema
-    |> summary "Update a user"
-    |> description "Requires authentication via X-API-Key header"
-    |> operation_id "updateUser"
-    |> tags [ "Users" ]
-    |> response_model
-         ~status:`OK
-         ~schema:user_response_schema
-         ~encoder:user_to_json
-    |> into update_user
-  ; delete (s "users" / p "userId" int)
-    |> summary "Delete a user"
-    |> description "Requires authentication via X-API-Key header"
-    |> operation_id "deleteUser"
-    |> tags [ "Users" ]
-    |> response_model
-         ~status:`No_content
-         ~schema:delete_response_schema
-         ~encoder:(fun { message } -> `Assoc [ "message", `String message ])
-    |> into delete_user
-  ; get (s "profile")
-    |> cookie session_cookies_schema
-    |> summary "Get user profile"
-    |> description "Returns user profile information from session cookies"
-    |> operation_id "getUserProfile"
-    |> tags [ "Users" ]
-    |> response_model
-         ~status:`OK
-         ~schema:profile_response_schema
-         ~encoder:(fun { session_id; theme; message } ->
-           `Assoc
-             [ "session_id", `String session_id
-             ; "theme", `String theme
-             ; "message", `String message
-             ])
-    |> into get_user_profile
-  ]
+  Tapak.Router.
+    [ get (s "users")
+      |> query search_schema
+      |> summary "List all users"
+      |> operation_id "listUsers"
+      |> tags [ "Users" ]
+      |> response_model
+           ~status:`OK
+           ~schema:user_list_response_schema
+           ~encoder:(fun users ->
+             `Assoc [ "users", `List (List.map user_to_json users) ])
+      |> into list_users
+    ; get (s "users" / p "userId" int)
+      |> summary "Get a user by ID"
+      |> operation_id "getUser"
+      |> tags [ "Users" ]
+      |> response_model
+           ~status:`OK
+           ~schema:user_response_schema
+           ~encoder:user_to_json
+      |> into get_user
+    ; post (s "users")
+      |> body Tapak.Schema.Json user_schema
+      |> summary "Create a new user"
+      |> description "Requires authentication via X-API-Key header"
+      |> operation_id "createUser"
+      |> tags [ "Users" ]
+      |> response_model
+           ~status:`Created
+           ~schema:user_response_schema
+           ~encoder:user_to_json
+      |> into create_user
+    ; put (s "users" / p "userId" int)
+      |> body Tapak.Schema.Json user_schema
+      |> summary "Update a user"
+      |> description "Requires authentication via X-API-Key header"
+      |> operation_id "updateUser"
+      |> tags [ "Users" ]
+      |> response_model
+           ~status:`OK
+           ~schema:user_response_schema
+           ~encoder:user_to_json
+      |> into update_user
+    ; delete (s "users" / p "userId" int)
+      |> summary "Delete a user"
+      |> description "Requires authentication via X-API-Key header"
+      |> operation_id "deleteUser"
+      |> tags [ "Users" ]
+      |> response_model
+           ~status:`No_content
+           ~schema:delete_response_schema
+           ~encoder:(fun { message } -> `Assoc [ "message", `String message ])
+      |> into delete_user
+    ; get (s "profile")
+      |> cookie session_cookies_schema
+      |> summary "Get user profile"
+      |> description "Returns user profile information from session cookies"
+      |> operation_id "getUserProfile"
+      |> tags [ "Users" ]
+      |> response_model
+           ~status:`OK
+           ~schema:profile_response_schema
+           ~encoder:(fun { session_id; theme; message } ->
+             `Assoc
+               [ "session_id", `String session_id
+               ; "theme", `String theme
+               ; "message", `String message
+               ])
+      |> into get_user_profile
+    ]
 
-let api_v1_routes =
-  let open Router in
-  [ scope (s "v1") v1_api_routes ]
+let api_v1_routes = Tapak.Router.[ scope (s "v1") v1_api_routes ]
 
 let openapi_schema ?base_path routes =
-  Response.of_json
+  Tapak.json
     ~status:`OK
-    (Openapi.generate
+    (Tapak.openapi
        ~title:"User API"
        ~version:"1.0.0"
        ~description:"A simple user management API"
@@ -244,11 +244,11 @@ let swagger_ui_handler () =
 </body>
 </html>|}
   in
-  Response.of_html ~status:`OK html
+  Tapak.html ~status:`OK html
 
 let error_handler next request =
   try next request with
-  | Router.Validation_failed errors ->
+  | Tapak.Router.Validation_failed errors ->
     let body =
       `Assoc
         [ ( "errors"
@@ -259,31 +259,31 @@ let error_handler next request =
                  errors) )
         ]
     in
-    Response.of_json ~status:`Bad_request body
-  | Router.Bad_request msg ->
+    Tapak.json ~status:`Bad_request body
+  | Tapak.Router.Bad_request msg ->
     let body = `Assoc [ "error", `String msg ] in
-    Response.of_json ~status:`Bad_request body
+    Tapak.json ~status:`Bad_request body
 
 let app env =
-  let open Router in
-  let open Middleware in
   let clock = Eio.Stdenv.clock env in
   let now () = Eio.Time.now clock in
 
-  App.(
-    routes
-      [ scope (s "api") api_v1_routes
-      ; get (s "docs") |> unit |> into swagger_ui_handler
-      ; get (s "openapi.json")
-        |> into (openapi_schema ~base_path:"/api" api_v1_routes)
-      ]
-      ()
-    <++> [ head
-         ; use
-             (module Request_logger)
-             (Request_logger.args ~now ~trusted_proxies:[] ())
-         ; error_handler
-         ])
+  Tapak.(
+    Router.(
+      routes
+        [ scope (s "api") api_v1_routes
+        ; get (s "docs") |> unit |> into swagger_ui_handler
+        ; get (s "openapi.json")
+          |> into (openapi_schema ~base_path:"/api" api_v1_routes)
+        ])
+    |> pipe
+         ~through:
+           [ use
+               (module Middleware.Request_logger)
+               (Middleware.Request_logger.args ~now ~trusted_proxies:[] ())
+           ; error_handler
+           ; Middleware.head
+           ])
 
 let () =
   Logs_threaded.enable ();
@@ -295,4 +295,4 @@ let () =
   let config = Piaf.Server.Config.create address in
   Logs.info (fun m -> m "Open Api Example");
   Logs.info (fun m -> m "Listening on http://localhost:8080");
-  ignore (Server.run_with ~config ~env (app env))
+  ignore (Tapak.run_with ~config ~env (app env))

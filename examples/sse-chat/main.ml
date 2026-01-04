@@ -1,9 +1,8 @@
-open Tapak
 module Log = (val Logs.src_log Logs.default : Logs.LOG)
 
 module Chat_room = struct
   type t =
-    { clients : (int, Sse.Event.t option -> unit) Hashtbl.t
+    { clients : (int, Tapak.Sse.Event.t option -> unit) Hashtbl.t
     ; mutable next_user_id : int
     }
 
@@ -17,6 +16,8 @@ module Chat_room = struct
     user_id
 
   let remove_client t user_id =
+    let stream = Hashtbl.find_opt t.clients user_id in
+    Option.iter (fun writer -> writer None) stream;
     Hashtbl.remove t.clients user_id;
     Log.info (fun m -> m "User %d left the chat" user_id)
 
@@ -28,15 +29,7 @@ module Chat_room = struct
         ; "timestamp", `Float (Unix.gettimeofday ())
         ]
     in
-    let event =
-      Sse.Event.
-        { id = None
-        ; data = Some (`Json json)
-        ; event = Some "message"
-        ; comment = None
-        ; retry = None
-        }
-    in
+    let event = Tapak.Sse.Event.json ~event:"message" json in
     Hashtbl.iter
       (fun user_id writer ->
          if user_id <> sender_id
@@ -270,31 +263,26 @@ let html_page =
 </body>
 </html>|}
 
-let home_handler () = Response.of_html ~status:`OK html_page
+let home_handler () = Tapak.html ~status:`OK html_page
 
 let chat_stream_handler ~clock room req =
   let sw =
-    match (Request.info req).sw with
+    match (Tapak.Request.info req).sw with
     | Some sw -> sw
     | None -> failwith "No switch available in request"
   in
   let piaf_stream, piaf_writer = Piaf.Stream.create 4 in
   let user_id = Chat_room.add_client room piaf_writer in
   let user_id_event =
-    Sse.Event.
-      { id = None
-      ; data = Some (`Text (string_of_int user_id))
-      ; event = Some "user-id"
-      ; comment = None
-      ; retry = None
-      }
+    Tapak.Sse.Event.text ~event:"user-id" (string_of_int user_id)
   in
   piaf_writer (Some user_id_event);
   Eio.Switch.on_release sw (fun () -> Chat_room.remove_client room user_id);
-  let kept_alive = Sse.keep_alive ~sw ~clock piaf_stream in
-  Sse.stream kept_alive
+  let kept_alive = Tapak.Sse.keep_alive ~sw ~clock piaf_stream in
+  Tapak.Sse.stream kept_alive
 
 let post_message_handler room user_id req =
+  let open Tapak in
   let body_str =
     Request.body req |> Body.to_string |> Result.get_ok |> String.trim
   in
@@ -313,17 +301,15 @@ let () =
   Eio_main.run @@ fun env ->
   let room = Chat_room.create () in
   let clock = Eio.Stdenv.clock env in
-  let open Router in
   let app =
-    App.(
-      routes
-        [ get (s "") |> unit |> into home_handler
-        ; get (s "chat") |> request |> into (chat_stream_handler ~clock room)
-        ; post (s "chat" / int)
-          |> request
-          |> into (fun req user_id -> post_message_handler room user_id req)
-        ]
-        ())
+    let open Tapak.Router in
+    routes
+      [ get (s "") |> unit |> into home_handler
+      ; get (s "chat") |> request |> into (chat_stream_handler ~clock room)
+      ; post (s "chat" / int)
+        |> request
+        |> into (fun req user_id -> post_message_handler room user_id req)
+      ]
   in
   let port = 8080 in
   let address = `Tcp (Eio.Net.Ipaddr.V4.any, port) in
@@ -331,4 +317,4 @@ let () =
   Log.info (fun m -> m "Starting SSE chat server on http://localhost:%d" port);
   Log.info (fun m ->
     m "Open http://localhost:%d in multiple browser tabs to chat" port);
-  ignore (Server.run_with ~config ~env app)
+  ignore (Tapak.run_with ~config ~env app)

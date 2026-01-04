@@ -1,8 +1,8 @@
 include Tapak_kernel.Response
 
 let redirect
-      ?(status : Piaf.Status.redirection = `Found)
       ?version
+      ?(status : Piaf.Status.redirection = `Found)
       ?(headers = Piaf.Headers.empty)
       ?(context = Context.empty)
       location

@@ -1,9 +1,7 @@
-open Tapak
-
-let simple_handler () = Response.of_string ~body:"OK" `OK
+let simple_handler () = Tapak.Response.of_string ~body:"OK" `OK
 
 let test_basic_generation () =
-  let open Router in
+  let open Tapak.Router in
   let routes =
     [ get (s "users")
       |> summary "List users"
@@ -17,7 +15,7 @@ let test_basic_generation () =
       |> into simple_handler
     ]
   in
-  let spec = Openapi.generate ~title:"Test API" ~version:"1.0.0" routes in
+  let spec = Tapak.openapi ~title:"Test API" ~version:"1.0.0" routes in
   match spec with
   | `Assoc fields ->
     let openapi_version = List.assoc "openapi" fields in
@@ -28,15 +26,15 @@ let test_basic_generation () =
   | _ -> Alcotest.fail "Expected object"
 
 let test_path_parameters () =
-  let open Router in
   let routes =
-    [ get (s "users" / int)
-      |> summary "Get user by ID"
-      |> operation_id "getUser"
-      |> into (fun _id -> Response.of_string ~body:"User" `OK)
-    ]
+    Tapak.Router.
+      [ get (s "users" / int)
+        |> summary "Get user by ID"
+        |> operation_id "getUser"
+        |> into (fun _id -> Tapak.Response.of_string ~body:"User" `OK)
+      ]
   in
-  let spec = Openapi.generate routes in
+  let spec = Tapak.openapi routes in
   match spec with
   | `Assoc fields ->
     (match List.assoc "paths" fields with
@@ -49,14 +47,14 @@ let test_path_parameters () =
   | _ -> Alcotest.fail "Expected object"
 
 let test_annotated_parameters () =
-  let open Router in
   let routes =
-    [ get (s "users" / p "userId" int)
-      |> summary "Get user by ID"
-      |> into (fun _id -> Response.of_string ~body:"User" `OK)
-    ]
+    Tapak.Router.
+      [ get (s "users" / p "userId" int)
+        |> summary "Get user by ID"
+        |> into (fun _id -> Tapak.Response.of_string ~body:"User" `OK)
+      ]
   in
-  let spec = Openapi.generate routes in
+  let spec = Tapak.openapi routes in
   match spec with
   | `Assoc fields ->
     (match List.assoc "paths" fields with
@@ -69,21 +67,22 @@ let test_annotated_parameters () =
   | _ -> Alcotest.fail "Expected object"
 
 let test_request_body () =
-  let open Router in
-  let open Schema.Syntax in
+  let open Tapak.Schema.Syntax in
   let user_schema =
-    let+ name = Schema.str "name"
-    and+ age = Schema.int "age" in
+    let+ name = Tapak.Schema.str "name"
+    and+ age = Tapak.Schema.int "age" in
     name, age
   in
   let routes =
-    [ post (s "users")
-      |> body Schema.Json user_schema
-      |> summary "Create user"
-      |> into (fun (_name, _age) -> Response.of_string ~body:"Created" `Created)
-    ]
+    Tapak.Router.
+      [ post (s "users")
+        |> body Tapak.Schema.Json user_schema
+        |> summary "Create user"
+        |> into (fun (_name, _age) ->
+          Tapak.Response.of_string ~body:"Created" `Created)
+      ]
   in
-  let spec = Openapi.generate routes in
+  let spec = Tapak.openapi routes in
   try
     let operation =
       List.fold_left
@@ -103,16 +102,16 @@ let test_request_body () =
     Alcotest.fail "Expected post operation object"
 
 let test_scoped_routes () =
-  let open Router in
   let routes =
-    [ scope
-        (s "api" / s "v1")
-        [ get (s "users") |> unit |> into simple_handler
-        ; get (s "posts") |> unit |> into simple_handler
-        ]
-    ]
+    Tapak.Router.
+      [ scope
+          (s "api" / s "v1")
+          [ get (s "users") |> unit |> into simple_handler
+          ; get (s "posts") |> unit |> into simple_handler
+          ]
+      ]
   in
-  let spec = Openapi.generate routes in
+  let spec = Tapak.openapi routes in
   match spec with
   | `Assoc fields ->
     (match List.assoc "paths" fields with
@@ -129,9 +128,10 @@ let test_scoped_routes () =
   | _ -> Alcotest.fail "Expected object"
 
 let test_base_path () =
-  let open Router in
-  let routes = [ get (s "users") |> unit |> into simple_handler ] in
-  let spec = Openapi.generate ~base_path:"/api" routes in
+  let routes =
+    Tapak.Router.[ get (s "users") |> unit |> into simple_handler ]
+  in
+  let spec = Tapak.openapi ~base_path:"/api" routes in
   match spec with
   | `Assoc fields ->
     (match List.assoc "paths" fields with
@@ -144,15 +144,15 @@ let test_base_path () =
   | _ -> Alcotest.fail "Expected object"
 
 let test_tags () =
-  let open Router in
   let routes =
-    [ get (s "users")
-      |> tags [ "Users"; "Management" ]
-      |> unit
-      |> into simple_handler
-    ]
+    Tapak.Router.
+      [ get (s "users")
+        |> tags [ "Users"; "Management" ]
+        |> unit
+        |> into simple_handler
+      ]
   in
-  let spec = Openapi.generate routes in
+  let spec = Tapak.openapi routes in
   try
     let operation =
       List.fold_left
@@ -171,26 +171,26 @@ let test_tags () =
     Alcotest.fail "Expected get operation object"
 
 let test_include_in_schema () =
-  let open Router in
   let routes =
-    [ get (s "users")
-      |> summary "List users"
-      |> operation_id "listUsers"
-      |> unit
-      |> into simple_handler
-    ; get (s "internal" / s "health")
-      |> summary "Internal health check"
-      |> include_in_schema false
-      |> unit
-      |> into simple_handler
-    ; post (s "users")
-      |> summary "Create user"
-      |> operation_id "createUser"
-      |> unit
-      |> into simple_handler
-    ]
+    Tapak.Router.
+      [ get (s "users")
+        |> summary "List users"
+        |> operation_id "listUsers"
+        |> unit
+        |> into simple_handler
+      ; get (s "internal" / s "health")
+        |> summary "Internal health check"
+        |> include_in_schema false
+        |> unit
+        |> into simple_handler
+      ; post (s "users")
+        |> summary "Create user"
+        |> operation_id "createUser"
+        |> unit
+        |> into simple_handler
+      ]
   in
-  let spec = Openapi.generate routes in
+  let spec = Tapak.openapi routes in
   match spec with
   | `Assoc fields ->
     (match List.assoc "paths" fields with
@@ -208,23 +208,24 @@ let test_include_in_schema () =
   | _ -> Alcotest.fail "Expected object"
 
 let test_query_parameters () =
-  let open Router in
-  let open Schema.Syntax in
+  let open Tapak.Schema.Syntax in
   let search_schema =
+    let open Tapak in
     let+ query = Schema.str "q"
     and+ limit = Schema.int ~default:10 "limit"
     and+ tags = Schema.list "tags" (Schema.Field.str ()) in
     query, limit, tags
   in
   let routes =
-    [ get (s "search")
-      |> query search_schema
-      |> summary "Search"
-      |> into (fun (_q, _limit, _tags) ->
-        Response.of_string ~body:"Results" `OK)
-    ]
+    Tapak.Router.
+      [ get (s "search")
+        |> query search_schema
+        |> summary "Search"
+        |> into (fun (_q, _limit, _tags) ->
+          Tapak.Response.of_string ~body:"Results" `OK)
+      ]
   in
-  let spec = Openapi.generate routes in
+  let spec = Tapak.openapi routes in
   try
     let operation =
       List.fold_left
@@ -308,8 +309,7 @@ let test_query_parameters () =
   | Not_found -> Alcotest.fail "Missing required field in spec"
 
 let test_query_with_constraints () =
-  let open Router in
-  let open Schema in
+  let open Tapak.Schema in
   let search_schema =
     let open Syntax in
     let+ page = int ~default:1 ~constraint_:(Constraint.int_range 1 100) "page"
@@ -319,12 +319,14 @@ let test_query_with_constraints () =
     page, per_page
   in
   let routes =
-    [ get (s "items")
-      |> query search_schema
-      |> into (fun (_page, _per_page) -> Response.of_string ~body:"Items" `OK)
-    ]
+    Tapak.Router.
+      [ get (s "items")
+        |> query search_schema
+        |> into (fun (_page, _per_page) ->
+          Tapak.Response.of_string ~body:"Items" `OK)
+      ]
   in
-  let spec = Openapi.generate routes in
+  let spec = Tapak.openapi routes in
   try
     let operation =
       List.fold_left
@@ -356,23 +358,24 @@ let test_query_with_constraints () =
   | Not_found -> Alcotest.fail "Missing required field in spec"
 
 let test_cookie_parameters () =
-  let open Router in
-  let open Schema.Syntax in
+  let open Tapak.Schema.Syntax in
   let cookie_schema =
+    let open Tapak in
     let+ session_id =
       Schema.(str ~constraint_:(Constraint.min_length 16) "session_id")
     and+ theme = Schema.(option "theme" (Field.str ())) in
     session_id, theme
   in
   let routes =
-    [ get (s "profile")
-      |> cookie cookie_schema
-      |> summary "Get user profile"
-      |> into (fun (_session_id, _theme) ->
-        Response.of_string ~body:"Profile" `OK)
-    ]
+    Tapak.Router.
+      [ get (s "profile")
+        |> cookie cookie_schema
+        |> summary "Get user profile"
+        |> into (fun (_session_id, _theme) ->
+          Tapak.Response.of_string ~body:"Profile" `OK)
+      ]
   in
-  let spec = Openapi.generate routes in
+  let spec = Tapak.openapi routes in
   try
     let operation =
       List.fold_left

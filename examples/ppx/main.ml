@@ -1,5 +1,3 @@
-open Tapak
-
 let trusted_proxies =
   [ Ipaddr.Prefix.of_string_exn "127.0.0.1/32"
   ; (* Localhost IPv4 *)
@@ -11,39 +9,42 @@ let trusted_proxies =
     (* Ipaddr.Prefix.of_string_exn "192.168.0.0/16"; *)
   ]
 
-let about () = Response.of_string' "About Tapak - A composable web framework"
+let about () =
+  Tapak.Response.of_string' "About Tapak - A composable web framework"
 [@@route GET, "/about"]
 
-let get_user ~id = Response.of_string' (Printf.sprintf "User ID: %d" id)
+let get_user ~id = Tapak.Response.of_string' (Printf.sprintf "User ID: %d" id)
 [@@route GET, "/users/:id"]
 
-let create_user () = Response.of_string' "User created" [@@route POST, "/users"]
+let create_user () = Tapak.Response.of_string' "User created"
+[@@route POST, "/users"]
 
 let blog_post ~slug req =
-  Response.of_string'
+  Tapak.Response.of_string'
     (Printf.sprintf
        "Blog Post %s Slug: %s"
-       (Request.meth req |> Piaf.Method.to_string)
+       (Tapak.Request.meth req |> Piaf.Method.to_string)
        slug)
 [@@route GET, "/blog/<slug:slug>"]
 
 let home () =
-  Response.of_html
-    ~status:`OK
-    (Format.asprintf
-       {|<h1>Tapak Showcases</h1>
+  Tapak.(
+    Response.of_html
+      ~status:`OK
+      (Format.asprintf
+         {|<h1>Tapak Showcases</h1>
 <ul>
   <li><a href="%s">About</a></li>
   <li><a href="%s">User detail</a></li>
   <li><a href="%s">Blog post</a></li>
 </ul>|}
-       (Router.sprintf about_path)
-       (Router.sprintf get_user_path 42)
-       (Router.sprintf blog_post_path "hello-world"))
+         (Router.sprintf about_path)
+         (Router.sprintf get_user_path 42)
+         (Router.sprintf blog_post_path "hello-world")))
 [@@route GET, "/"]
 
 let not_found _req =
-  Response.of_string'
+  Tapak.Response.of_string'
     ~status:`Not_found
     "<h1>404 Not Found</h1><p>The page you requested could not be found.</p>"
 
@@ -55,13 +56,12 @@ let setup_log ?(threaded = false) ?style_renderer level =
   ()
 
 let () =
-  let open Middleware in
   setup_log ~threaded:false (Some Logs.Debug);
   Eio_main.run @@ fun env ->
   let now () = Eio.Time.now (Eio.Stdenv.clock env) in
   let app =
-    App.(
-      routes
+    Tapak.(
+      Router.routes
         ~not_found
         [ home_route
         ; about_route
@@ -69,12 +69,10 @@ let () =
         ; create_user_route
         ; blog_post_route
         ]
-        ()
-      <++> [ use
-               (module Request_logger)
-               (Request_logger.args ~now ~trusted_proxies ())
-           ])
+      |> use
+           (module Middleware.Request_logger)
+           (Middleware.Request_logger.args ~now ~trusted_proxies ()))
   in
   let address = `Tcp (Eio.Net.Ipaddr.V4.any, 8080) in
   let config = Piaf.Server.Config.create address in
-  ignore (Server.run_with ~config ~env app)
+  ignore (Tapak.run_with ~config ~env app)

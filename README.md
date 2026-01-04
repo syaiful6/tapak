@@ -5,7 +5,8 @@
 > Not recommended for production use at this time.
 
 Tapak is a modern, type-safe, contract-first web framework for OCaml 5,
-built on EIO (effect-based I/O).
+built on EIO. It combines direct-style concurrency with uncompromising type safety
+and OpenAPI generation.
 
 ## Documentation
 
@@ -15,33 +16,24 @@ built on EIO (effect-based I/O).
 
 The OCaml ecosystem has several excellent web frameworks, each with different design philosophies:
 
-| Framework                                              | Async Runtime     | Routing            | Philosophy                    | Status           |
-| ------------------------------------------------------ | ----------------- | ------------------ | ----------------------------- | ---------------- |
-| **[Dream](https://camlworks.github.io/dream/)**        | Lwt               | String patterns    | Batteries-included, tidy      | Stable\*         |
-| **[Opium](https://github.com/rgrinberg/opium)**        | Lwt               | String patterns    | Sinatra-like micro-framework  | Stable           |
-| **[Eliom](https://ocsigen.org/eliom/)**                | Lwt               | Type-safe          | Multi-tier, full-stack        | Stable           |
-| **[tiny_httpd](https://github.com/c-cube/tiny_httpd)** | Threads           | GADT type-safe     | Minimalist, thin dependencies | Stable\*         |
-| **Tapak**                                              | **EIO (OCaml 5)** | **GADT type-safe** | type-safe, contract-first     | **Experimental** |
+| Framework                                              | Async Runtime     | Routing            | Input Validation        | OpenAPI Generation  | Status           |
+| ------------------------------------------------------ | ----------------- | ------------------ | ----------------------- | ------------------- | ---------------- |
+| **[Dream](https://camlworks.github.io/dream/)**        | Lwt               | String patterns    | Manual                  | No                  | Stable\*         |
+| **[Opium](https://github.com/rgrinberg/opium)**        | Lwt               | String patterns    | Manual                  | No                  | Stable           |
+| **[Eliom](https://ocsigen.org/eliom/)**                | Lwt               | Type-safe          | Yes                     | No                  | Stable           |
+| **[tiny_httpd](https://github.com/c-cube/tiny_httpd)** | Threads           | GADT type-safe     | Manual                  | No                  | Stable\*         |
+| **Tapak**                                              | **EIO (OCaml 5)** | **GADT type-safe** | **Yes, contract-first** | Derived from routes | **Experimental** |
 
 - - Dream is stable but still evolving, it hasn't reached v1.0 yet.
 - - Tiny_httpd looks stable, but I haven't used it personally.
 
-### Why Tapak?
-
-With OCaml 5's effect handlers and EIO (effect-based I/O), we now have a foundation
-for writing concurrent code that is both ergonomic (direct style, no monads) and performant
-(no heap allocations for context switching).
-
-Tapak explores what a modern, practical web framework looks like when built on this foundation.
-
-This is an experiment in pushing the boundaries of typed functional web development
-while keeping pragmatism and real-world usage in mind. It offers:
+### What you get
 
 - [Type-level routing](./examples/showcase/main.ml): Define your handlers as taking inputs, we will
-  extract and parse them from the request path, query parameters, and headers for you, all without
+  extract and parse them from the request path, query parameters, cookies and headers for you, all without
   sacrificing type-safety.
-- [Request validation](./examples/body-parsing/main.ml): Tapak validates requests against your schema
-  before they reach your handlers.
+- [Request validation](./examples/body-parsing/main.ml): Define a schema once, get parsing, validation and error responses
+  for free.
 - [Realtime communication](./examples/live-cursors/main.ml): Built-in support for WebSockets, and [Server-Sent Events](./examples/sse-chat/main.ml)
   (SSE) for building interactive, real-time web applications.
 - [OpenAPI documentation](./examples/openapi/main.ml): Tapak generates OpenAPI documentation from
@@ -49,12 +41,7 @@ while keeping pragmatism and real-world usage in mind. It offers:
 
 ## Installation
 
-Since Tapak is still in development and the API is being designed,
-it's not yet published to Opam. You can still install it using one of the following methods:
-
-### Using Opam Pin
-
-Pin the repository directly from GitHub:
+Tapak is not on Opam yet (soon!). Installl it via pinning or use Nix.
 
 ```bash
 # Pin from the main branch
@@ -91,39 +78,33 @@ Add Tapak as a flake input in your `flake.nix`:
 Here's a simple example demonstrating type-safe routing, middleware composition, and EIO integration:
 
 ```ocaml
-open Tapak
+let home_handler () =
+  Tapak.html ~status:`OK "<h1>Welcome to Tapak!</h1>"
 
-let home_handler _req =
-  Response.of_html ~status:`OK
-    "<h1>Welcome to Tapak!</h1>"
-
-let user_handler user_id _req =
+let user_handler user_id =
   (* user_id is automatically parsed as int64 *)
   let html = Printf.sprintf "<h1>User %Ld</h1>" user_id in
-  Response.of_html ~status:`OK html
+  Tapak.html ~status:`OK html
 
-let api_handler id name _req =
+let api_handler id name =
   (* Both id (int64) and name (string) are type-safe *)
   let json =
-    Printf.sprintf {|{"user_id": %Ld, "name": "%s"}|} id name
+    `Assoc [("user_id", `String (Int64.to_string id)); ("name", `String name)]
   in
-  Response.of_string ~status:`OK json
+  Tapak.json ~status:`OK json
 
 let app env =
-  let open Middleware in
-  let open Router in
-  App.(
-    routes
-      [ get (s "") |> into home_handler
-      ; get (s "users" / int64) |> into user_handler
-      ; get (s "api" / s "users" / int64 / str) |> into api_handler
-      ]
-      ()
-    <++> [ use (module Request_logger)
-             (Request_logger.args
-               ~now:(fun () -> Eio.Time.now (Eio.Stdenv.clock env))
-               ())
-         ])
+  let now () = Eio.Time.now (Eio.Stdenv.clock env) in
+  Tapak.(
+    Router.(
+      routes
+        [ get (s "") |> unit |> into home_handler
+        ; get (s "users" / int64) |> into user_handler
+        ; get (s "api" / s "users" / int64 / str) |> into api_handler
+        ])
+    |> use
+         (module Middleware.Request_logger)
+         (Middleware.Request_logger.args ~now ()))
 
 let () =
   Eio_main.run @@ fun env ->
@@ -131,7 +112,7 @@ let () =
   let address = `Tcp (Eio.Net.Ipaddr.V4.any, port) in
   let config = Piaf.Server.Config.create address in
   Printf.printf "Server running on http://localhost:%d\n" port;
-  ignore (Server.run_with ~config ~env (app env))
+  ignore (Tapak.run_with ~config ~env (app env))
 ```
 
 For more examples, see the [`examples/`](./examples) directory.

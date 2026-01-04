@@ -2,7 +2,7 @@ val run_with :
    ?error_handler:Piaf.Server.error_handler
   -> config:Piaf.Server.Config.t
   -> env:Eio_unix.Stdenv.base
-  -> App.t
+  -> Tapak_kernel.Handler.t
   -> Piaf.Server.Command.t
 
 module Systemd : sig
@@ -55,5 +55,5 @@ val run_with_systemd_socket :
    ?error_handler:Piaf.Server.error_handler
   -> config:Piaf.Server.Config.t
   -> env:Eio_unix.Stdenv.base
-  -> App.t
+  -> Tapak_kernel.Handler.t
   -> [> `Piaf of Piaf.Server.Command.t | `Systemd of Systemd.t ]

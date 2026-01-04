@@ -30,11 +30,11 @@ let test_multiline_text_event () =
     output
 
 let test_json_event () =
-  let json = `Assoc [ "message", `String "hello"; "count", `Int 42 ] in
+  let json_data = `Assoc [ "message", `String "hello"; "count", `Int 42 ] in
   let event =
     Sse.Event.
       { id = None
-      ; data = Some (`Json json)
+      ; data = Some (`Json json_data)
       ; event = None
       ; comment = None
       ; retry = None
@@ -124,6 +124,46 @@ let test_complete_event () =
      retry: 3000\n\n"
     output
 
+let test_text_helper () =
+  let event = Sse.Event.text ~id:"1" ~event:"message" "Hello, world!" in
+  let output = Sse.Event.to_string event in
+  Alcotest.(check string)
+    "text helper function"
+    "id: 1\ndata: Hello, world!\nevent: message\n\n"
+    output
+
+let test_json_helper () =
+  let json_data = `Assoc [ "status", `String "ok"; "code", `Int 200 ] in
+  let event = Sse.Event.json ~id:"2" ~event:"update" json_data in
+  let output = Sse.Event.to_string event in
+  Alcotest.(check string)
+    "json helper function"
+    "id: 2\ndata: {\"status\":\"ok\",\"code\":200}\nevent: update\n\n"
+    output
+
+let test_comment_helper () =
+  let event = Sse.Event.comment "keep-alive ping" in
+  let output = Sse.Event.to_string event in
+  Alcotest.(check string)
+    "comment helper function"
+    ": keep-alive ping\n\n"
+    output
+
+let test_make_helper () =
+  let event =
+    Sse.Event.make
+      ~id:"3"
+      ~data:(`Text "test data")
+      ~event:"custom"
+      ~retry:5000
+      ()
+  in
+  let output = Sse.Event.to_string event in
+  Alcotest.(check string)
+    "make helper function"
+    "id: 3\ndata: test data\nevent: custom\nretry: 5000\n\n"
+    output
+
 let tests =
   [ ( "SSE Event formatting"
     , [ Alcotest.test_case "simple text event" `Quick test_simple_text_event
@@ -137,5 +177,9 @@ let tests =
       ; Alcotest.test_case "comment event" `Quick test_comment_event
       ; Alcotest.test_case "event with retry" `Quick test_event_with_retry
       ; Alcotest.test_case "complete event" `Quick test_complete_event
+      ; Alcotest.test_case "text helper" `Quick test_text_helper
+      ; Alcotest.test_case "json helper" `Quick test_json_helper
+      ; Alcotest.test_case "comment helper" `Quick test_comment_helper
+      ; Alcotest.test_case "make helper" `Quick test_make_helper
       ] )
   ]
