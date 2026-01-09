@@ -16,13 +16,13 @@ and OpenAPI generation.
 
 The OCaml ecosystem has several excellent web frameworks, each with different design philosophies:
 
-| Framework                                              | Async Runtime     | Routing            | Input Validation        | OpenAPI Generation  | Status           |
-| ------------------------------------------------------ | ----------------- | ------------------ | ----------------------- | ------------------- | ---------------- |
-| **[Dream](https://camlworks.github.io/dream/)**        | Lwt               | String patterns    | Manual                  | No                  | Stable\*         |
-| **[Opium](https://github.com/rgrinberg/opium)**        | Lwt               | String patterns    | Manual                  | No                  | Stable           |
-| **[Eliom](https://ocsigen.org/eliom/)**                | Lwt               | Type-safe          | Yes                     | No                  | Stable           |
-| **[tiny_httpd](https://github.com/c-cube/tiny_httpd)** | Threads           | GADT type-safe     | Manual                  | No                  | Stable\*         |
-| **Tapak**                                              | **EIO (OCaml 5)** | **GADT type-safe** | **Yes, contract-first** | Derived from routes | **Experimental** |
+| Framework                                              | Async Runtime     | Routing            | Input Validation        | OpenAPI Generation      | Status           |
+| ------------------------------------------------------ | ----------------- | ------------------ | ----------------------- | ----------------------- | ---------------- |
+| **[Dream](https://camlworks.github.io/dream/)**        | Lwt               | String patterns    | Manual                  | No                      | Stable\*         |
+| **[Opium](https://github.com/rgrinberg/opium)**        | Lwt               | String patterns    | Manual                  | No                      | Stable           |
+| **[Eliom](https://ocsigen.org/eliom/)**                | Lwt               | Type-safe          | Yes                     | No                      | Stable           |
+| **[tiny_httpd](https://github.com/c-cube/tiny_httpd)** | Threads           | GADT type-safe     | Manual                  | No                      | Stable\*         |
+| **Tapak**                                              | **EIO (OCaml 5)** | **GADT type-safe** | **Yes, contract-first** | **Derived from routes** | **Experimental** |
 
 - - Dream is stable but still evolving, it hasn't reached v1.0 yet.
 - - Tiny_httpd looks stable, but I haven't used it personally.

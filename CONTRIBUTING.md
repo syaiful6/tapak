@@ -1,98 +1,37 @@
 # Contributing to Tapak
 
-Thank you for your interest in contributing to Tapak!
+This document describes the process of contributing to Tapak. It is intended for anyone considering creating an issue,
+discussion, or pull request.
 
-## Development Setup
+The easiest way to contribute is to share feedback.
 
-### Using Nix (Recommended)
+We discuss bugs, features, and design decisions via our [discussions](https://github.com/syaiful6/tapak/discussions).
+If you don't find a previous discussion on your topic, feel free to start a new one.
 
-If you're using Nix with flakes:
+We use [issue tracker](https://github.com/syaiful6/tapak/issues) for actionable items, don't use the issue tracker
+for discussion or feature request. Instead, we use Github [discussion](https://github.com/syaiful6/tapak/discussions)
+for that.
 
-```bash
-# Enter the development shell
-nix develop
+## Quick Guide
 
-# Or with direnv
-direnv allow
-```
+### I've implemented a fix or feature
 
-The development shell includes all necessary dependencies including odoc for documentation.
+Whenever possible, please open a discussion first to get feedback on your proposed changes. But submitting a pull request
+are always welcome.
 
-### Using Opam
+### I have a bug report
 
-```bash
-# Install dependencies
-opam install . --deps-only --with-doc --with-test
+Search the issue tracker and discussions to see if the issue has already been reported.
 
-# Build the project
-dune build
+If your issue hasn't been reported, open an [Issue Triage](https://github.com/syaiful6/tapak/discussions/new?category=issue-triage)
+discussion. We don't have template for bug reports yet, but please be as detailed as possible.
 
-# Run tests
-dune test
-```
+### I have a feature requests and ideas
 
-## Building Documentation
+Like bug reports, search the issue tracker and discussions to see if the feature has already been requested. Otherwise, open
+a dicussion in the [Feature requests, Ideas](https://github.com/syaiful6/tapak/discussions/new?category=feature-requests-ideas)
+category.
 
-### Locally
+### Other discussions
 
-```bash
-dune build @doc
-
-# View documentation
-open _build/default/_doc/_html/index.html
-```
-
-### Serving Locally
-
-```bash
-cd _build/default/_doc/_html
-python3 -m http.server 8000
-# Then open http://localhost:8000
-```
-
-## Documentation Guidelines
-
-Documentation is written in `.mld` (Markup Language Documentation) files located in the `doc/` directory.
-
-### Adding New Documentation
-
-1. Create a new `.mld` file in `doc/`
-2. Add it to `doc/dune` in the `mld_files` list
-3. Reference it from `doc/index.mld` or other pages
-
-### Documentation Syntax
-
-odoc uses a variant of Markdown. Key syntax:
-
-- `{0 Title}` - Page title
-- `{1 Section}` - Section heading
-- `{2 Subsection}` - Subsection heading
-- `{[code]}` - Code block
-- `{!module:Module_name}` - Link to module
-- `{!page-page_name}` - Link to page
-- `{{:url} Link text}` - External link
-- `{b bold}` - Bold text
-- `{i italic}` - Italic text
-
-## Code Style
-
-The project uses ocamlformat for code formatting:
-
-```bash
-# Format all files
-dune build @fmt --auto-promote
-```
-
-## Pull Request Process
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests for new functionality
-5. Update documentation if needed
-6. Ensure all tests pass
-7. Submit a pull request
-
-## Questions?
-
-Feel free to open an issue for questions or discussions!
+Open a new discussion in the appropriate category.
