@@ -276,7 +276,7 @@ let test_urlencoded_nested_object () =
     and+ email = str "email" in
     name, email
   in
-  let schema = obj "user" user_schema in
+  let schema = field "user" user_schema in
   let form =
     [ "user[name]", [ "John" ]; "user[email]", [ "john@example.com" ] ]
   in
@@ -294,8 +294,8 @@ let test_urlencoded_deep_nesting () =
     and+ notifications = bool "notifications" in
     theme, notifications
   in
-  let profile_schema = obj "settings" settings_schema in
-  let schema = obj "user" (obj "profile" profile_schema) in
+  let profile_schema = field "settings" settings_schema in
+  let schema = field "user" (field "profile" profile_schema) in
   let form =
     [ "user[profile][settings][theme]", [ "dark" ]
     ; "user[profile][settings][notifications]", [ "true" ]
@@ -330,7 +330,7 @@ let test_urlencoded_array_of_objects () =
     and+ name = str "name" in
     id, name
   in
-  let schema = list "items" (Object item_schema) in
+  let schema = list "items" item_schema in
   let form =
     [ "items[0][id]", [ "1" ]
     ; "items[0][name]", [ "First" ]
@@ -365,7 +365,7 @@ let test_urlencoded_complex_nested () =
     let+ name = str "name"
     and+ age = int "age"
     and+ tags = list "tags" (Field.str ())
-    and+ address = obj "address" address_schema in
+    and+ address = field "address" address_schema in
     name, age, tags, address
   in
   let form =
@@ -407,7 +407,7 @@ let test_urlencoded_object_with_optional () =
     and+ bio = option "bio" (Field.str ()) in
     name, email, bio
   in
-  let schema = obj "user" user_schema in
+  let schema = field "user" user_schema in
   let form =
     [ "user[name]", [ "Bob" ]; "user[email]", [ "bob@example.com" ] ]
   in

@@ -36,8 +36,11 @@ let user_response_schema =
   in
   { id; name; email }
 
-let user_list_response_schema =
-  Tapak.Schema.(list "users" (Field.obj user_response_schema))
+let user_list_response_schema = Tapak.Schema.(list "users" user_response_schema)
+
+(* list of user as direct array, not wrapped in an object *)
+let user_list_direct_schema = Tapak.Schema.Field.list user_response_schema
+let user_create_list_direct_schema = Tapak.Schema.Field.list user_schema
 
 type delete_response = { message : string }
 
@@ -111,6 +114,10 @@ let list_users search =
 
 let get_user id = { id; name = "Alice"; email = "alice@example.com" }
 let create_user (name, email) = { id = 2; name; email }
+
+let bulk_create_users users =
+  List.mapi (fun i (name, email) -> { id = i + 100; name; email }) users
+
 let update_user (name, email) id = { id; name; email }
 let delete_user id = { message = Format.sprintf "User %d deleted" id }
 
@@ -154,6 +161,16 @@ let v1_api_routes =
            ~schema:user_response_schema
            ~encoder:user_to_json
       |> into create_user
+    ; post (s "users" / s "bulk")
+      |> body Tapak.Schema.Json user_create_list_direct_schema
+      |> summary "Bulk create users"
+      |> operation_id "bulkCreateUsers"
+      |> tags [ "Users" ]
+      |> response_model
+           ~status:`Created
+           ~schema:user_list_direct_schema
+           ~encoder:(fun users -> `List (List.map user_to_json users))
+      |> into bulk_create_users
     ; put (s "users" / p "userId" int)
       |> body Tapak.Schema.Json user_schema
       |> summary "Update a user"

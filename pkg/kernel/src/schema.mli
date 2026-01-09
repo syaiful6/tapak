@@ -86,51 +86,48 @@ type _ input =
   | Urlencoded : Form.Urlencoded.t input
   | Multipart : Form.Multipart.t input
 
-type _ field =
+type _ t =
   | Str :
       { default : string option
       ; constraint_ : string Constraint.t option
       }
-      -> string field
+      -> string t
   | Int :
       { default : int option
       ; constraint_ : int Constraint.t option
       }
-      -> int field
+      -> int t
   | Int32 :
       { default : int32 option
       ; constraint_ : int32 Constraint.t option
       }
-      -> int32 field
+      -> int32 t
   | Int64 :
       { default : int64 option
       ; constraint_ : int64 Constraint.t option
       }
-      -> int64 field
-  | Bool : { default : bool option } -> bool field
+      -> int64 t
+  | Bool : { default : bool option } -> bool t
   | Float :
       { default : float option
       ; constraint_ : float Constraint.t option
       }
-      -> float field
-  | Option : 'a field -> 'a option field
+      -> float t
+  | Option : 'a t -> 'a option t
   | List :
       { default : 'a list option
-      ; item : 'a field
+      ; item : 'a t
       ; constraint_ : 'a list Constraint.t option
       }
-      -> 'a list field
-  | File : Form.Multipart.part field
+      -> 'a list t
+  | File : Form.Multipart.part t
   | Choice :
       { choices : (string * 'a) list
       ; default : 'a option
       }
-      -> ('a * int) list field
-  | Object : 'a t -> 'a field
-
-and _ t =
+      -> ('a * int) list t
   | Field :
-      { field : 'a field
+      { schema : 'a t
       ; name : string
       }
       -> 'a t
@@ -142,9 +139,11 @@ and _ t =
       -> 'a t
 
 type 'input interpreter =
-  { eval : 'a. 'a t -> 'input -> ('a, string list) result }
+  { eval : 'a. 'a t -> 'input -> ('a, string list) result
+  ; get_input : string -> 'input -> ('input, string list) result
+  }
 
-module type FIELD_INTERPRETER = sig
+module type INTERPRETER = sig
   type input
 
   val get_input : string -> input -> (input, string list) result
@@ -152,62 +151,58 @@ module type FIELD_INTERPRETER = sig
       empty/null value for this input type. Return Error only if the input isn't
       a valid object/container. *)
 
-  val eval : input interpreter -> 'a field -> input -> ('a, string list) result
-  (** Evaluate a field against an input. Takes a tree evaluator (interpreter) that
-      can evaluate nested Object fields. *)
+  val eval : input interpreter -> 'a t -> input -> ('a, string list) result
+  (** Evaluate a schema against an input. Takes an interpreter that can
+      recursively evaluate nested schemas. *)
 end
 
-module Yojson_interpreter : FIELD_INTERPRETER with type input = Yojson.Safe.t
-
-module Multipart_interpreter :
-  FIELD_INTERPRETER with type input = Form.Multipart.node
-
-module Header_interpreter : FIELD_INTERPRETER with type input = Yojson.Safe.t
+module Yojson_interpreter : INTERPRETER with type input = Yojson.Safe.t
+module Multipart_interpreter : INTERPRETER with type input = Form.Multipart.node
+module Header_interpreter : INTERPRETER with type input = Yojson.Safe.t
 
 module Field : sig
   val str :
      ?default:string
     -> ?constraint_:string Constraint.t
     -> unit
-    -> string field
+    -> string t
 
-  val int : ?default:int -> ?constraint_:int Constraint.t -> unit -> int field
+  val int : ?default:int -> ?constraint_:int Constraint.t -> unit -> int t
 
   val int32 :
      ?default:int32
     -> ?constraint_:int32 Constraint.t
     -> unit
-    -> int32 field
+    -> int32 t
 
   val int64 :
      ?default:int64
     -> ?constraint_:int64 Constraint.t
     -> unit
-    -> int64 field
+    -> int64 t
 
-  val bool : ?default:bool -> unit -> bool field
+  val bool : ?default:bool -> unit -> bool t
 
   val float :
      ?default:float
     -> ?constraint_:float Constraint.t
     -> unit
-    -> float field
+    -> float t
 
   val list :
      ?default:'a list
     -> ?constraint_:'a list Constraint.t
-    -> 'a field
-    -> 'a list field
+    -> 'a t
+    -> 'a list t
 
-  val option : 'a field -> 'a option field
-  val choice : ?default:'a -> (string * 'a) list -> ('a * int) list field
-  val file : unit -> Form.Multipart.part field
-  val obj : 'a t -> 'a field
+  val option : 'a t -> 'a option t
+  val choice : ?default:'a -> (string * 'a) list -> ('a * int) list t
+  val file : unit -> Form.Multipart.part t
 end
 
 val validate : ('a -> ('b, string list) result) -> 'a t -> 'b t
 val map : ('a -> 'b) -> 'a t -> 'b t
-val field : string -> 'a field -> 'a t
+val field : string -> 'a t -> 'a t
 val int : ?default:int -> ?constraint_:int Constraint.t -> string -> int t
 
 val str :
@@ -236,21 +231,20 @@ val float :
   -> string
   -> float t
 
-val option : string -> 'a field -> 'a option t
+val option : string -> 'a t -> 'a option t
 
 val list :
    ?default:'a list
   -> ?constraint_:'a list Constraint.t
   -> string
-  -> 'a field
+  -> 'a t
   -> 'a list t
 
 val choice : ?default:'a -> string -> (string * 'a) list -> ('a * int) list t
-val obj : string -> 'a t -> 'a t
 val file : string -> Form.Multipart.part t
 
 val evaluate :
-   (module FIELD_INTERPRETER with type input = 'b)
+   (module INTERPRETER with type input = 'b)
   -> 'a t
   -> 'b
   -> ('a, (string * string) list) result
