@@ -151,9 +151,9 @@ let rec extract_metadata : type a b. (a, b) Router.schema -> Router.metadata =
     ; include_in_schema = meta.include_in_schema && base_meta.include_in_schema
     }
 
-let rec field_to_openapi_schema : type a. a Schema.field -> Yojson.Safe.t =
- fun field ->
-  match field with
+let rec schema_to_openapi_schema : type a. a Schema.t -> Yojson.Safe.t =
+ fun schema ->
+  match schema with
   | Str { default; constraint_ } ->
     let base = [ "type", `String "string" ] in
     let with_default =
@@ -224,12 +224,12 @@ let rec field_to_openapi_schema : type a. a Schema.field -> Yojson.Safe.t =
     in
     `Assoc with_constraints
   | Option inner ->
-    let inner_schema = field_to_openapi_schema inner in
+    let inner_schema = schema_to_openapi_schema inner in
     (match inner_schema with
     | `Assoc fields -> `Assoc (("nullable", `Bool true) :: fields)
     | _ -> inner_schema)
   | List { item; default; constraint_ } ->
-    let item_schema = field_to_openapi_schema item in
+    let item_schema = schema_to_openapi_schema item in
     let base = [ "type", `String "array"; "items", item_schema ] in
     let with_default =
       match default with
@@ -249,13 +249,8 @@ let rec field_to_openapi_schema : type a. a Schema.field -> Yojson.Safe.t =
     let base = [ "type", `String "string"; "enum", `List enum_values ] in
     let with_default = match default with Some _ -> base | None -> base in
     `Assoc with_default
-  | Object schema -> schema_to_openapi_schema schema
-
-and schema_to_openapi_schema : type a. a Schema.t -> Yojson.Safe.t =
- fun schema ->
-  match schema with
-  | Field { field; name } ->
-    let field_schema = field_to_openapi_schema field in
+  | Field { schema = inner; name } ->
+    let field_schema = schema_to_openapi_schema inner in
     `Assoc
       [ "type", `String "object"; "properties", `Assoc [ name, field_schema ] ]
   | App (left, right) ->
@@ -281,13 +276,13 @@ and schema_to_openapi_schema : type a. a Schema.t -> Yojson.Safe.t =
 let rec schema_to_query_parameters : type a. a Schema.t -> parameter list =
  fun schema ->
   match schema with
-  | Field { field; name } ->
+  | Field { schema = field; name } ->
     let is_required, param_schema =
       match field with
-      | Option inner -> false, field_to_openapi_schema inner
+      | Option inner -> false, schema_to_openapi_schema inner
       | List { default; _ } ->
         ( (match default with Some _ -> false | None -> true)
-        , field_to_openapi_schema field )
+        , schema_to_openapi_schema field )
       | _ ->
         let has_default =
           match field with
@@ -301,7 +296,7 @@ let rec schema_to_query_parameters : type a. a Schema.t -> parameter list =
             true
           | _ -> false
         in
-        not has_default, field_to_openapi_schema field
+        not has_default, schema_to_openapi_schema field
     in
     let style, explode =
       match field with List _ -> Some "form", Some true | _ -> None, None
@@ -318,17 +313,18 @@ let rec schema_to_query_parameters : type a. a Schema.t -> parameter list =
   | App (left, right) ->
     schema_to_query_parameters left @ schema_to_query_parameters right
   | Map { tree; _ } -> schema_to_query_parameters tree
+  | _ -> []
 
 let rec schema_to_header_parameters : type a. a Schema.t -> parameter list =
  fun schema ->
   match schema with
-  | Field { field; name } ->
+  | Field { schema = field; name } ->
     let is_required, param_schema =
       match field with
-      | Option inner -> false, field_to_openapi_schema inner
+      | Option inner -> false, schema_to_openapi_schema inner
       | List { default; _ } ->
         ( (match default with Some _ -> false | None -> true)
-        , field_to_openapi_schema field )
+        , schema_to_openapi_schema field )
       | _ ->
         let has_default =
           match field with
@@ -342,7 +338,7 @@ let rec schema_to_header_parameters : type a. a Schema.t -> parameter list =
             true
           | _ -> false
         in
-        not has_default, field_to_openapi_schema field
+        not has_default, schema_to_openapi_schema field
     in
     let style, explode =
       match field with List _ -> Some "simple", Some false | _ -> None, None
@@ -359,17 +355,18 @@ let rec schema_to_header_parameters : type a. a Schema.t -> parameter list =
   | App (left, right) ->
     schema_to_header_parameters left @ schema_to_header_parameters right
   | Map { tree; _ } -> schema_to_header_parameters tree
+  | _ -> []
 
 let rec schema_to_cookie_parameters : type a. a Schema.t -> parameter list =
  fun schema ->
   match schema with
-  | Field { field; name } ->
+  | Field { schema = field; name } ->
     let is_required, param_schema =
       match field with
-      | Option inner -> false, field_to_openapi_schema inner
+      | Option inner -> false, schema_to_openapi_schema inner
       | List { default; _ } ->
         ( (match default with Some _ -> false | None -> true)
-        , field_to_openapi_schema field )
+        , schema_to_openapi_schema field )
       | _ ->
         let has_default =
           match field with
@@ -383,7 +380,7 @@ let rec schema_to_cookie_parameters : type a. a Schema.t -> parameter list =
             true
           | _ -> false
         in
-        not has_default, field_to_openapi_schema field
+        not has_default, schema_to_openapi_schema field
     in
     [ { name
       ; in_ = `Cookie
@@ -397,6 +394,7 @@ let rec schema_to_cookie_parameters : type a. a Schema.t -> parameter list =
   | App (left, right) ->
     schema_to_cookie_parameters left @ schema_to_cookie_parameters right
   | Map { tree; _ } -> schema_to_cookie_parameters tree
+  | _ -> []
 
 let rec extract_query_parameters : type a b.
   (a, b) Router.schema -> parameter list

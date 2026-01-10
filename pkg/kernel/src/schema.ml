@@ -5,60 +5,59 @@ type _ input =
   | Urlencoded : Form.Urlencoded.t input
   | Multipart : Form.Multipart.t input
 
-type _ field =
+type _ t =
   | Str :
       { default : string option
       ; constraint_ : string Constraint.t option
       }
-      -> string field
+      -> string t
   | Int :
       { default : int option
       ; constraint_ : int Constraint.t option
       }
-      -> int field
+      -> int t
   | Int32 :
       { default : int32 option
       ; constraint_ : int32 Constraint.t option
       }
-      -> int32 field
+      -> int32 t
   | Int64 :
       { default : int64 option
       ; constraint_ : int64 Constraint.t option
       }
-      -> int64 field
-  | Bool : { default : bool option } -> bool field
+      -> int64 t
+  | Bool : { default : bool option } -> bool t
   | Float :
       { default : float option
       ; constraint_ : float Constraint.t option
       }
-      -> float field
+      -> float t
   (* Container types *)
-  | Option : 'a field -> 'a option field
+  | Option : 'a t -> 'a option t
   | List :
       { default : 'a list option
-      ; item : 'a field
+      ; item : 'a t
       ; constraint_ : 'a list Constraint.t option
       }
-      -> 'a list field
+      -> 'a list t
   (* Special types *)
-  | File : Form.Multipart.part field
+  | File : Form.Multipart.part t
   (* Choices/enums with default selection (identifier, value) pairs, the return
      value has the actual value as well as the index in the list *)
   | Choice :
       { choices : (string * 'a) list
       ; default : 'a option
       }
-      -> ('a * int) list field
-  (* deep object *)
-  | Object : 'a t -> 'a field
-
-and _ t =
+      -> ('a * int) list t
+  (* Named field *)
   | Field :
-      { field : 'a field
+      { schema : 'a t
       ; name : string
       }
       -> 'a t
+  (* Applicative composition *)
   | App : (('b -> 'a) t * 'b t) -> 'a t
+  (* Transformation/validation *)
   | Map :
       { transform : 'b -> ('a, string list) result
       ; tree : 'b t
@@ -66,9 +65,11 @@ and _ t =
       -> 'a t
 
 type 'input interpreter =
-  { eval : 'a. 'a t -> 'input -> ('a, string list) result }
+  { eval : 'a. 'a t -> 'input -> ('a, string list) result
+  ; get_input : string -> 'input -> ('input, string list) result
+  }
 
-module type FIELD_INTERPRETER = sig
+module type INTERPRETER = sig
   type input
 
   val get_input : string -> input -> (input, string list) result
@@ -76,9 +77,9 @@ module type FIELD_INTERPRETER = sig
       empty/null value for this input type. Return Error only if the input isn't
       a valid object/container. *)
 
-  val eval : input interpreter -> 'a field -> input -> ('a, string list) result
-  (** Evaluate a field against an input. Takes a tree evaluator (interpreter) that
-      can evaluate nested Object fields. *)
+  val eval : input interpreter -> 'a t -> input -> ('a, string list) result
+  (** Evaluate a schema against an input. Takes an interpreter that can
+      recursively evaluate nested schemas. *)
 end
 
 module Field = struct
@@ -89,10 +90,9 @@ module Field = struct
   let bool ?default () = Bool { default }
   let float ?default ?constraint_ () = Float { default; constraint_ }
   let list ?default ?constraint_ item = List { default; item; constraint_ }
-  let option field = Option field
+  let option schema = Option schema
   let choice ?default choices = Choice { choices; default }
   let file () = File
-  let obj schema = Object schema
 end
 
 let validate : type a b. (a -> (b, string list) result) -> a t -> b t =
@@ -109,7 +109,7 @@ let validate : type a b. (a -> (b, string list) result) -> a t -> b t =
 let map : type a b. (a -> b) -> a t -> b t =
  fun f -> validate (fun v -> Ok (f v))
 
-let field name field = Field { field; name }
+let field name schema = Field { schema; name }
 
 let int ?default ?constraint_ name =
   field name (Field.int ?default ?constraint_ ())
@@ -128,17 +128,15 @@ let bool ?default name = field name (Field.bool ?default ())
 let float ?default ?constraint_ name =
   field name (Field.float ?default ?constraint_ ())
 
-let option name fld = field name (Field.option fld)
+let option name schema = field name (Field.option schema)
 
 let list ?default ?constraint_ name item =
   field name (Field.list ?default ?constraint_ item)
 
 let choice ?default name choices = field name (Field.choice ?default choices)
 let file name = field name (Field.file ())
-let obj name schema = field name (Object schema)
 
-module Yojson_interpreter : FIELD_INTERPRETER with type input = Yojson.Safe.t =
-struct
+module Yojson_interpreter : INTERPRETER with type input = Yojson.Safe.t = struct
   type input = Yojson.Safe.t
 
   let get_input name json =
@@ -149,14 +147,11 @@ struct
     | _ -> Error [ "Expected JSON object for form fields" ]
 
   let rec eval : type a.
-    Yojson.Safe.t interpreter
-    -> a field
-    -> Yojson.Safe.t
-    -> (a, string list) result
+    Yojson.Safe.t interpreter -> a t -> Yojson.Safe.t -> (a, string list) result
     =
-   fun interp field json ->
-    let { eval = object_eval } = interp in
-    match field, json with
+   fun interp schema json ->
+    let { eval = eval_recursive; _ } = interp in
+    match schema, json with
     | Str { default = _; constraint_ }, `String s ->
       Constraint.apply_constraint constraint_ s
     | Str { default = Some d; _ }, `Null -> Ok d
@@ -216,7 +211,7 @@ struct
     | Float { default = Some d; _ }, `Null -> Ok d
     | Float _, `Null -> Error [ "Expected float value" ]
     | Option _, `Null -> Ok None
-    | Option field, _ -> eval interp field json |> Result.map Option.some
+    | Option inner, _ -> eval interp inner json |> Result.map Option.some
     | List { default = Some d; _ }, `Null -> Ok d
     | List _, `Null -> Error [ "Expected list/array value" ]
     | List { item; constraint_; _ }, `List lst ->
@@ -256,12 +251,28 @@ struct
       in
       aux [] ids
     | Choice _, `Null -> Error [ "Expected choice value" ]
-    | Object tree, json_value -> object_eval tree json_value
-    | _ -> Error [ "Unsupported field type or JSON value" ]
+    | File, _ -> Error [ "File upload not supported in JSON input" ]
+    | Field { schema; name }, json_value ->
+      (match interp.get_input name json_value with
+      | Ok value -> eval interp schema value
+      | Error msgs -> Error msgs)
+    | App (f_tree, x_tree), json_value ->
+      (match
+         eval_recursive f_tree json_value, eval_recursive x_tree json_value
+       with
+      | Ok f, Ok x -> Ok (f x)
+      | Error e1, Error e2 -> Error (e1 @ e2)
+      | Error e, _ | _, Error e -> Error e)
+    | Map { transform; tree }, json_value ->
+      (match eval_recursive tree json_value with
+      | Error e -> Error e
+      | Ok v ->
+        (match transform v with Ok v -> Ok v | Error msgs -> Error msgs))
+    | _ -> Error [ "Unsupported schema type or JSON value" ]
 end
 
 module Multipart_interpreter :
-  FIELD_INTERPRETER with type input = Form.Multipart.node = struct
+  INTERPRETER with type input = Form.Multipart.node = struct
   type input = Form.Multipart.node
 
   let get_input name node =
@@ -270,20 +281,20 @@ module Multipart_interpreter :
       (match Hashtbl.find_opt h name with
       | Some value_node -> Ok value_node
       | None ->
-        (* Return empty object for missing fields - let field evaluator handle
+        (* Return empty object for missing fields - let schema evaluator handle
            defaults *)
         Ok (Form.Multipart.Object (Hashtbl.create 0)))
     | _ -> Error [ "Expected object structure" ]
 
   let rec eval : type a.
     Form.Multipart.node interpreter
-    -> a field
+    -> a t
     -> Form.Multipart.node
     -> (a, string list) result
     =
-   fun interp field node ->
-    let { eval = object_eval } = interp in
-    match field, node with
+   fun interp schema node ->
+    let { eval = eval_recursive; _ } = interp in
+    match schema, node with
     | File, Form.Multipart.Value part -> Ok part
     | Str { default = _; constraint_ }, Form.Multipart.Value { body; _ } ->
       (match Body.to_string body with
@@ -379,12 +390,26 @@ module Multipart_interpreter :
         | [] -> Error [ Printf.sprintf "Invalid choice: %s" id ])
       | Error (`Msg msg) -> Error [ msg ]
       | Error _ -> Error [ "Failed to read field body" ])
-    | Object tree, node_value -> object_eval tree node_value
+    | Field { schema; name }, node_value ->
+      (match interp.get_input name node_value with
+      | Ok value -> eval interp schema value
+      | Error msgs -> Error msgs)
+    | App (f_tree, x_tree), node_value ->
+      (match
+         eval_recursive f_tree node_value, eval_recursive x_tree node_value
+       with
+      | Ok f, Ok x -> Ok (f x)
+      | Error e1, Error e2 -> Error (e1 @ e2)
+      | Error e, _ | _, Error e -> Error e)
+    | Map { transform; tree }, node_value ->
+      (match eval_recursive tree node_value with
+      | Error e -> Error e
+      | Ok v ->
+        (match transform v with Ok v -> Ok v | Error msgs -> Error msgs))
     | _ -> Error [ "Required field is missing or type mismatch" ]
 end
 
-module Header_interpreter : FIELD_INTERPRETER with type input = Yojson.Safe.t =
-struct
+module Header_interpreter : INTERPRETER with type input = Yojson.Safe.t = struct
   type input = Yojson.Safe.t
 
   let get_input name json =
@@ -402,54 +427,40 @@ struct
 end
 
 let rec eval_tree_internal : type a b.
-  (module FIELD_INTERPRETER with type input = b)
+  (module INTERPRETER with type input = b)
   -> a t
   -> b
   -> (a, string list) result
   =
- fun (type b) (module FI : FIELD_INTERPRETER with type input = b) tree input ->
+ fun (type b) (module I : INTERPRETER with type input = b) tree input ->
   let interp =
-    { eval = (fun tree input -> eval_tree_internal (module FI) tree input) }
+    { eval = (fun tree input -> eval_tree_internal (module I) tree input)
+    ; get_input = I.get_input
+    }
   in
-  match tree with
-  | Field { field; name } ->
-    (match FI.get_input name input with
-    | Ok value -> FI.eval interp field value
-    | Error msgs -> Error msgs)
-  | App (f_tree, x_tree) ->
-    (match
-       ( eval_tree_internal (module FI) f_tree input
-       , eval_tree_internal (module FI) x_tree input )
-     with
-    | Ok f, Ok x -> Ok (f x)
-    | Error e1, Error e2 -> Error (e1 @ e2)
-    | Error e, _ | _, Error e -> Error e)
-  | Map { transform; tree } ->
-    (match eval_tree_internal (module FI) tree input with
-    | Error e -> Error e
-    | Ok v -> (match transform v with Ok v -> Ok v | Error msgs -> Error msgs))
+  I.eval interp tree input
 
 let rec evaluate : type a b.
-  (module FIELD_INTERPRETER with type input = b)
+  (module INTERPRETER with type input = b)
   -> a t
   -> b
   -> (a, (string * string) list) result
   =
- fun (type b) (module FI : FIELD_INTERPRETER with type input = b) tree input ->
+ fun (type b) (module I : INTERPRETER with type input = b) tree input ->
   match tree with
-  | Field { field; name } ->
-    (match eval_tree_internal (module FI) (Field { field; name }) input with
+  | Field { schema; name } ->
+    (match eval_tree_internal (module I) (Field { schema; name }) input with
     | Ok v -> Ok v
     | Error msgs -> Error (List.map (fun msg -> name, msg) msgs))
   | App (f_tree, x_tree) ->
     (match
-       evaluate (module FI) f_tree input, evaluate (module FI) x_tree input
+       evaluate (module I) f_tree input, evaluate (module I) x_tree input
      with
     | Ok f, Ok x -> Ok (f x)
     | Error e1, Error e2 -> Error (e1 @ e2)
     | Error e, _ | _, Error e -> Error e)
   | Map { transform; tree } ->
-    (match evaluate (module FI) tree input with
+    (match evaluate (module I) tree input with
     | Error e -> Error e
     | Ok v ->
       (match transform v with
@@ -459,6 +470,8 @@ let rec evaluate : type a b.
           match tree with Field { name; _ } -> name | _ -> ""
         in
         Error (List.map (fun msg -> field_name, msg) msgs)))
+  | _ ->
+    eval_tree_internal (module I) tree input |> Result.map_error (fun _ -> [])
 
 let eval : type a b. b input -> a t -> b -> (a, (string * string) list) result =
  fun input tree value ->
