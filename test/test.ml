@@ -6,4 +6,5 @@ let () =
        ; Test_static.tests
        ; Test_sse.tests
        ; Test_openapi.tests
+       ; Test_csrf.tests
        ])
