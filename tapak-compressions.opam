@@ -12,7 +12,7 @@ doc: "https://syaiful6.github.io/tapak/"
 bug-reports: "https://github.com/syaiful6/tapak/issues"
 depends: [
   "ocaml" {>= "5.2.0"}
-  "dune" {>= "3.19"}
+  "dune" {>= "3.19" & >= "3.0.0"}
   "dune-configurator"
   "tapak" {= version}
   "piaf" {>= "0.2.0"}

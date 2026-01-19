@@ -25,8 +25,8 @@
  (depends
   (ocaml
    (>= 5.2.0))
-  dune
-  angstrom
+  (dune (>= 3.0.0))
+  (angstrom (>= 0.15.0))
   hmap
   ptime
   ipaddr
@@ -39,10 +39,10 @@
   (uri
    (>= 4.4.0))
   yojson
-  saturn
+  (saturn (>= 1.0.0))
   magic-mime
   mirage-crypto
-  mirage-crypto-rng
+  (mirage-crypto-rng (>= 1.2.0))
   (reason
    (and
     (>= 3.12)
@@ -66,7 +66,7 @@
  (depends
   (ocaml
    (>= 5.2.0))
-  dune
+  (dune (>= 3.0.0))
   dune-configurator
   (tapak
    (= :version))
@@ -87,7 +87,7 @@
  (depends
   (ocaml
    (>= 5.2.0))
-  dune
+  (dune (>= 3.0.0))
   (tapak
    (= :version))
   (ppxlib
