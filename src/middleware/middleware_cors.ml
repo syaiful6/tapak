@@ -14,17 +14,21 @@ type t =
   ; send_preflight : bool
   }
 
+let default_methods =
+  [ `GET; `POST; `PUT; `Other "PATCH"; `DELETE; `HEAD; `OPTIONS ]
+
+let default_headers =
+  [ "Accept"
+  ; "Accept-Language"
+  ; "Content-Language"
+  ; "Content-Type"
+  ; "Authorization"
+  ]
+
 let args
       ?(origins = `Allow_all)
-      ?(methods =
-        [ `GET; `POST; `PUT; `Other "PATCH"; `DELETE; `HEAD; `OPTIONS ])
-      ?(headers =
-        [ "Accept"
-        ; "Accept-Language"
-        ; "Content-Language"
-        ; "Content-Type"
-        ; "Authorization"
-        ])
+      ?(methods = default_methods)
+      ?(headers = default_headers)
       ?(exposed_headers = [])
       ?(credentials = false)
       ?max_age
@@ -40,15 +44,7 @@ let args
   ; send_preflight
   }
 
-let permissive () =
-  args
-    ~origins:`Allow_all
-    ~methods:[ `GET; `POST; `PUT; `Other "PATCH"; `DELETE; `HEAD; `OPTIONS ]
-    ~headers:[ "*" ]
-    ~credentials:false
-    ~max_age:86400
-    ~send_preflight:true
-    ()
+let permissive () = args ~headers:[ "*" ] ~max_age:86400 ()
 
 let strict ~origins =
   args
@@ -56,79 +52,74 @@ let strict ~origins =
     ~methods:[ `GET; `POST ]
     ~headers:[ "Content-Type"; "Authorization" ]
     ~credentials:true
-    ~send_preflight:true
     ()
+
+let should_vary config =
+  match config.origins with
+  | `Allow_all -> config.credentials
+  | `Allow_list _ | `Allow_predicate _ -> true
 
 let check_origin config origin =
   match config.origins with
-  | `Allow_all -> Some "*"
+  | `Allow_all -> Some (if config.credentials then origin else "*")
   | `Allow_list origins -> if List.mem origin origins then Some origin else None
   | `Allow_predicate pred -> if pred origin then Some origin else None
 
-let method_to_string = function
-  | `GET -> "GET"
-  | `POST -> "POST"
-  | `PUT -> "PUT"
-  | `DELETE -> "DELETE"
-  | `HEAD -> "HEAD"
-  | `OPTIONS -> "OPTIONS"
-  | `CONNECT -> "CONNECT"
-  | `TRACE -> "TRACE"
-  | `Other s -> s
+let credentials_header ~credentials ~origin =
+  if credentials && origin <> "*"
+  then Some ("Access-Control-Allow-Credentials", "true")
+  else None
+
+let with_vary config response =
+  if should_vary config
+  then Response.add_to_list_header ("Vary", "Origin") response
+  else response
 
 let add_cors_headers config origin response =
-  let response =
-    Response.add_header ("Access-Control-Allow-Origin", origin) response
-  in
-  let response =
-    if config.credentials && origin <> "*"
-    then
-      Response.add_header ("Access-Control-Allow-Credentials", "true") response
-    else response
-  in
-  let response =
-    if config.exposed_headers <> []
-    then
-      Response.add_header
-        ( "Access-Control-Expose-Headers"
-        , String.concat ", " config.exposed_headers )
-        response
-    else response
-  in
-  response
+  Response.add_headers
+    (List.filter_map
+       Fun.id
+       [ Some ("Access-Control-Allow-Origin", origin)
+       ; credentials_header ~credentials:config.credentials ~origin
+       ; (if config.exposed_headers <> []
+          then
+            Some
+              ( "Access-Control-Expose-Headers"
+              , String.concat ", " config.exposed_headers )
+          else None)
+       ])
+    response
+  |> with_vary config
 
 let is_preflight request =
   Request.meth request = `OPTIONS
-  && Request.header "Access-Control-Request-Method" request <> None
+  && Option.is_some (Request.header "Access-Control-Request-Method" request)
 
-let handle_preflight config origin =
+let handle_preflight config origin request =
+  let requested_headers =
+    Request.header "Access-Control-Request-Headers" request
+  in
   let methods_str =
-    String.concat ", " (List.map method_to_string config.methods)
+    config.methods |> List.map Piaf.Method.to_string |> String.concat ", "
   in
-  let headers_str = String.concat ", " config.headers in
-  let response = Response.of_string' ~status:`No_content "" in
-  let response =
-    Response.add_header ("Access-Control-Allow-Origin", origin) response
+  let headers_str =
+    match config.headers, requested_headers with
+    | [ "*" ], Some h -> h
+    | hs, _ -> String.concat ", " hs
   in
-  let response =
-    Response.add_header ("Access-Control-Allow-Methods", methods_str) response
-  in
-  let response =
-    Response.add_header ("Access-Control-Allow-Headers", headers_str) response
-  in
-  let response =
-    if config.credentials && origin <> "*"
-    then
-      Response.add_header ("Access-Control-Allow-Credentials", "true") response
-    else response
-  in
-  let response =
-    match config.max_age with
-    | Some age ->
-      Response.add_header ("Access-Control-Max-Age", string_of_int age) response
-    | None -> response
-  in
-  Response.add_to_list_header ("Vary", "Origin") response
+  Response.of_string' ~status:`No_content ""
+  |> Response.add_headers
+       (List.filter_map
+          Fun.id
+          [ Some ("Access-Control-Allow-Origin", origin)
+          ; Some ("Access-Control-Allow-Methods", methods_str)
+          ; Some ("Access-Control-Allow-Headers", headers_str)
+          ; credentials_header ~credentials:config.credentials ~origin
+          ; Option.map
+              (fun age -> "Access-Control-Max-Age", string_of_int age)
+              config.max_age
+          ])
+  |> with_vary config
 
 let call config next request =
   match Request.header "Origin" request with
@@ -141,7 +132,7 @@ let call config next request =
       else next request
     | Some allowed_origin ->
       if is_preflight request && config.send_preflight
-      then handle_preflight config allowed_origin
+      then handle_preflight config allowed_origin request
       else
         let response = next request in
         add_cors_headers config allowed_origin response)

@@ -7,4 +7,5 @@ let () =
        ; Test_sse.tests
        ; Test_openapi.tests
        ; Test_csrf.tests
+       ; Test_middleware_cors.tests
        ])
