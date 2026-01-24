@@ -318,9 +318,7 @@ module Path_cursor = struct
 
   let create path =
     let total_len = String.length path in
-    let len =
-      match String.index_opt path '?' with Some idx -> idx | None -> total_len
-    in
+    let len = String.index_opt path '?' |> Option.value ~default:total_len in
     let pos = if len > 0 && path.[0] = '/' then 1 else 0 in
     { path; pos; len }
 
@@ -663,18 +661,16 @@ module Trie = struct
       }
     | Lit s :: segs ->
       let child =
-        match String_map.find_opt s node.literals with
-        | Some n -> n
-        | None -> empty
+        String_map.find_opt s node.literals |> Option.value ~default:empty
       in
       let updated_child = insert_route segs route child in
       { node with literals = String_map.add s updated_child node.literals }
     | Capt :: segs ->
-      let child = match node.capture with Some n -> n | None -> empty in
+      let child = node.capture |> Option.value ~default:empty in
       let updated_child = insert_route segs route child in
       { node with capture = Some updated_child }
     | Splat_key :: segs ->
-      let child = match node.splat with Some n -> n | None -> empty in
+      let child = node.splat |> Option.value ~default:empty in
       let updated_child = insert_route segs route child in
       { node with splat = Some updated_child }
 

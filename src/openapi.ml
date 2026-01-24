@@ -1,3 +1,4 @@
+open Imports
 open Tapak_kernel
 
 type parameter =
@@ -116,6 +117,7 @@ let rec path_to_string : type a b. (a, b) Router.path -> string * parameter list
 
 let rec extract_metadata : type a b. (a, b) Router.schema -> Router.metadata =
  fun schema ->
+  let open Option.Syntax in
   match schema with
   | Method _ ->
     { operation_id = None
@@ -133,21 +135,11 @@ let rec extract_metadata : type a b. (a, b) Router.schema -> Router.metadata =
   | Response_model { rest; _ } -> extract_metadata rest
   | Meta { meta; rest } ->
     let base_meta = extract_metadata rest in
-    { operation_id =
-        (match meta.operation_id with
-        | Some _ as id -> id
-        | None -> base_meta.operation_id)
-    ; summary =
-        (match meta.summary with Some _ as s -> s | None -> base_meta.summary)
-    ; description =
-        (match meta.description with
-        | Some _ as d -> d
-        | None -> base_meta.description)
+    { operation_id = meta.operation_id <|> base_meta.operation_id
+    ; summary = meta.summary <|> base_meta.summary
+    ; description = meta.description <|> base_meta.description
     ; tags = meta.tags @ base_meta.tags
-    ; body_description =
-        (match meta.body_description with
-        | Some _ as bd -> bd
-        | None -> base_meta.body_description)
+    ; body_description = meta.body_description <|> base_meta.body_description
     ; include_in_schema = meta.include_in_schema && base_meta.include_in_schema
     }
 
