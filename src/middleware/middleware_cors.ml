@@ -1,3 +1,5 @@
+open Imports
+
 type origin_policy =
   [ `Allow_all
   | `Allow_list of string list
@@ -62,8 +64,8 @@ let should_vary config =
 let check_origin config origin =
   match config.origins with
   | `Allow_all -> Some (if config.credentials then origin else "*")
-  | `Allow_list origins -> if List.mem origin origins then Some origin else None
-  | `Allow_predicate pred -> if pred origin then Some origin else None
+  | `Allow_list origins -> Option.some_if (List.mem origin origins) origin
+  | `Allow_predicate pred -> Option.some_if (pred origin) origin
 
 let credentials_header ~credentials ~origin =
   if credentials && origin <> "*"
@@ -85,7 +87,7 @@ let add_cors_headers config origin response =
           then
             Some
               ( "Access-Control-Expose-Headers"
-              , String.concat ", " config.exposed_headers )
+              , String.concat ~sep:", " config.exposed_headers )
           else None)
        ])
     response
@@ -100,12 +102,12 @@ let handle_preflight config origin request =
     Request.header "Access-Control-Request-Headers" request
   in
   let methods_str =
-    config.methods |> List.map Piaf.Method.to_string |> String.concat ", "
+    config.methods |> List.map Piaf.Method.to_string |> String.concat ~sep:", "
   in
   let headers_str =
     match config.headers, requested_headers with
     | [ "*" ], Some h -> h
-    | hs, _ -> String.concat ", " hs
+    | hs, _ -> String.concat ~sep:", " hs
   in
   Response.of_string' ~status:`No_content ""
   |> Response.add_headers

@@ -36,6 +36,8 @@ module Option = struct
       match o1, o2 with Some v1, Some v2 -> Some (v1, v2) | _ -> None
   end
 
+  let some_if cond v = if cond then Some v else None
+
   let traverse_list f xs =
     let rec aux acc = function
       | [] -> Some (List.rev acc)

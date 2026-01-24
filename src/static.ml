@@ -829,9 +829,9 @@ let encoding_to_string = function
   | `Zstd -> Some "zstd"
 
 let should_serve_file config name =
-  if config.serve_hidden_files
-  then true
-  else String.length name = 0 || String.get name 0 <> '.'
+  config.serve_hidden_files
+  || String.length name = 0
+  || String.get name 0 <> '.'
 
 let rec find_index_file :
   'a. (module STORAGE with type t = 'a) -> config -> Piece.t list -> 'a option
