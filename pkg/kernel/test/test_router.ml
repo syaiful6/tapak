@@ -8,6 +8,16 @@ let make_request ?(meth = `GET) target =
     ~body:Piaf.Body.empty
     target
 
+let is_hex_color ~off ~len s =
+  if len <> 6
+  then false
+  else
+    let loop i =
+      let c = String.get s (off + i) in
+      (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+    in
+    loop 0
+
 let test_simple_route () =
   let open Router in
   let route =
@@ -358,18 +368,10 @@ let test_slug_valid () =
 
 let test_custom () =
   let open Router in
-  let is_hex_color s =
-    String.length s = 6
-    && String.for_all
-         (fun c ->
-            (c >= '0' && c <= '9')
-            || (c >= 'a' && c <= 'f')
-            || (c >= 'A' && c <= 'F'))
-         s
-  in
   let hex_color =
     custom
-      ~parse:(fun s -> if is_hex_color s then Some s else None)
+      ~parse:(fun ~off ~len s ->
+        if is_hex_color ~off ~len s then Some s else None)
       ~format:Fun.id
       ~type_name:"string"
   in
@@ -389,18 +391,10 @@ let test_custom () =
 
 let test_custom_invalid () =
   let open Router in
-  let is_hex_color s =
-    String.length s = 6
-    && String.for_all
-         (fun c ->
-            (c >= '0' && c <= '9')
-            || (c >= 'a' && c <= 'f')
-            || (c >= 'A' && c <= 'F'))
-         s
-  in
   let hex_color =
     custom
-      ~parse:(fun s -> if is_hex_color s then Some s else None)
+      ~parse:(fun ~off ~len s ->
+        if is_hex_color ~off ~len s then Some s else None)
       ~format:Fun.id
       ~type_name:"string"
   in
@@ -426,7 +420,7 @@ let test_sprintf_custom () =
   let open Router in
   let hex_color =
     custom
-      ~parse:(fun s -> Some s)
+      ~parse:(fun ~off ~len s -> String.sub s off len |> Option.some)
       ~format:(fun s -> String.uppercase_ascii s)
       ~type_name:"string"
   in

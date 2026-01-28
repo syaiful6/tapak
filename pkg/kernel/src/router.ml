@@ -12,7 +12,7 @@ type (_, _) path =
   | Nil : ('a, 'a) path
   | Literal : string * ('a, 'b) path -> ('a, 'b) path
   | Capture :
-      { parse : string -> 'param option
+      { parse : off:int -> len:int -> string -> 'param option
       ; format : 'param -> string
       ; type_name : string
       ; format_name : string option
@@ -20,7 +20,7 @@ type (_, _) path =
       }
       -> ('param -> 'a, 'b) path
   | Enum :
-      { parse : string -> 'param option
+      { parse : off:int -> len:int -> string -> 'param option
       ; format : 'param -> string
       ; type_name : string
       ; format_name : string option
@@ -86,14 +86,10 @@ type (_, _) schema =
       }
       -> ('a, 'b) schema
 
-let parse_int s = try Some (int_of_string s) with Failure _ -> None
-let parse_int32 s = try Some (Int32.of_string s) with Failure _ -> None
-let parse_int64 s = try Some (Int64.of_string s) with Failure _ -> None
-
-let parse_bool = function
-  | "true" -> Some true
-  | "false" -> Some false
-  | _ -> None
+let parse_int ~off ~len s = Span.parse_int s (Span.make ~off ~len)
+let parse_int32 ~off ~len s = Span.parse_int32 s (Span.make ~off ~len)
+let parse_int64 ~off ~len s = Span.parse_int64 s (Span.make ~off ~len)
+let parse_bool ~off ~len s = Span.parse_bool s (Span.make ~off ~len)
 
 let int : (int -> 'a, 'a) path =
   Capture
@@ -124,7 +120,7 @@ let int64 : (int64 -> 'a, 'a) path =
 
 let str : (string -> 'a, 'a) path =
   Capture
-    { parse = Option.some
+    { parse = (fun ~off ~len s -> String.sub s off len |> Option.some)
     ; format = Fun.id
     ; type_name = "string"
     ; format_name = None
@@ -144,7 +140,7 @@ let splat : (string list -> 'a, 'a) path = Splat Nil
 let s literal : ('a, 'a) path = Literal (literal, Nil)
 
 let custom : type a.
-  parse:(string -> 'param option)
+  parse:(off:int -> len:int -> string -> 'param option)
   -> format:('param -> string)
   -> type_name:string
   -> ?format_name:string
@@ -155,7 +151,7 @@ let custom : type a.
   Capture { parse; format; type_name; format_name; rest = Nil }
 
 let enum : type a.
-  parse:(string -> 'param option)
+  parse:(off:int -> len:int -> string -> 'param option)
   -> format:('param -> string)
   -> type_name:string
   -> ?format_name:string
@@ -180,8 +176,7 @@ type route =
       }
       -> route
 
-let is_slug s =
-  let len = String.length s in
+let is_slug ~off ~len s =
   if len = 0
   then false
   else
@@ -189,7 +184,7 @@ let is_slug s =
       if i >= len
       then true
       else
-        let c = s.[i] in
+        let c = s.[off + i] in
         if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c = '-'
         then check (i + 1)
         else false
@@ -198,7 +193,9 @@ let is_slug s =
 
 let slug : (string -> 'a, 'a) path =
   Capture
-    { parse = (fun s -> if is_slug s then Some s else None)
+    { parse =
+        (fun ~off ~len s ->
+          if is_slug ~off ~len s then Some (String.sub s off len) else None)
     ; format = Fun.id
     ; type_name = "string"
     ; format_name = Some "slug"
@@ -309,6 +306,22 @@ let ann : type a b. string * string -> (a, b) path -> (a, b) path =
  fun (name, desc) segment ->
   Annotated { segment; name; description = Some desc }
 
+let[@inline] str_has_pct ~off ~len str =
+  let end_pos = off + len in
+  let rec loop i =
+    if i >= end_pos
+    then false
+    else if String.unsafe_get str i = '%'
+    then true
+    else loop (i + 1)
+  in
+  loop off
+
+let[@inline] span_equal_lit path span lit =
+  if str_has_pct ~off:(Span.off span) ~len:(Span.len span) path
+  then String.equal lit (Uri.pct_decode (String.sub path span.off span.len))
+  else Span.equal path span lit
+
 module Path_cursor = struct
   type t =
     { path : string
@@ -337,13 +350,20 @@ module Path_cursor = struct
       if end_pos = t.pos
       then next { t with pos = end_pos + 1 }
       else
-        let segment = String.sub t.path t.pos (end_pos - t.pos) in
-        let segment = Uri.pct_decode segment in
+        let span = Span.make ~off:t.pos ~len:(end_pos - t.pos) in
         let next_pos = if end_pos < t.len then end_pos + 1 else end_pos in
-        Some (segment, { t with pos = next_pos })
+        Some (span, { t with pos = next_pos })
 
   let rec to_list t =
-    match next t with None -> [] | Some (seg, t') -> seg :: to_list t'
+    match next t with
+    | None -> []
+    | Some (span, t') ->
+      let segment =
+        if str_has_pct ~off:(Span.off span) ~len:(Span.len span) t.path
+        then Uri.pct_decode (String.sub t.path span.off span.len)
+        else String.sub t.path span.off span.len
+      in
+      segment :: to_list t'
 
   let rec skip n cursor =
     if n <= 0
@@ -401,7 +421,8 @@ let rec match_pattern : type a b.
     match_pattern rest cursor request k
   | Literal (expected, rest) ->
     (match Path_cursor.next cursor with
-    | Some (seg, rest_cursor) when String.equal expected seg ->
+    | Some (span, rest_cursor)
+      when span_equal_lit rest_cursor.path span expected ->
       match_pattern rest rest_cursor request k
     | _ -> None)
   | Splat rest ->
@@ -409,15 +430,33 @@ let rec match_pattern : type a b.
     match_pattern rest (Path_cursor.create "") request (k remaining)
   | Capture { parse; rest; _ } ->
     (match Path_cursor.next cursor with
-    | Some (seg, rest_cursor) ->
-      (match parse seg with
+    | Some (span, rest_cursor) ->
+      let off = Span.off span in
+      let len = Span.len span in
+      let result =
+        if str_has_pct ~off ~len rest_cursor.path
+        then
+          let decoded = Uri.pct_decode (String.sub rest_cursor.path off len) in
+          parse ~off:0 ~len:(String.length decoded) decoded
+        else parse ~off ~len rest_cursor.path
+      in
+      (match result with
       | Some v -> match_pattern rest rest_cursor request (k v)
       | None -> None)
     | None -> None)
   | Enum { parse; rest; _ } ->
     (match Path_cursor.next cursor with
-    | Some (seg, rest_cursor) ->
-      (match parse seg with
+    | Some (span, rest_cursor) ->
+      let off = Span.off span in
+      let len = Span.len span in
+      let result =
+        if str_has_pct ~off ~len rest_cursor.path
+        then
+          let decoded = Uri.pct_decode (String.sub rest_cursor.path off len) in
+          parse ~off:0 ~len:(String.length decoded) decoded
+        else parse ~off ~len rest_cursor.path
+      in
+      (match result with
       | Some v -> match_pattern rest rest_cursor request (k v)
       | None -> None)
     | None -> None)
@@ -580,23 +619,73 @@ module Trie = struct
     | Flat_route :
         { schema : ('a, Response.t) schema
         ; handler : 'a
-        ; method_str : string
+        ; method_ : Piaf.Method.t
         ; segments : segment list
         ; middlewares : Middleware.t list
         ; prefix_len : int
         }
         -> flat_route
 
-  let flat_route_method_str (Flat_route { method_str; _ }) = method_str
+  let flat_route_method (Flat_route { method_; _ }) = method_
   let flat_route_segments (Flat_route { segments; _ }) = segments
 
   module String_map = Map.Make (String)
+
+  module Method_map = Map.Make (struct
+      type t = Piaf.Method.t
+
+      let method_to_int = function
+        | `GET -> 0
+        | `HEAD -> 1
+        | `POST -> 2
+        | `PUT -> 3
+        | `DELETE -> 4
+        | `CONNECT -> 5
+        | `OPTIONS -> 6
+        | `TRACE -> 7
+        | `Other _ -> 8
+
+      let compare a b =
+        match a, b with
+        | `Other s1, `Other s2 -> String.compare s1 s2
+        | _ -> Int.compare (method_to_int a) (method_to_int b)
+    end)
+
+  (** Find a value in the map by comparing a span against keys.
+      Avoids allocation in the common case (no percent encoding). *)
+  let find_by_span ~path ~off ~len map =
+    let found_direct =
+      String_map.find_first_opt
+        (fun key ->
+           let key_len = String.length key in
+           if key_len <> len
+           then key_len >= len
+           else
+             let rec cmp i =
+               if i >= len
+               then true
+               else
+                 let ck = String.unsafe_get key i in
+                 let cs = String.unsafe_get path (off + i) in
+                 if ck > cs then true else if ck < cs then false else cmp (i + 1)
+             in
+             cmp 0)
+        map
+    in
+    match found_direct with
+    | Some (key, value) when Span.equal path { off; len } key -> Some value
+    | _ ->
+      if str_has_pct ~off ~len path
+      then
+        let decoded = Uri.pct_decode (String.sub path off len) in
+        String_map.find_opt decoded map
+      else None
 
   type t =
     { literals : t String_map.t
     ; capture : t option
     ; splat : t option
-    ; handlers : flat_route String_map.t
+    ; handlers : flat_route Method_map.t
     }
 
   let rec extract_path_segments : type a b. (a, b) path -> segment list =
@@ -628,7 +717,7 @@ module Trie = struct
       [ Flat_route
           { schema
           ; handler
-          ; method_str = Piaf.Method.to_string method_ (* Cache method string *)
+          ; method_
           ; segments = prefix @ segments
           ; middlewares = middlewares @ route_mws
           ; prefix_len
@@ -648,7 +737,7 @@ module Trie = struct
     { literals = String_map.empty
     ; capture = None
     ; splat = None
-    ; handlers = String_map.empty
+    ; handlers = Method_map.empty
     }
 
   let rec insert_route : segment list -> flat_route -> t -> t =
@@ -656,8 +745,7 @@ module Trie = struct
     match segments with
     | [] ->
       { node with
-        handlers =
-          String_map.add (flat_route_method_str route) route node.handlers
+        handlers = Method_map.add (flat_route_method route) route node.handlers
       }
     | Lit s :: segs ->
       let child =
@@ -681,33 +769,36 @@ module Trie = struct
       empty
       routes'
 
-  let rec match_trie cursor method_str trie =
+  let rec match_trie cursor method_ trie =
     let try_splat () =
       match trie.splat with
       | Some splat_child ->
-        match_trie (Path_cursor.create "") method_str splat_child
+        match_trie (Path_cursor.create "") method_ splat_child
       | None -> None
     in
     match Path_cursor.next cursor with
     | None ->
-      (match String_map.find_opt method_str trie.handlers with
+      (match Method_map.find_opt method_ trie.handlers with
       | Some route -> Some route
       | None ->
-        (match String_map.find_opt "*" trie.handlers with
+        (* Fall back to "any" method handler *)
+        (match Method_map.find_opt (`Other "*") trie.handlers with
         | Some route -> Some route
         | None -> try_splat ()))
-    | Some (seg, rest_cursor) ->
+    | Some (span, rest_cursor) ->
       let try_capture () =
         match trie.capture with
         | Some capt_child ->
-          (match match_trie rest_cursor method_str capt_child with
+          (match match_trie rest_cursor method_ capt_child with
           | Some r -> Some r
           | None -> try_splat ())
         | None -> try_splat ()
       in
-      (match String_map.find_opt seg trie.literals with
+      let off = Span.off span in
+      let len = Span.len span in
+      (match find_by_span ~path:rest_cursor.path ~off ~len trie.literals with
       | Some child ->
-        (match match_trie rest_cursor method_str child with
+        (match match_trie rest_cursor method_ child with
         | Some r -> Some r
         | None -> try_capture ())
       | None -> try_capture ())
@@ -718,8 +809,8 @@ module Trie = struct
   let router' trie request =
     let path = Request.target request in
     let cursor = Path_cursor.create path in
-    let method_str = Piaf.Method.to_string (Request.meth request) in
-    match match_trie cursor method_str trie with
+    let method_ = Request.meth request in
+    match match_trie cursor method_ trie with
     | Some (Flat_route { schema; handler; middlewares; prefix_len; _ }) ->
       let cursor = Path_cursor.create path |> Path_cursor.skip prefix_len in
       let service =
