@@ -21,7 +21,7 @@ type (_, _) path =
   | Nil : ('a, 'a) path
   | Literal : string * ('a, 'b) path -> ('a, 'b) path
   | Capture :
-      { parse : string -> 'param option
+      { parse : off:int -> len:int -> string -> 'param option
       ; format : 'param -> string
       ; type_name : string
       ; format_name : string option
@@ -29,7 +29,7 @@ type (_, _) path =
       }
       -> ('param -> 'a, 'b) path
   | Enum :
-      { parse : string -> 'param option
+      { parse : off:int -> len:int -> string -> 'param option
       ; format : 'param -> string
       ; type_name : string
       ; format_name : string option
@@ -108,7 +108,7 @@ val bool : (bool -> 'a, 'a) path
 val splat : (string list -> 'a, 'a) path
 
 val custom :
-   parse:(string -> 'param option)
+   parse:(off:int -> len:int -> string -> 'param option)
   -> format:('param -> string)
   -> type_name:string
   -> ?format_name:string
@@ -116,7 +116,7 @@ val custom :
   -> ('param -> 'a, 'a) path
 
 val enum :
-   parse:(string -> 'param option)
+   parse:(off:int -> len:int -> string -> 'param option)
   -> format:('param -> string)
   -> type_name:string
   -> ?format_name:string
