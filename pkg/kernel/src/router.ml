@@ -651,35 +651,13 @@ module Trie = struct
         | _ -> Int.compare (method_to_int a) (method_to_int b)
     end)
 
-  (** Find a value in the map by comparing a span against keys.
-      Avoids allocation in the common case (no percent encoding). *)
   let find_by_span ~path ~off ~len map =
-    let found_direct =
-      String_map.find_first_opt
-        (fun key ->
-           let key_len = String.length key in
-           if key_len <> len
-           then key_len >= len
-           else
-             let rec cmp i =
-               if i >= len
-               then true
-               else
-                 let ck = String.unsafe_get key i in
-                 let cs = String.unsafe_get path (off + i) in
-                 if ck > cs then true else if ck < cs then false else cmp (i + 1)
-             in
-             cmp 0)
-        map
-    in
-    match found_direct with
-    | Some (key, value) when Span.equal path { off; len } key -> Some value
-    | _ ->
+    let segment =
       if str_has_pct ~off ~len path
-      then
-        let decoded = Uri.pct_decode (String.sub path off len) in
-        String_map.find_opt decoded map
-      else None
+      then Uri.pct_decode (String.sub path off len)
+      else String.sub path off len
+    in
+    String_map.find_opt segment map
 
   type t =
     { literals : t String_map.t

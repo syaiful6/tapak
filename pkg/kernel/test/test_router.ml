@@ -1217,6 +1217,55 @@ let test_recover_success_path () =
       body
   | None -> Alcotest.fail "route should have matched"
 
+let test_multiple_routes_in_nested_scope () =
+  let open Router in
+  let routes =
+    [ scope
+        (s "api" / s "v1")
+        [ get (s "users")
+          |> unit
+          |> into (fun () -> Response.of_string ~body:"users" `OK)
+        ; get (s "profile")
+          |> unit
+          |> into (fun () -> Response.of_string ~body:"profile" `OK)
+        ]
+    ]
+  in
+  let request1 = make_request "/api/v1/users" in
+  (match match' routes request1 with
+  | Some _ -> ()
+  | None -> Alcotest.fail "/api/v1/users should match with multiple routes");
+  let request2 = make_request "/api/v1/profile" in
+  match match' routes request2 with
+  | Some _ -> ()
+  | None -> Alcotest.fail "/api/v1/profile should match with multiple routes"
+
+let test_nested_scopes_multiple_routes () =
+  let open Router in
+  let routes =
+    [ scope
+        (s "api")
+        [ scope
+            (s "v1")
+            [ get (s "users")
+              |> unit
+              |> into (fun () -> Response.of_string ~body:"users" `OK)
+            ; get (s "profile")
+              |> unit
+              |> into (fun () -> Response.of_string ~body:"profile" `OK)
+            ]
+        ]
+    ]
+  in
+  let request1 = make_request "/api/v1/users" in
+  (match match' routes request1 with
+  | Some _ -> ()
+  | None -> Alcotest.fail "/api/v1/users should match with nested scopes");
+  let request2 = make_request "/api/v1/profile" in
+  match match' routes request2 with
+  | Some _ -> ()
+  | None -> Alcotest.fail "/api/v1/profile should match with nested scopes"
+
 let tests =
   [ "Simple route", `Quick, test_simple_route
   ; "Int64 parameter", `Quick, test_int64_param
@@ -1286,6 +1335,10 @@ let tests =
   ; "Recover has request access", `Quick, test_recover_has_request_access
   ; "Recover on scope", `Quick, test_recover_on_scope
   ; "Recover doesn't affect success", `Quick, test_recover_success_path
+  ; ( "Multiple routes in nested scope"
+    , `Quick
+    , test_multiple_routes_in_nested_scope )
+  ; "Nested scopes multiple routes", `Quick, test_nested_scopes_multiple_routes
   ]
   |> List.map (fun (name, speed, fn) -> Alcotest.test_case name speed fn)
   |> fun tests -> "Router", tests
