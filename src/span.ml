@@ -7,8 +7,8 @@ let make ~off ~len = { off; len }
 let[@inline] off t = t.off
 let[@inline] len t = t.len
 
-(** [equal str span str2] checks whether the substring of [str] defined by [span]
-    is equal to [str2]. *)
+(** [equal str span str2] checks whether the substring of [str]
+    defined by [span] is equal to [str2]. *)
 let equal str span str2 =
   let slen = String.length str2 in
   if slen <> span.len

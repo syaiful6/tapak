@@ -31,8 +31,6 @@ buildDunePackage {
       root = ../..;
       fileset = fs.unions [
         ../../src
-        ../../pkg/kernel
-        ../../pkg/channel
         ../../tapak.opam
         ../../dune-project
       ];

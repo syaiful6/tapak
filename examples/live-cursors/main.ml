@@ -4,12 +4,12 @@ let user_id_key : string Tapak.Context.key =
 let user_color_key : string Tapak.Context.key =
   Tapak.Context.Key.create { name = Some "user_color"; show = Some Fun.id }
 
-module Cursor_socket : Tapak_channel.Socket.HANDLER = struct
-  let connect (info : Tapak_channel.Socket.connect_info) =
+module Cursor_socket : Tapak.SOCKET = struct
+  let connect (info : Tapak.Channel.Socket.connect_info) =
     let open Yojson.Safe.Util in
     let user_id =
       match
-        info.Tapak_channel.Socket.params |> member "user_id" |> to_string_option
+        info.Tapak.Channel.Socket.params |> member "user_id" |> to_string_option
       with
       | Some id -> id
       | None -> Printf.sprintf "user_%d" (Random.int 10000)
@@ -41,7 +41,7 @@ module Cursor_socket : Tapak_channel.Socket.HANDLER = struct
     | None -> None
 end
 
-module Cursor_channel : Tapak_channel.Channel.HANDLER = struct
+module Cursor_channel : Tapak.CHANNEL = struct
   type state =
     { user_id : string
     ; color : string
@@ -53,15 +53,15 @@ module Cursor_channel : Tapak_channel.Channel.HANDLER = struct
   let join ~topic ~payload:_ ~socket _state =
     if String.equal topic "cursors:lobby"
     then (
-      let user_id = Tapak_channel.Socket.get_assign_exn user_id_key socket in
-      let color = Tapak_channel.Socket.get_assign_exn user_color_key socket in
+      let user_id = Tapak.Channel.Socket.get_assign_exn user_id_key socket in
+      let color = Tapak.Channel.Socket.get_assign_exn user_color_key socket in
 
       Logs.info (fun m -> m "User %s joining cursors:lobby" user_id);
 
       let meta =
         `Assoc [ "user_id", `String user_id; "color", `String color ]
       in
-      let phx_ref = Tapak_channel.Channel.track_presence ~key:user_id ~meta in
+      let phx_ref = Tapak.Channel.Channel.track_presence ~key:user_id ~meta in
 
       Logs.info (fun m ->
         m "Tracked presence for user %s with phx_ref %s" user_id phx_ref);
@@ -94,30 +94,30 @@ module Cursor_channel : Tapak_channel.Channel.HANDLER = struct
              ; "y", `Float y
              ]
          in
-         Tapak_channel.Channel.broadcast_from
+         Tapak.Channel.Channel.broadcast_from
            ~topic:"cursors:lobby"
            ~event:"cursor_update"
            ~payload:broadcast_payload;
-         Tapak_channel.Channel.Reply
+         Tapak.Channel.Channel.Reply
            (Ok, `Assoc [ "status", `String "ok" ], state, socket)
        with
       | exn ->
         Logs.err (fun m ->
           m "Error in cursor_move handler: %s" (Printexc.to_string exn));
-        Tapak_channel.Channel.Reply
+        Tapak.Channel.Channel.Reply
           ( Error
           , `Assoc [ "error", `String (Printexc.to_string exn) ]
           , state
           , socket ))
     | _ ->
       Logs.debug (fun m -> m "Unknown event: %s" event);
-      Tapak_channel.Channel.No_reply (state, socket)
+      Tapak.Channel.Channel.No_reply (state, socket)
 
-  let handle_info (msg : Tapak_channel.Channel.broadcast_msg) ~socket state =
-    Tapak_channel.Channel.Push msg.Tapak_channel.Channel.payload, state, socket
+  let handle_info (msg : Tapak.Channel.Channel.broadcast_msg) ~socket state =
+    Tapak.Channel.Channel.Push msg.Tapak.Channel.Channel.payload, state, socket
 
   let handle_out ~event:_ ~payload ~socket state =
-    Tapak_channel.Channel.Push payload, state, socket
+    Tapak.Channel.Channel.Push payload, state, socket
 
   let terminate ~reason:_ ~socket:_ state =
     Logs.info (fun m ->
@@ -159,17 +159,17 @@ let () =
 
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
-  let pubsub = Tapak_channel.local_pubsub ~sw in
+  let pubsub = Tapak.Channel.local_pubsub ~sw in
   let clock = Eio.Stdenv.clock env in
   let node_name = Printf.sprintf "node-%d" (Random.int 10000) in
   let presence =
-    Tapak_channel.Presence.create ~sw ~pubsub ~node_name ~clock ()
+    Tapak.Channel.Presence.create ~sw ~pubsub ~node_name ~clock ()
   in
   let now () = Eio.Time.now clock in
 
-  let cursor_channel_pattern = Tapak_channel.Topic.(s "cursors" / str) in
+  let cursor_channel_pattern = Tapak.Channel.Topic.(s "cursors" / str) in
   let ws_config =
-    Tapak_channel.(
+    Tapak.Channel.(
       Endpoint.create_config
         ~socket:(module Cursor_socket)
         ~channels:
@@ -185,7 +185,7 @@ let () =
       [ get (s "") |> unit |> into (fun () -> serve_static_file "index.html")
       ; get (s "static" / str) |> into (fun file -> serve_static_file file)
       ; (* Mount WebSocket endpoint at /socket/websocket *)
-        scope (s "socket") (Tapak_channel.Endpoint.routes ws_config)
+        scope (s "socket") (Tapak.Channel.Endpoint.routes ws_config)
       ]
   in
   let app =

@@ -27,7 +27,7 @@ val generate_secret : unit -> string
     This is automatically called by {!input} if no existing secret is found
     in the request cookie. *)
 
-val input : ?cookie_name:string -> Tapak_kernel.Request.t -> string * string
+val input : ?cookie_name:string -> Request.t -> string * string
 (** [input req] generates or retrieves a CSRF token and secret for form rendering.
 
     Returns [(token, secret)] where:

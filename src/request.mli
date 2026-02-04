@@ -36,3 +36,13 @@ val with_ :
 
 val with_context : Context.t -> t -> t
 val pp_hum : Format.formatter -> t -> unit
+
+val header : string -> t -> string option
+(** Extended functions *)
+
+val add_header : string -> string -> t -> t
+val remove_header : string -> t -> t
+val replace_header : string -> string -> t -> t
+val remote_ip : t -> string option
+val client_ip : trusted_proxies:Ipaddr.Prefix.t list -> t -> string
+val is_secure : trusted_proxies:Ipaddr.Prefix.t list -> t -> bool

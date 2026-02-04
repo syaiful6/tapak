@@ -1,5 +1,0 @@
-(test
- (name test)
- (package tapak)
- (modules test test_form test_router test_schema)
- (libraries alcotest fmt tapak.kernel))

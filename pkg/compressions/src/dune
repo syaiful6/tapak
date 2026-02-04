@@ -1,7 +1,7 @@
 (library
  (name tapak_compressions)
  (public_name tapak-compressions)
- (libraries tapak.kernel piaf camlzip)
+ (libraries tapak piaf camlzip)
  (foreign_stubs
   (language c)
   (names brotli_stubs zstd_stubs)

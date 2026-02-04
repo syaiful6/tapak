@@ -3,7 +3,7 @@
     Predicates can be composed using boolean operators to create complex
     compression rules. *)
 
-type t = Tapak_kernel.Request.t -> Tapak_kernel.Response.t -> bool
+type t = Tapak.Request.t -> Tapak.Response.t -> bool
 (** The type of a compression predicate. Takes a request and response,
     returns true if the response should be compressed. *)
 

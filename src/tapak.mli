@@ -4,18 +4,26 @@ module Response = Response
 module Headers = Headers
 module Body = Body
 module Router = Router
-module Schema = Tapak_kernel.Schema
+module Schema = Schema
 module Middleware = Middleware
+module Handler = Handler
+module Filter = Filter
+module Service = Service
 module Form = Form
 module Cookies = Cookies
 module Csrf = Csrf
 module Static = Static
 module Sse = Sse
+module Channel = Channel
+
+module type SOCKET = Channel.SOCKET
+module type CHANNEL = Channel.CHANNEL
+module type PUBSUB = Channel.PUBSUB
 
 type request = Request.t
 and response = Response.t
-and handler = Tapak_kernel.Handler.t
-and middleware = Tapak_kernel.Middleware.t
+and handler = Handler.t
+and middleware = Middleware.t
 
 module type MIDDLEWARE = sig
   type t
@@ -98,7 +106,7 @@ val run_with :
    ?error_handler:Piaf.Server.error_handler
   -> config:Piaf.Server.Config.t
   -> env:Eio_unix.Stdenv.base
-  -> Tapak_kernel.Handler.t
+  -> Handler.t
   -> Piaf.Server.Command.t
 
 type systemd
@@ -112,7 +120,7 @@ val run_with_systemd_socket :
    ?error_handler:Piaf.Server.error_handler
   -> config:Piaf.Server.Config.t
   -> env:Eio_unix.Stdenv.base
-  -> Tapak_kernel.Handler.t
+  -> Handler.t
   -> server
 
 val shutdown : server -> unit

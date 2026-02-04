@@ -4,7 +4,7 @@ let status = Alcotest.of_pp Piaf.Status.pp_hum
 let with_app ?middlewares ?handler f =
   let hd = Option.value handler ~default:(fun _ -> Tapak.html "") in
   let middlewares = Option.value middlewares ~default:[] in
-  let service = Tapak_kernel.Filter.apply_all middlewares hd in
+  let service = Tapak.Filter.apply_all middlewares hd in
   f service
 
 let make_request

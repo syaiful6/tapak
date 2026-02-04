@@ -1,4 +1,4 @@
-include Tapak_kernel.Body
+include Piaf.Body
 
 let limit ~sw ~max_bytes body =
   match length body with

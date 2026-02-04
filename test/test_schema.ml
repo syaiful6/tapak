@@ -1,4 +1,4 @@
-open Tapak_kernel
+open Tapak
 
 let test_schema_single_field () =
   let schema = Schema.str "name" in
