@@ -1,4 +1,4 @@
-open Tapak_kernel
+open Tapak
 
 let urlencoded_testable =
   Alcotest.testable

@@ -1,5 +1,5 @@
 module Topic_tests = struct
-  open Tapak_channel.Topic
+  open Tapak.Channel.Topic
 
   let test_sprintf_literal () =
     let pattern = s "room" in
@@ -98,7 +98,7 @@ module Topic_tests = struct
 end
 
 module Protocol_tests = struct
-  open Tapak_channel.Protocol
+  open Tapak.Channel.Protocol
 
   let test_encode_json () =
     let msg =
@@ -156,7 +156,7 @@ module Protocol_tests = struct
         ~join_ref:(Some "1")
         ~ref_:"2"
         ~topic:"room:lobby"
-        ~status:Tapak_channel.Channel.Ok
+        ~status:Tapak.Channel.Channel.Ok
         ~payload:(`Assoc [ "data", `String "test" ])
     in
     Alcotest.(check string) "event" phx_reply reply.event;
@@ -201,12 +201,12 @@ module Protocol_tests = struct
 end
 
 module Pubsub_tests = struct
-  open Tapak_channel.Pubsub
+  open Tapak.Channel.Pubsub
 
   let test_local_subscribe_broadcast () =
     Eio_main.run @@ fun _env ->
     Eio.Switch.run @@ fun sw ->
-    let pubsub = Tapak_channel.local_pubsub ~sw in
+    let pubsub = Tapak.Channel.local_pubsub ~sw in
     let received = ref false in
     let _sub =
       subscribe pubsub "room:lobby" (fun msg ->
@@ -219,7 +219,7 @@ module Pubsub_tests = struct
   let test_local_unsubscribe () =
     Eio_main.run @@ fun _env ->
     Eio.Switch.run @@ fun sw ->
-    let pubsub = Tapak_channel.local_pubsub ~sw in
+    let pubsub = Tapak.Channel.local_pubsub ~sw in
     let received = ref false in
     let sub = subscribe pubsub "room:lobby" (fun _msg -> received := true) in
     unsubscribe pubsub sub;
@@ -229,7 +229,7 @@ module Pubsub_tests = struct
   let test_local_topic_filtering () =
     Eio_main.run @@ fun _env ->
     Eio.Switch.run @@ fun sw ->
-    let pubsub = Tapak_channel.local_pubsub ~sw in
+    let pubsub = Tapak.Channel.local_pubsub ~sw in
     let room1_received = ref false in
     let room2_received = ref false in
     let _sub1 =
@@ -245,7 +245,7 @@ module Pubsub_tests = struct
   let test_broadcast_from () =
     Eio_main.run @@ fun _env ->
     Eio.Switch.run @@ fun sw ->
-    let pubsub = Tapak_channel.local_pubsub ~sw in
+    let pubsub = Tapak.Channel.local_pubsub ~sw in
     let sub1_received = ref false in
     let sub2_received = ref false in
     let sub1 = subscribe pubsub "room:1" (fun _msg -> sub1_received := true) in
@@ -266,12 +266,12 @@ module Pubsub_tests = struct
 end
 
 module Presence_tests = struct
-  open Tapak_channel.Presence
+  open Tapak.Channel.Presence
 
   let test_track_and_list () =
     Eio_main.run @@ fun env ->
     Eio.Switch.run @@ fun sw ->
-    let pubsub = Tapak_channel.local_pubsub ~sw in
+    let pubsub = Tapak.Channel.local_pubsub ~sw in
     let clock = Eio.Stdenv.clock env in
     let presence =
       create ~sw ~pubsub ~node_name:"test-node" ~clock ~broadcast_period:10.0 ()
@@ -292,7 +292,7 @@ module Presence_tests = struct
   let test_untrack () =
     Eio_main.run @@ fun env ->
     Eio.Switch.run @@ fun sw ->
-    let pubsub = Tapak_channel.local_pubsub ~sw in
+    let pubsub = Tapak.Channel.local_pubsub ~sw in
     let clock = Eio.Stdenv.clock env in
     let presence =
       create ~sw ~pubsub ~node_name:"test-node" ~clock ~broadcast_period:10.0 ()
@@ -313,7 +313,7 @@ module Presence_tests = struct
   let test_to_json () =
     Eio_main.run @@ fun env ->
     Eio.Switch.run @@ fun sw ->
-    let pubsub = Tapak_channel.local_pubsub ~sw in
+    let pubsub = Tapak.Channel.local_pubsub ~sw in
     let clock = Eio.Stdenv.clock env in
     let presence =
       create ~sw ~pubsub ~node_name:"test-node" ~clock ~broadcast_period:10.0 ()
@@ -335,12 +335,12 @@ module Presence_tests = struct
 end
 
 module Tracker_tests = struct
-  open Tapak_channel.Presence
+  open Tapak.Channel.Presence
 
   let test_single_node_track () =
     Eio_main.run @@ fun env ->
     Eio.Switch.run @@ fun sw ->
-    let pubsub = Tapak_channel.local_pubsub ~sw in
+    let pubsub = Tapak.Channel.local_pubsub ~sw in
     let clock = Eio.Stdenv.clock env in
     let tracker =
       create ~sw ~pubsub ~node_name:"node-a" ~broadcast_period:10.0 ~clock ()
@@ -349,7 +349,7 @@ module Tracker_tests = struct
     let phx_ref = track tracker ~topic:"room:lobby" ~key:"user:1" ~meta in
     Alcotest.(check bool) "phx_ref not empty" true (String.length phx_ref > 0);
     let state = list tracker ~topic:"room:lobby" in
-    let json = Tapak_channel.Presence.to_json state in
+    let json = Tapak.Channel.Presence.to_json state in
     close tracker;
     match json with
     | `Assoc fields ->
@@ -361,7 +361,7 @@ module Tracker_tests = struct
   let test_single_node_untrack () =
     Eio_main.run @@ fun env ->
     Eio.Switch.run @@ fun sw ->
-    let pubsub = Tapak_channel.local_pubsub ~sw in
+    let pubsub = Tapak.Channel.local_pubsub ~sw in
     let clock = Eio.Stdenv.clock env in
     let tracker =
       create ~sw ~pubsub ~node_name:"node-a" ~broadcast_period:10.0 ~clock ()
@@ -370,7 +370,7 @@ module Tracker_tests = struct
     let phx_ref = track tracker ~topic:"room:lobby" ~key:"user:1" ~meta in
     untrack_ref tracker ~topic:"room:lobby" ~phx_ref;
     let state = list tracker ~topic:"room:lobby" in
-    let json = Tapak_channel.Presence.to_json state in
+    let json = Tapak.Channel.Presence.to_json state in
     close tracker;
     match json with
     | `Assoc fields ->
@@ -382,7 +382,7 @@ module Tracker_tests = struct
   let test_multi_node_sync () =
     Eio_main.run @@ fun env ->
     Eio.Switch.run @@ fun sw ->
-    let pubsub = Tapak_channel.local_pubsub ~sw in
+    let pubsub = Tapak.Channel.local_pubsub ~sw in
     let clock = Eio.Stdenv.clock env in
     let tracker_a =
       create ~sw ~pubsub ~node_name:"node-a" ~broadcast_period:10.0 ~clock ()
@@ -400,8 +400,8 @@ module Tracker_tests = struct
     in
     let state_a = list tracker_a ~topic:"room:lobby" in
     let state_b = list tracker_b ~topic:"room:lobby" in
-    let json_a = Tapak_channel.Presence.to_json state_a in
-    let json_b = Tapak_channel.Presence.to_json state_b in
+    let json_a = Tapak.Channel.Presence.to_json state_a in
+    let json_b = Tapak.Channel.Presence.to_json state_b in
     close tracker_a;
     close tracker_b;
     let check_both_users json label =
@@ -419,7 +419,7 @@ module Tracker_tests = struct
   let test_multi_node_untrack_sync () =
     Eio_main.run @@ fun env ->
     Eio.Switch.run @@ fun sw ->
-    let pubsub = Tapak_channel.local_pubsub ~sw in
+    let pubsub = Tapak.Channel.local_pubsub ~sw in
     let clock = Eio.Stdenv.clock env in
     let tracker_a =
       create ~sw ~pubsub ~node_name:"node-a" ~broadcast_period:10.0 ~clock ()
@@ -430,7 +430,7 @@ module Tracker_tests = struct
     let meta = `Assoc [ "device", `String "mobile" ] in
     let phx_ref = track tracker_a ~topic:"room:lobby" ~key:"user:1" ~meta in
     let state_b_before = list tracker_b ~topic:"room:lobby" in
-    let json_b_before = Tapak_channel.Presence.to_json state_b_before in
+    let json_b_before = Tapak.Channel.Presence.to_json state_b_before in
     (match json_b_before with
     | `Assoc fields ->
       Alcotest.(check bool)
@@ -440,7 +440,7 @@ module Tracker_tests = struct
     | _ -> Alcotest.fail "should be an object");
     untrack_ref tracker_a ~topic:"room:lobby" ~phx_ref;
     let state_b_after = list tracker_b ~topic:"room:lobby" in
-    let json_b_after = Tapak_channel.Presence.to_json state_b_after in
+    let json_b_after = Tapak.Channel.Presence.to_json state_b_after in
     close tracker_a;
     close tracker_b;
     match json_b_after with
@@ -454,7 +454,7 @@ module Tracker_tests = struct
   let test_disconnect_broadcast () =
     Eio_main.run @@ fun env ->
     Eio.Switch.run @@ fun sw ->
-    let pubsub = Tapak_channel.local_pubsub ~sw in
+    let pubsub = Tapak.Channel.local_pubsub ~sw in
     let clock = Eio.Stdenv.clock env in
     let tracker_a =
       create ~sw ~pubsub ~node_name:"node-a" ~broadcast_period:10.0 ~clock ()
@@ -476,7 +476,7 @@ module Tracker_tests = struct
   let test_node_name () =
     Eio_main.run @@ fun env ->
     Eio.Switch.run @@ fun sw ->
-    let pubsub = Tapak_channel.local_pubsub ~sw in
+    let pubsub = Tapak.Channel.local_pubsub ~sw in
     let clock = Eio.Stdenv.clock env in
     let tracker =
       create ~sw ~pubsub ~node_name:"my-node" ~broadcast_period:10.0 ~clock ()
@@ -488,7 +488,7 @@ module Tracker_tests = struct
   let test_multiple_metas_per_key () =
     Eio_main.run @@ fun env ->
     Eio.Switch.run @@ fun sw ->
-    let pubsub = Tapak_channel.local_pubsub ~sw in
+    let pubsub = Tapak.Channel.local_pubsub ~sw in
     let clock = Eio.Stdenv.clock env in
     let tracker =
       create ~sw ~pubsub ~node_name:"node-a" ~broadcast_period:10.0 ~clock ()
@@ -502,7 +502,7 @@ module Tracker_tests = struct
       track tracker ~topic:"room:lobby" ~key:"user:1" ~meta:meta2
     in
     let state = list tracker ~topic:"room:lobby" in
-    let json = Tapak_channel.Presence.to_json state in
+    let json = Tapak.Channel.Presence.to_json state in
     close tracker;
     match json with
     | `Assoc fields ->
@@ -526,12 +526,10 @@ module Tracker_tests = struct
     ]
 end
 
-let () =
-  Alcotest.run
-    "tapak.realtime"
-    [ "Topic", Topic_tests.tests
-    ; "Protocol", Protocol_tests.tests
-    ; "Pubsub", Pubsub_tests.tests
-    ; "Presence", Presence_tests.tests
-    ; "Tracker", Tracker_tests.tests
-    ]
+let tests =
+  [ "Topic", Topic_tests.tests
+  ; "Protocol", Protocol_tests.tests
+  ; "Pubsub", Pubsub_tests.tests
+  ; "Presence", Presence_tests.tests
+  ; "Tracker", Tracker_tests.tests
+  ]

@@ -1,4 +1,4 @@
-open Tapak_kernel
+open Tapak
 
 let make_request ?(meth = `GET) target =
   Request.create

@@ -3,9 +3,12 @@ module Response = Response
 module Headers = Headers
 module Body = Body
 module Router = Router
-module Schema = Tapak_kernel.Schema
+module Schema = Schema
 module Context = Context
 module Middleware = Middleware
+module Handler = Handler
+module Filter = Filter
+module Service = Service
 module Form = Form
 module Server = Server
 module Cookies = Cookies
@@ -13,11 +16,16 @@ module Csrf = Csrf
 module Static = Static
 module Sse = Sse
 module Openapi = Openapi
+module Channel = Channel
+
+module type SOCKET = Channel.SOCKET
+module type PUBSUB = Channel.PUBSUB
+module type CHANNEL = Channel.CHANNEL
 
 type request = Request.t
 and response = Response.t
-and handler = Tapak_kernel.Handler.t
-and middleware = Tapak_kernel.Middleware.t
+and handler = Handler.t
+and middleware = Middleware.t
 
 module type MIDDLEWARE = sig
   type t
@@ -25,8 +33,8 @@ module type MIDDLEWARE = sig
   val call : t -> middleware
 end
 
-let use = Tapak_kernel.Middleware.use
-let pipe ~through = Tapak_kernel.Filter.apply_all through
+let use = Middleware.use
+let pipe ~through = Filter.apply_all through
 
 let response
       ?(version = Piaf.Versions.HTTP.HTTP_1_1)

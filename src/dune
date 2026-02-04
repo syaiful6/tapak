@@ -13,6 +13,12 @@
   mirage-crypto
   mirage-crypto-rng
   mirage-crypto-rng.unix
-  tapak.kernel))
+  uri
+  hmap
+  re
+  saturn
+  httpun-ws
+  bigstringaf
+  angstrom))
 
 (include_subdirs unqualified)

@@ -1,4 +1,12 @@
-include module type of Tapak_kernel.Middleware
+type t = (Request.t, Response.t) Filter.simple
+
+module type Intf = sig
+  type t
+
+  val call : t -> (Request.t, Response.t) Filter.simple
+end
+
+val use : (module Intf with type t = 'a) -> 'a -> t
 
 module Decompression : sig
   module type Decoder = sig
@@ -9,7 +17,7 @@ module Decompression : sig
 
   type decoder = Header_parser.Accept.encoding -> (module Decoder) option
 
-  include Tapak_kernel.Middleware.Intf with type t = decoder
+  include Intf with type t = decoder
 end
 
 module Compression : sig
@@ -34,7 +42,7 @@ module Compression : sig
     -> preferred_encodings:Header_parser.Accept.encoding list
     -> t
 
-  include Tapak_kernel.Middleware.Intf with type t := t
+  include Intf with type t := t
 end
 
 module Request_logger : sig
@@ -68,7 +76,7 @@ module Request_logger : sig
     -> unit
     -> t
 
-  include Tapak_kernel.Middleware.Intf with type t := t
+  include Intf with type t := t
 end
 
 module Limit_request_size : sig
@@ -76,7 +84,7 @@ module Limit_request_size : sig
 
   val args : max_bytes:int64 -> t
 
-  include Tapak_kernel.Middleware.Intf with type t := t
+  include Intf with type t := t
 end
 
 module CORS : sig
@@ -142,7 +150,7 @@ module CORS : sig
   (** [strict ~origins] creates a strict CORS policy suitable for production.
       Only allows specified origins with GET/POST methods and standard headers. *)
 
-  include Tapak_kernel.Middleware.Intf with type t := t
+  include Intf with type t := t
 end
 
 val head : t

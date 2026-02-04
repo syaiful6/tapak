@@ -1,4 +1,4 @@
 (test
  (name test)
  (package tapak)
- (libraries tapak tapak.kernel piaf yojson alcotest eio_main))
+ (libraries tapak piaf yojson alcotest eio_main fmt))

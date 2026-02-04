@@ -6,7 +6,6 @@
   (= %{profile} dev))
  (libraries
   tapak
-  tapak.channel
   piaf
   eio_main
   logs

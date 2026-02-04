@@ -1,6 +1,0 @@
-(library
- (name tapak_channel)
- (public_name tapak.channel)
- (libraries tapak.kernel saturn yojson eio httpun-ws bigstringaf)
- (flags
-  (:standard -w -69)))

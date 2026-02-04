@@ -195,6 +195,10 @@ module Pubsub = struct
 
     let node_name _ = "local"
   end
+
+  let local ~sw =
+    let backend = Local.start ~sw in
+    create (module Local) backend
 end
 
 module Socket = struct
@@ -206,27 +210,24 @@ module Socket = struct
 
   type t =
     { id : id
-    ; assigns : Tapak_kernel.Context.t
+    ; assigns : Context.t
     ; transport : transport
     ; joined_topics : Topic.t list
     }
 
   type connect_info =
     { params : Yojson.Safe.t
-    ; request : Tapak_kernel.Request.t
+    ; request : Request.t
     }
 
   module type HANDLER = sig
-    val connect : connect_info -> (Tapak_kernel.Context.t, string) result
-    val id : Tapak_kernel.Context.t -> id
+    val connect : connect_info -> (Context.t, string) result
+    val id : Context.t -> id
   end
 
   let assigns t = t.assigns
-
-  let assign key value t =
-    { t with assigns = Tapak_kernel.Context.add key value t.assigns }
-
-  let get_assign key t = Tapak_kernel.Context.find key t.assigns
+  let assign key value t = { t with assigns = Context.add key value t.assigns }
+  let get_assign key t = Context.find key t.assigns
 
   let get_assign_exn key t =
     match get_assign key t with
@@ -333,17 +334,6 @@ module Channel = struct
     let terminate ~reason:_ ~socket:_ _state = ()
     let intercept = []
   end
-
-  type context =
-    { pubsub : Pubsub.t
-    ; socket : Socket.t
-    ; push_fn : event:string -> payload:Yojson.Safe.t -> unit
-    }
-
-  let push_ctx ctx ~event ~payload = ctx.push_fn ~event ~payload
-
-  let broadcast_ctx ctx ~topic ~event ~payload =
-    Pubsub.broadcast ctx.pubsub { topic; event; payload }
 
   let broadcast ~topic ~event ~payload =
     Effect.perform (Broadcast_effect { topic; event; payload })
@@ -1689,7 +1679,7 @@ module Endpoint = struct
 
   let ws_handler config request ws =
     let (module S : Socket.HANDLER) = config.socket in
-    let uri = Tapak_kernel.Request.to_piaf request |> Piaf.Request.uri in
+    let uri = Request.to_piaf request |> Piaf.Request.uri in
     let params =
       match Uri.query uri with
       | [] -> `Assoc []
@@ -1726,23 +1716,16 @@ module Endpoint = struct
         ; (fun () -> run_heartbeat_monitor session)
         ]
 
-  let handler : config -> Tapak_kernel.Request.t -> Tapak_kernel.Response.t =
+  let handler : config -> Request.t -> Response.t =
    fun config request ->
-    match
-      Tapak_kernel.Response.Upgrade.websocket
-        ~f:(ws_handler config request)
-        request
-    with
+    match Response.Upgrade.websocket ~f:(ws_handler config request) request with
     | Ok response -> response
     | Error _ ->
-      Tapak_kernel.Response.of_string
-        ~body:"WebSocket upgrade failed"
-        `Internal_server_error
+      Response.of_string ~body:"WebSocket upgrade failed" `Internal_server_error
 
-  let routes : config -> Tapak_kernel.Router.route list =
+  let routes : config -> Router.route list =
    fun config ->
-    let open Tapak_kernel.Router in
-    [ get (s "websocket") |> request |> into (handler config) ]
+    Router.[ get (s "websocket") |> request |> into (handler config) ]
 
   let disconnect : config -> Socket.id -> unit =
    fun config socket_id ->
@@ -1758,6 +1741,13 @@ module Endpoint = struct
     | None -> ()
 end
 
-let local_pubsub ~sw =
-  let backend = Pubsub.Local.start ~sw in
-  Pubsub.create (module Pubsub.Local) backend
+let local_pubsub = Pubsub.local
+
+type socket_connect_info = Socket.connect_info =
+  { params : Yojson.Safe.t
+  ; request : Request.t
+  }
+
+module type SOCKET = Socket.HANDLER
+module type CHANNEL = Channel.HANDLER
+module type PUBSUB = Pubsub.BACKEND

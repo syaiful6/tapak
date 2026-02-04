@@ -1,4 +1,5 @@
-(** shamelessly copied from anmonteiro's httpun, which is Piaf depends *)
+(** shamelessly copied from anmonteiro's httpun, which is Piaf
+    depends *)
 module CI = struct
   (* Convert codes to upper case and compare them. This is a port of assembly
      code from the page:

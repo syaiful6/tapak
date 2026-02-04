@@ -1,4 +1,4 @@
-type t = Tapak_kernel.Request.t -> Tapak_kernel.Response.t -> bool
+type t = Tapak.Request.t -> Tapak.Response.t -> bool
 
 let ( && ) p1 p2 req resp = p1 req resp && p2 req resp
 let ( || ) p1 p2 req resp = p1 req resp || p2 req resp
@@ -7,9 +7,7 @@ let always _req _resp = true
 let never _req _resp = false
 
 let min_size threshold _req resp =
-  match
-    Piaf.Headers.get (Tapak_kernel.Response.headers resp) "content-length"
-  with
+  match Tapak.Response.header "content-length" resp with
   | None -> true
   | Some length_str ->
     (match int_of_string_opt length_str with
@@ -17,9 +15,7 @@ let min_size threshold _req resp =
     | Some len -> len >= threshold)
 
 let content_type_matches types _req resp =
-  match
-    Piaf.Headers.get (Tapak_kernel.Response.headers resp) "content-type"
-  with
+  match Tapak.Response.header "content-type" resp with
   | None -> false
   | Some ct ->
     let media_type =
@@ -64,16 +60,12 @@ let not_already_compressed =
        ])
 
 let not_already_encoded _req resp =
-  match
-    Piaf.Headers.get (Tapak_kernel.Response.headers resp) "content-encoding"
-  with
+  match Tapak.Response.header "content-encoding" resp with
   | None -> true
   | Some _ -> false
 
 let respect_no_transform _req resp =
-  match
-    Piaf.Headers.get (Tapak_kernel.Response.headers resp) "cache-control"
-  with
+  match Tapak.Response.header "cache-control" resp with
   | None -> true
   | Some cc ->
     let has_no_transform =
@@ -85,7 +77,7 @@ let respect_no_transform _req resp =
     Bool.not has_no_transform
 
 let has_body _req resp =
-  match Tapak_kernel.Response.status resp with
+  match Tapak.Response.status resp with
   | `Continue | `Switching_protocols | `No_content | `Not_modified -> false
   | _ -> true
 

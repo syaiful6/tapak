@@ -421,7 +421,7 @@ val filesystem :
     Returns a first-class module implementing {!STORAGE} that
     serves files from the local filesystem. *)
 
-val app : (module STORAGE) -> ?config:config -> unit -> Tapak_kernel.Handler.t
+val app : (module STORAGE) -> ?config:config -> unit -> Handler.t
 (** [app (module STORAGE) ~config ()] creates a standalone
     static file handler.
 

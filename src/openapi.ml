@@ -1,5 +1,4 @@
 open Imports
-open Tapak_kernel
 
 type parameter =
   { name : string
