@@ -11,6 +11,7 @@ module Json_type = struct
     | Null
     | Boolean
     | Number
+    | Integer
     | String
     | Array
     | Object
@@ -21,11 +22,13 @@ module Json_type = struct
   let string = 1 lsl 3
   let array = 1 lsl 4
   let object_ = 1 lsl 5
+  let integer = 1 lsl 6
 
   let of_value = function
     | Null -> null
     | Boolean -> boolean
     | Number -> number
+    | Integer -> integer
     | String -> string
     | Array -> array
     | Object -> object_
@@ -52,6 +55,7 @@ module Json_type = struct
     apply Null;
     apply Boolean;
     apply Number;
+    apply Integer;
     apply String;
     apply Array;
     apply Object
@@ -60,6 +64,7 @@ module Json_type = struct
     | Null -> "null"
     | Boolean -> "boolean"
     | Number -> "number"
+    | Integer -> "integer"
     | String -> "string"
     | Array -> "array"
     | Object -> "object"
@@ -68,6 +73,7 @@ module Json_type = struct
     | "null" -> Some Null
     | "boolean" -> Some Boolean
     | "number" -> Some Number
+    | "integer" -> Some Integer
     | "string" -> Some String
     | "array" -> Some Array
     | "object" -> Some Object
@@ -159,6 +165,92 @@ module Draft = struct
       ~enc:to_string
 end
 
+module Or_bool = struct
+  type 'a t =
+    | Schema of 'a (* a schema object *)
+    | Bool of bool (* a boolean schema *)
+
+  let jsont schema =
+    Jsont.map
+      Jsont.json
+      ~kind:"schema_or_bool"
+      ~dec:(fun json ->
+        match json with
+        | Jsont.Bool (b, _) -> Bool b
+        | Jsont.Object _ ->
+          (match
+             Jsont_bytesrw.decode_string
+               schema
+               (Result.get_ok (Jsont_bytesrw.encode_string Jsont.json json))
+           with
+          | Ok schema -> Schema schema
+          | Error e -> Jsont.Error.msg Jsont.Meta.none e)
+        | _ -> Jsont.Error.msg Jsont.Meta.none "Expected bool or object")
+      ~enc:(function
+        | Bool b -> Jsont.Bool (b, Jsont.Meta.none)
+        | Schema v ->
+          (match Jsont_bytesrw.encode_string schema v with
+          | Ok s ->
+            (match Jsont_bytesrw.decode_string Jsont.json s with
+            | Ok json -> json
+            | Error _ ->
+              Jsont.Error.msg
+                Jsont.Meta.none
+                "Failed to decode schema object during encoding")
+          | _ ->
+            Jsont.Error.msg
+              Jsont.Meta.none
+              "Failed to encode schema object during encoding"))
+end
+
+module Or_ref = struct
+  type 'a t =
+    | Value of 'a (* a schema object *)
+    | Ref of string (* a $ref *)
+
+  let find_member name (mems : Jsont.mem list) : Jsont.json option =
+    mems
+    |> List.find_map (fun ((n, _meta), v) -> if n = name then Some v else None)
+
+  let jsont (value_jsont : 'a Jsont.t) : 'a t Jsont.t =
+    Jsont.map
+      Jsont.json
+      ~kind:"or_ref"
+      ~dec:(fun json ->
+        match json with
+        | Jsont.Object (mems, _meta) ->
+          (match find_member "$ref" mems with
+          | Some (Jsont.String (ref_str, _)) -> Ref ref_str
+          | _ ->
+            (match
+               Jsont_bytesrw.decode_string
+                 value_jsont
+                 (Result.get_ok (Jsont_bytesrw.encode_string Jsont.json json))
+             with
+            | Ok v -> Value v
+            | Error e -> Jsont.Error.msg Jsont.Meta.none e))
+        | _ ->
+          (match
+             Jsont_bytesrw.decode_string
+               value_jsont
+               (Result.get_ok (Jsont_bytesrw.encode_string Jsont.json json))
+           with
+          | Ok v -> Value v
+          | Error e -> Jsont.Error.msg Jsont.Meta.none e))
+      ~enc:(function
+        | Ref r ->
+          Jsont.Object
+            ( [ ("$ref", Jsont.Meta.none), Jsont.String (r, Jsont.Meta.none) ]
+            , Jsont.Meta.none )
+        | Value v ->
+          (match Jsont_bytesrw.encode_string value_jsont v with
+          | Ok s ->
+            (match Jsont_bytesrw.decode_string Jsont.json s with
+            | Ok json -> json
+            | Error _ -> Jsont.Null ((), Jsont.Meta.none))
+          | Error _ -> Jsont.Null ((), Jsont.Meta.none)))
+end
+
 module String_map = Map.Make (String)
 
 let list_string_map_jsont value_jsont : (string * 'a) list Jsont.t =
@@ -231,9 +323,7 @@ type t =
   ; content_schema : schema option
   }
 
-and schema =
-  | Or_bool_schema of t
-  | Or_bool of bool
+and schema = t Or_ref.t Or_bool.t
 
 type schema_obj = t
 
@@ -248,7 +338,7 @@ let empty =
   ; vocabulary = None
   ; comment = None
   ; defs = None
-  ; type_ = Json_type.object_
+  ; type_ = 0
   ; additional_items = None
   ; unevaluated_items = None
   ; prefix_items = None
@@ -320,7 +410,7 @@ let merge : t -> t -> t =
   ; vocabulary = a.vocabulary <|> b.vocabulary
   ; comment = a.comment <|> b.comment
   ; defs = a.defs <|> b.defs
-  ; type_ = a.type_
+  ; type_ = (if Json_type.is_empty a.type_ then b.type_ else a.type_)
   ; additional_items = a.additional_items <|> b.additional_items
   ; unevaluated_items = a.unevaluated_items <|> b.unevaluated_items
   ; prefix_items = a.prefix_items <|> b.prefix_items
@@ -375,31 +465,7 @@ let merge : t -> t -> t =
 
 let rec schema_jsont =
   lazy begin
-    let schema_bool =
-      Jsont.map
-        Jsont.bool
-        ~kind:"schema_bool"
-        ~dec:(fun b -> Or_bool b)
-        ~enc:(function
-          | Or_bool b -> b
-          | Or_bool_schema _ -> invalid_arg "schema_bool: expected Or_bool")
-    in
-    let schema_obj =
-      Jsont.map
-        (Jsont.rec' jsont)
-        ~kind:"schema_obj"
-        ~dec:(fun obj -> Or_bool_schema obj)
-        ~enc:(function
-          | Or_bool_schema obj -> obj
-          | Or_bool _ -> invalid_arg "schema_obj: expected Or_bool_schema")
-    in
-    Jsont.any
-      ~kind:"schema"
-      ~dec_bool:schema_bool
-      ~dec_object:schema_obj
-      ~enc:(function
-        | Or_bool _ -> schema_bool | Or_bool_schema _ -> schema_obj)
-      ()
+    Or_bool.jsont (Or_ref.jsont (Jsont.rec' jsont))
   end
 
 and jsont =
@@ -476,7 +542,7 @@ and jsont =
       ; vocabulary
       ; comment
       ; defs
-      ; type_ = Option.value ~default:Json_type.object_ type_opt
+      ; type_ = Option.value ~default:0 type_opt
       ; additional_items
       ; unevaluated_items
       ; prefix_items
@@ -545,67 +611,68 @@ and jsont =
     |> Jsont.Object.opt_mem "$comment" Jsont.string ~enc:(fun t -> t.comment)
     |> Jsont.Object.opt_mem
          "$defs"
-         (list_string_map_jsont (Lazy.force schema_jsont))
+         (list_string_map_jsont (Jsont.rec' schema_jsont))
          ~enc:(fun t -> t.defs)
-    |> Jsont.Object.opt_mem "type" Json_type.jsont ~enc:(fun t -> Some t.type_)
+    |> Jsont.Object.opt_mem "type" Json_type.jsont ~enc:(fun t ->
+      if Json_type.is_empty t.type_ then None else Some t.type_)
     |> Jsont.Object.opt_mem
          "additionalItems"
-         (Lazy.force schema_jsont)
+         (Jsont.rec' schema_jsont)
          ~enc:(fun t -> t.additional_items)
     |> Jsont.Object.opt_mem
          "unevaluatedItems"
-         (Lazy.force schema_jsont)
+         (Jsont.rec' schema_jsont)
          ~enc:(fun t -> t.unevaluated_items)
     |> Jsont.Object.opt_mem
          "prefixItems"
-         (Jsont.list (Lazy.force schema_jsont))
+         (Jsont.list (Jsont.rec' schema_jsont))
          ~enc:(fun t -> t.prefix_items)
-    |> Jsont.Object.opt_mem "items" (Lazy.force schema_jsont) ~enc:(fun t ->
+    |> Jsont.Object.opt_mem "items" (Jsont.rec' schema_jsont) ~enc:(fun t ->
       t.items)
-    |> Jsont.Object.opt_mem "contains" (Lazy.force schema_jsont) ~enc:(fun t ->
+    |> Jsont.Object.opt_mem "contains" (Jsont.rec' schema_jsont) ~enc:(fun t ->
       t.contains)
     |> Jsont.Object.opt_mem
          "additionalProperties"
-         (Lazy.force schema_jsont)
+         (Jsont.rec' schema_jsont)
          ~enc:(fun t -> t.additional_properties)
     |> Jsont.Object.opt_mem
          "unevaluatedProperties"
-         (Lazy.force schema_jsont)
+         (Jsont.rec' schema_jsont)
          ~enc:(fun t -> t.unevaluated_properties)
     |> Jsont.Object.opt_mem
          "properties"
-         (list_string_map_jsont (Lazy.force schema_jsont))
+         (list_string_map_jsont (Jsont.rec' schema_jsont))
          ~enc:(fun t -> t.properties)
     |> Jsont.Object.opt_mem
          "patternProperties"
-         (list_string_map_jsont (Lazy.force schema_jsont))
+         (list_string_map_jsont (Jsont.rec' schema_jsont))
          ~enc:(fun t -> t.pattern_properties)
     |> Jsont.Object.opt_mem
          "dependentSchemas"
-         (list_string_map_jsont (Lazy.force schema_jsont))
+         (list_string_map_jsont (Jsont.rec' schema_jsont))
          ~enc:(fun t -> t.dependent_schemas)
     |> Jsont.Object.opt_mem
          "propertyNames"
-         (Lazy.force schema_jsont)
+         (Jsont.rec' schema_jsont)
          ~enc:(fun t -> t.property_names)
-    |> Jsont.Object.opt_mem "if" (Lazy.force schema_jsont) ~enc:(fun t -> t.if_)
-    |> Jsont.Object.opt_mem "then" (Lazy.force schema_jsont) ~enc:(fun t ->
+    |> Jsont.Object.opt_mem "if" (Jsont.rec' schema_jsont) ~enc:(fun t -> t.if_)
+    |> Jsont.Object.opt_mem "then" (Jsont.rec' schema_jsont) ~enc:(fun t ->
       t.then_)
-    |> Jsont.Object.opt_mem "else" (Lazy.force schema_jsont) ~enc:(fun t ->
+    |> Jsont.Object.opt_mem "else" (Jsont.rec' schema_jsont) ~enc:(fun t ->
       t.else_)
     |> Jsont.Object.opt_mem
          "allOf"
-         (Jsont.list (Lazy.force schema_jsont))
+         (Jsont.list (Jsont.rec' schema_jsont))
          ~enc:(fun t -> t.all_of)
     |> Jsont.Object.opt_mem
          "anyOf"
-         (Jsont.list (Lazy.force schema_jsont))
+         (Jsont.list (Jsont.rec' schema_jsont))
          ~enc:(fun t -> t.any_of)
     |> Jsont.Object.opt_mem
          "oneOf"
-         (Jsont.list (Lazy.force schema_jsont))
+         (Jsont.list (Jsont.rec' schema_jsont))
          ~enc:(fun t -> t.one_of)
-    |> Jsont.Object.opt_mem "not" (Lazy.force schema_jsont) ~enc:(fun t ->
+    |> Jsont.Object.opt_mem "not" (Jsont.rec' schema_jsont) ~enc:(fun t ->
       t.not_)
     |> Jsont.Object.opt_mem "multipleOf" Jsont.number ~enc:(fun t ->
       t.multiple_of)
@@ -762,5 +829,6 @@ module Constraint = struct
       { empty with not_ = Some schema }
 
   and to_json_schema : type a. a t -> schema =
-   fun constraint_ -> Or_bool_schema (to_json_schema_obj constraint_)
+   fun constraint_ ->
+    Or_bool.Schema (Or_ref.Value (to_json_schema_obj constraint_))
 end

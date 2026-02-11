@@ -336,6 +336,151 @@ let test_encode_omit_present () =
     {|{"name":"Alice","tag":"admin"}|}
     result
 
+(** { 1 To_json_schema tests } *)
+
+let schema_to_json s =
+  match Json_schema.to_string s with Ok s -> s | Error _ -> failwith "encode"
+
+let test_to_json_schema_string () =
+  let schema = Sch.to_json_schema Sch.string in
+  let json = schema_to_json schema in
+  let parsed = Json_schema.of_string json |> Result.get_ok in
+  Alcotest.(check bool)
+    "string type"
+    true
+    (Json_schema.Json_type.contains parsed.type_ String)
+
+let test_to_json_schema_int () =
+  let schema = Sch.to_json_schema Sch.int in
+  let json = schema_to_json schema in
+  let parsed = Json_schema.of_string json |> Result.get_ok in
+  Alcotest.(check bool)
+    "integer type"
+    true
+    (Json_schema.Json_type.contains parsed.type_ Integer);
+  Alcotest.(check (option string)) "int32 format" (Some "int32") parsed.format
+
+let test_to_json_schema_object () =
+  let codec =
+    Sch.Object.(
+      define ~kind:"user"
+      @@ let+ _name = mem "name" Sch.string
+         and+ _age = mem "age" Sch.int in
+         _name, _age)
+  in
+  let schema = Sch.to_json_schema codec in
+  Alcotest.(check bool)
+    "object type"
+    true
+    (Json_schema.Json_type.contains schema.type_ Object);
+  Alcotest.(check (option (list string)))
+    "required fields"
+    (Some [ "name"; "age" ])
+    schema.required;
+  let prop_names = Option.map (List.map fst) schema.properties in
+  Alcotest.(check (option (list string)))
+    "property names"
+    (Some [ "name"; "age" ])
+    prop_names
+
+let test_to_json_schema_optional_field () =
+  let codec =
+    Sch.Object.(
+      define
+      @@ let+ _name = mem "name" Sch.string
+         and+ _tag = mem_opt Sch.string "tag" in
+         _name, _tag)
+  in
+  let schema = Sch.to_json_schema codec in
+  Alcotest.(check (option (list string)))
+    "only name required"
+    (Some [ "name" ])
+    schema.required
+
+let test_to_json_schema_additional_properties () =
+  let codec =
+    Sch.Object.(
+      define ~unknown:Error_on_unknown
+      @@ let+ _name = mem "name" Sch.string in
+         _name)
+  in
+  let schema = Sch.to_json_schema codec in
+  let additional =
+    match schema.additional_properties with
+    | Some (Json_schema.Or_bool.Bool false) -> true
+    | _ -> false
+  in
+  Alcotest.(check bool) "additionalProperties is false" true additional
+
+let test_to_json_schema_list () =
+  let codec = Sch.list Sch.string in
+  let schema = Sch.to_json_schema codec in
+  Alcotest.(check bool)
+    "array type"
+    true
+    (Json_schema.Json_type.contains schema.type_ Array);
+  let has_items = Option.is_some schema.items in
+  Alcotest.(check bool) "has items" true has_items
+
+let test_to_json_schema_option () =
+  let codec = Sch.option Sch.string in
+  let schema = Sch.to_json_schema codec in
+  Alcotest.(check bool)
+    "allows string"
+    true
+    (Json_schema.Json_type.contains schema.type_ String);
+  Alcotest.(check bool)
+    "allows null"
+    true
+    (Json_schema.Json_type.contains schema.type_ Null)
+
+let test_to_json_schema_roundtrip () =
+  let codec =
+    Sch.Object.(
+      define ~kind:"person" ~doc:"A person"
+      @@ let+ name = mem "name" ~doc:"The name" Sch.string
+         and+ age = mem "age" Sch.int
+         and+ email = mem_opt Sch.string "email" in
+         name, age, email)
+  in
+  let schema = Sch.to_json_schema codec in
+  let json = schema_to_json schema in
+  let reparsed = Json_schema.of_string json in
+  Alcotest.(check bool) "roundtrip succeeds" true (Result.is_ok reparsed)
+
+type tree =
+  { value : int
+  ; children : tree list
+  }
+
+let test_to_json_schema_rec () =
+  let rec tree_codec =
+    lazy
+      Sch.Object.(
+        define ~kind:"tree"
+        @@ let+ value = mem "value" ~enc:(fun t -> t.value) Sch.int
+           and+ children =
+             mem
+               "children"
+               ~enc:(fun t -> t.children)
+               (Sch.list (Sch.rec' tree_codec))
+           in
+           { value; children })
+  in
+  let schema = Sch.to_json_schema (Sch.rec' tree_codec) in
+  (* Top level should be a $ref *)
+  Alcotest.(check (option string))
+    "top-level ref"
+    (Some "#/$defs/tree")
+    schema.ref_;
+  (* Should have $defs with tree *)
+  let has_tree_def =
+    match schema.defs with
+    | Some defs -> List.exists (fun (name, _) -> name = "tree") defs
+    | None -> false
+  in
+  Alcotest.(check bool) "has tree in $defs" true has_tree_def
+
 (** { 1 Schema Decoder Test Suites } *)
 let schema_decoder_tests =
   [ "schema single field", `Quick, test_schema_single_field
@@ -379,10 +524,24 @@ let encoder_tests =
   ; "omit field present", `Quick, test_encode_omit_present
   ]
 
+(* { 1 Json schema generation test suites }*)
+let to_json_schema_tests =
+  [ "string schema", `Quick, test_to_json_schema_string
+  ; "int schema", `Quick, test_to_json_schema_int
+  ; "object schema", `Quick, test_to_json_schema_object
+  ; "optional field", `Quick, test_to_json_schema_optional_field
+  ; "additionalProperties", `Quick, test_to_json_schema_additional_properties
+  ; "list schema", `Quick, test_to_json_schema_list
+  ; "option schema", `Quick, test_to_json_schema_option
+  ; "roundtrip", `Quick, test_to_json_schema_roundtrip
+  ; "recursive schema", `Quick, test_to_json_schema_rec
+  ]
+
 let () =
   Alcotest.run
     "Sch"
     [ "Json_schema", json_schema_tests
     ; "Decoder", schema_decoder_tests
     ; "Encoder", encoder_tests
+    ; "To_json_schema", to_json_schema_tests
     ]

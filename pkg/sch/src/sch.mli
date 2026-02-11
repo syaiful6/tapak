@@ -1,6 +1,7 @@
 module Json_schema = Json_schema
 module Constraint = Json_schema.Constraint
 module Free = Free
+module Sig = Sig
 
 type unknown_handling =
   | Skip
@@ -170,3 +171,5 @@ module Json_encoder : sig
 
   val encode_string : ?format:format -> 'a t -> 'a -> string
 end
+
+val to_json_schema : ?draft:Json_schema.Draft.t -> 'a t -> Json_schema.t

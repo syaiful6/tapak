@@ -27,9 +27,15 @@ buildDunePackage {
       ];
     };
 
-  buildInputs = [];
+  buildInputs = [ ];
 
-  propagatedBuildInputs = [ bytesrw jsont re uri ipaddr ];
+  propagatedBuildInputs = [
+    bytesrw
+    jsont
+    re
+    uri
+    ipaddr
+  ];
 
   inherit doCheck;
   checkInputs = [

@@ -687,3 +687,217 @@ module Json_encoder = struct
     encode ~eod:true ~format writer t a;
     Buffer.contents buf
 end
+
+module To_json_schema = struct
+  module Json_type = Json_schema.Json_type
+
+  module Diflist = struct
+    type 'a t = 'a list -> 'a list
+
+    let[@inline] single : 'a -> 'a t = fun x -> fun xs -> x :: xs
+    let empty : 'a t = fun xs -> xs
+    let[@inline] concat : 'a t -> 'a t -> 'a t = fun a b -> fun xs -> a (b xs)
+    let[@inline] to_list : 'a t -> 'a list = fun dl -> dl []
+  end
+
+  type state =
+    { defs : (string * Json_schema.schema) list ref
+    ; seen : (Obj.t * string) list ref
+    ; next_id : int ref
+    }
+
+  type fieldc =
+    { properties : (string * Json_schema.schema) Diflist.t
+    ; required : string Diflist.t
+    }
+  (* field collector, use difference list for appends operation for efficiency,
+     it called inside fc_applicative by free applicative *)
+
+  let empty = { properties = Diflist.empty; required = Diflist.empty }
+
+  let combine a b =
+    { properties = Diflist.concat b.properties a.properties
+    ; required = Diflist.concat b.required a.required
+    }
+
+  module Fc = Sig.Make (struct
+      type nonrec 'a t = fieldc
+    end)
+
+  let fc_applicative : Fc.t Sig.applicative =
+    { pure = (fun _ -> Fc.inj empty)
+    ; map = (fun _f va -> Fc.inj (Fc.prj va))
+    ; apply = (fun vf va -> Fc.inj (combine (Fc.prj vf) (Fc.prj va)))
+    }
+
+  let create_state () = { defs = ref []; seen = ref []; next_id = ref 0 }
+
+  let find_seen state lazy_val =
+    let key = Obj.repr lazy_val in
+    List.find_map
+      (fun (k, name) -> if k == key then Some name else None)
+      !(state.seen)
+
+  let gen_name state hint =
+    if hint <> ""
+    then hint
+    else begin
+      let id = !(state.next_id) in
+      state.next_id := id + 1;
+      Printf.sprintf "def_%d" id
+    end
+
+  let basemap_schema_obj (b : _ base_map) : Json_schema.t =
+    let base =
+      match b.constraint_ with
+      | Some c -> Json_schema.Constraint.to_json_schema_obj c
+      | None -> Json_schema.empty
+    in
+    if b.doc <> "" then { base with description = Some b.doc } else base
+
+  let wrap obj : Json_schema.schema =
+    Json_schema.Or_bool.Schema (Json_schema.Or_ref.Value obj)
+
+  let rec to_schema : type a. state -> a t -> Json_schema.schema =
+   fun state codec ->
+    match codec with
+    | Str b ->
+      let obj = basemap_schema_obj b in
+      wrap { obj with type_ = Json_type.string }
+    | Password b ->
+      let obj = basemap_schema_obj b in
+      wrap
+        { obj with
+          type_ = Json_type.string
+        ; format = obj.format <|> Some "password"
+        }
+    | Int b ->
+      let obj = basemap_schema_obj b in
+      wrap { obj with type_ = Json_type.integer; format = Some "int32" }
+    | Int32 b ->
+      let obj = basemap_schema_obj b in
+      wrap { obj with type_ = Json_type.integer; format = Some "int32" }
+    | Int64 b ->
+      let obj = basemap_schema_obj b in
+      wrap { obj with type_ = Json_type.integer; format = Some "int64" }
+    | Bool { doc } ->
+      wrap
+        { Json_schema.empty with
+          type_ = Json_type.boolean
+        ; description = (if doc <> "" then Some doc else None)
+        }
+    | Float b ->
+      let obj = basemap_schema_obj b in
+      wrap { obj with type_ = Json_type.number; format = Some "float" }
+    | Double b ->
+      let obj = basemap_schema_obj b in
+      wrap { obj with type_ = Json_type.number; format = Some "double" }
+    | File ->
+      wrap
+        { Json_schema.empty with
+          type_ = Json_type.string
+        ; format = Some "binary"
+        }
+    | Option inner -> option_schema state inner
+    | List { doc; item; constraint_ } ->
+      let item_schema = to_schema state item in
+      let base =
+        match constraint_ with
+        | Some c -> Json_schema.Constraint.to_json_schema_obj c
+        | None -> Json_schema.empty
+      in
+      wrap
+        { base with
+          type_ = Json_type.array
+        ; items = Some item_schema
+        ; description = (if doc <> "" then Some doc else None)
+        }
+    | Object { doc; unknown; members; _ } ->
+      object_schema state doc unknown members
+    | Rec lazy_t -> rec_schema state lazy_t
+    | Iso { repr; _ } -> to_schema state repr
+
+  and option_schema : type a. state -> a t -> Json_schema.schema =
+   fun state inner ->
+    let inner_s = to_schema state inner in
+    match inner_s with
+    | Json_schema.Or_bool.Schema (Json_schema.Or_ref.Value obj) ->
+      wrap { obj with type_ = Json_type.union obj.type_ Json_type.null }
+    | _ ->
+      let null_s = wrap { Json_schema.empty with type_ = Json_type.null } in
+      wrap { Json_schema.empty with any_of = Some [ inner_s; null_s ] }
+
+  and object_schema : type o.
+    state
+    -> string
+    -> unknown_handling
+    -> (o fieldk, o) Free.t
+    -> Json_schema.schema
+    =
+   fun state doc unknown members ->
+    let nat : (o fieldk, Fc.t) Sig.nat =
+      { Sig.run =
+          (fun (type b) (fa : (b, o fieldk) Sig.app) ->
+            let field = Object.prj fa in
+            let field_schema = to_schema state field.codec in
+            let properties = Diflist.single (field.name, field_schema) in
+            let required =
+              if Option.is_none field.default
+              then Diflist.single field.name
+              else Diflist.empty
+            in
+            Fc.inj { properties; required })
+      }
+    in
+    let fieldc = Fc.prj (Free.run fc_applicative nat members) in
+    let additional_properties =
+      match unknown with
+      | Skip -> None
+      | Error_on_unknown ->
+        Some (Json_schema.Or_bool.Bool false)
+    in
+    wrap
+      { Json_schema.empty with
+        type_ = Json_type.object_
+      ; properties = Some (Diflist.to_list fieldc.properties)
+      ; required =
+          (match Diflist.to_list fieldc.required with
+          | [] -> None
+          | r -> Some r)
+      ; additional_properties
+      ; description = (if doc <> "" then Some doc else None)
+      }
+
+  and rec_schema : type a. state -> a t Lazy.t -> Json_schema.schema =
+   fun state lazy_t ->
+    match find_seen state lazy_t with
+    | Some name -> Json_schema.Or_bool.Schema (Json_schema.Or_ref.Ref ("#/$defs/" ^ name))
+    | None ->
+      let forced = Lazy.force lazy_t in
+      let name =
+        match forced with
+        | Object { kind; _ } when kind <> "" -> kind
+        | _ -> gen_name state ""
+      in
+      let key = Obj.repr lazy_t in
+      state.seen := (key, name) :: !(state.seen);
+      let s = to_schema state forced in
+      state.defs := (name, s) :: !(state.defs);
+      Json_schema.Or_bool.Schema (Json_schema.Or_ref.Ref ("#/$defs/" ^ name))
+
+  let convert ?(draft = Json_schema.Draft.Draft2020_12) codec =
+    let state = create_state () in
+    let s = to_schema state codec in
+    let defs =
+      match !(state.defs) with [] -> None | defs -> Some (List.rev defs)
+    in
+    match s with
+    | Json_schema.Or_bool.Schema (Json_schema.Or_ref.Value obj) ->
+      { obj with schema = Some draft; defs }
+    | Json_schema.Or_bool.Schema (Json_schema.Or_ref.Ref ref_str) ->
+      { Json_schema.empty with schema = Some draft; ref_ = Some ref_str; defs }
+    | Json_schema.Or_bool.Bool _ ->
+      { Json_schema.empty with schema = Some draft; defs }
+end
+
+let to_json_schema ?draft codec = To_json_schema.convert ?draft codec

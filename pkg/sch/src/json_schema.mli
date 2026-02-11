@@ -7,6 +7,7 @@ module Json_type : sig
     | Null
     | Boolean
     | Number
+    | Integer
     | String
     | Array
     | Object
@@ -14,6 +15,7 @@ module Json_type : sig
   val null : t
   val boolean : t
   val number : t
+  val integer : t
   val string : t
   val array : t
   val object_ : t
@@ -44,6 +46,23 @@ module Draft : sig
   val jsont : t Jsont.t
 end
 
+module Or_bool : sig
+  type 'a t =
+    | Schema of 'a
+    | Bool of bool
+
+  val jsont : 'a Jsont.t -> 'a t Jsont.t
+end
+
+module Or_ref : sig
+  type 'a t =
+    | Value of 'a
+    | Ref of string
+
+  val find_member : string -> Jsont.mem list -> Jsont.json option
+  val jsont : 'a Jsont.t -> 'a t Jsont.t
+end
+
 val list_string_map_jsont : 'a Jsont.t -> (string * 'a) list Jsont.t
 
 type t =
@@ -57,7 +76,7 @@ type t =
   ; vocabulary : (string * bool) list option
   ; comment : string option
   ; defs : (string * schema) list option
-  ; type_ : int
+  ; type_ : Json_type.t
   ; additional_items : schema option
   ; unevaluated_items : schema option
   ; prefix_items : schema list option
@@ -109,9 +128,7 @@ type t =
   ; content_schema : schema option
   }
 
-and schema =
-  | Or_bool_schema of t
-  | Or_bool of bool
+and schema = t Or_ref.t Or_bool.t
 
 type schema_obj = t
 
