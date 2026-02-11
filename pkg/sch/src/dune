@@ -1,0 +1,6 @@
+(library
+ (name sch)
+ (public_name sch)
+ (libraries bytesrw jsont jsont.bytesrw re uri ipaddr))
+
+(include_subdirs unqualified)
