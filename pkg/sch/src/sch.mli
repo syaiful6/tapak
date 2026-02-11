@@ -164,9 +164,9 @@ module Json_encoder : sig
      ?buf:Bytesrw.Bytes.t
     -> ?eod:bool
     -> ?format:format
-    -> Bytesrw.Bytes.Writer.t
     -> 'a t
     -> 'a
+    -> Bytesrw.Bytes.Writer.t
     -> unit
 
   val encode_string : ?format:format -> 'a t -> 'a -> string

@@ -676,7 +676,7 @@ module Json_encoder = struct
           U.inj ())
     }
 
-  let encode ?buf ?(eod = true) ?(format = Minify) w t a =
+  let encode ?buf ?(eod = true) ?(format = Minify) t a w =
     let encoder = make ?buf ~format w in
     write_value encoder ~nest:0 t a;
     write_eod ~eod encoder
@@ -684,7 +684,7 @@ module Json_encoder = struct
   let encode_string ?(format = Minify) t a =
     let buf = Buffer.create 256 in
     let writer = Bytes.Writer.of_buffer buf in
-    encode ~eod:true ~format writer t a;
+    encode ~eod:true ~format t a writer;
     Buffer.contents buf
 end
 
@@ -853,8 +853,7 @@ module To_json_schema = struct
     let additional_properties =
       match unknown with
       | Skip -> None
-      | Error_on_unknown ->
-        Some (Json_schema.Or_bool.Bool false)
+      | Error_on_unknown -> Some (Json_schema.Or_bool.Bool false)
     in
     wrap
       { Json_schema.empty with
@@ -871,7 +870,8 @@ module To_json_schema = struct
   and rec_schema : type a. state -> a t Lazy.t -> Json_schema.schema =
    fun state lazy_t ->
     match find_seen state lazy_t with
-    | Some name -> Json_schema.Or_bool.Schema (Json_schema.Or_ref.Ref ("#/$defs/" ^ name))
+    | Some name ->
+      Json_schema.Or_bool.Schema (Json_schema.Or_ref.Ref ("#/$defs/" ^ name))
     | None ->
       let forced = Lazy.force lazy_t in
       let name =
