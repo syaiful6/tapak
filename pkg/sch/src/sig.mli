@@ -19,7 +19,7 @@ module Common : sig
   external prj : 'a -> 'b = "%identity"
 end
 
-module Make : (T : FUNCTOR) -> sig
+module Make : functor (T : FUNCTOR) -> sig
   type 'a s = 'a T.t
   type t = Common.t
 
