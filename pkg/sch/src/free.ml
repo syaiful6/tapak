@@ -1,4 +1,5 @@
-(** This module implement free applicative structure *)
+(** This module implement free applicative structure,
+    based on Dave Menendez: https://www.eyrie.org/~zednenem/2013/05/27/freeapp *)
 
 (** The free applicative sequence, you can think this a 
     sequence of effects, and a pure function to apply

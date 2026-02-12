@@ -723,7 +723,7 @@ and jsont =
       t.content_encoding)
     |> Jsont.Object.opt_mem
          "contentSchema"
-         (Lazy.force schema_jsont)
+         (Jsont.rec' schema_jsont)
          ~enc:(fun t -> t.content_schema)
     |> Jsont.Object.skip_unknown
     |> Jsont.Object.finish

@@ -145,7 +145,7 @@ val mem_is_known_ci : (string, 'a) Hashtbl.t -> Jsont.name -> bool
 
 module Json_decoder : sig
   val coerce_string : 'a t -> string -> 'a Validation.t
-  val decode : ?lookup:mem_lookup -> Jsont.json -> 'a t -> 'a Validation.t
+  val decode : ?lookup:mem_lookup -> 'a t -> Jsont.json -> 'a Validation.t
   val decode_string : ?lookup:mem_lookup -> 'a t -> string -> 'a Validation.t
 
   val decode_reader :

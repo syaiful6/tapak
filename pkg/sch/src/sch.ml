@@ -287,8 +287,8 @@ module Json_decoder = struct
     let is_known =
       if lookup == mem_ci then mem_is_known_ci else mem_is_known_exact
     in
-    let rec go : type a. Jsont.json -> a t -> a Validation.t =
-     fun json codec ->
+    let rec go : type a. a t -> Jsont.json -> a Validation.t =
+     fun codec json ->
       match codec with
       | Str { constraint_; _ } ->
         (match json with
@@ -332,7 +332,7 @@ module Json_decoder = struct
       | Option inner ->
         (match json with
         | Null _ -> Success None
-        | _ -> Validation.map Option.some (go json inner))
+        | _ -> Validation.map Option.some (go inner json))
       | List { item; constraint_; _ } ->
         (match json with
         | Array (items, _) -> go_list item constraint_ 0 items
@@ -367,9 +367,9 @@ module Json_decoder = struct
                       error (Printf.sprintf "Unknown field: %s" k))
                    keys)))
         | _ -> Error [ error "Expected object" ])
-      | Rec t -> go json (Lazy.force t)
+      | Rec t -> go (Lazy.force t) json
       | Iso { fwd; repr; _ } ->
-        (match go json repr with
+        (match go repr json with
         | Success b ->
           (match fwd b with
           | Ok a -> Success a
@@ -387,7 +387,7 @@ module Json_decoder = struct
       | [] -> apply_constraint constraint_ []
       | json :: rest ->
         let head =
-          match go json item with
+          match go item json with
           | Success x -> Validation.Success x
           | Error errs -> Error (in_field (string_of_int idx) errs)
         in
@@ -407,7 +407,7 @@ module Json_decoder = struct
             V.inj
               (match lookup field.name mems with
               | Some v ->
-                (match go v field.codec with
+                (match go field.codec v with
                 | Validation.Success a -> Validation.Success a
                 | Validation.Error errs ->
                   Validation.Error (in_field field.name errs))
@@ -424,12 +424,12 @@ module Json_decoder = struct
   let decode_string ?lookup codec s =
     match Jsont_bytesrw.decode_string Jsont.json s with
     | Error msg -> Validation.Error [ error msg ]
-    | Ok json -> decode ?lookup json codec
+    | Ok json -> decode ?lookup codec json
 
   let decode_reader ?lookup codec reader =
     match Jsont_bytesrw.decode Jsont.json reader with
     | Error msg -> Validation.Error [ error msg ]
-    | Ok json -> decode ?lookup json codec
+    | Ok json -> decode ?lookup codec json
 end
 
 module Json_encoder = struct

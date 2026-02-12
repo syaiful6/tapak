@@ -1,18 +1,18 @@
 module Json_schema = Sch.Json_schema
 
 (* schema tests *)
-let test_schema_single_field () =
+let decode_str_result schema str =
+  Sch.Json_decoder.decode_string schema str |> Sch.Validation.to_result
+
+let test_decoder_schema_single_field () =
   let schema = Sch.Object.(define @@ Sch.Object.mem "name" Sch.string) in
-  let result =
-    Sch.Json_decoder.decode_string schema {|{"name": "Alice"}|}
-    |> Sch.Validation.to_result
-  in
+  let result = decode_str_result schema {|{"name": "Alice"}|} in
   Alcotest.(check (result string (list (pair string string))))
     "parse single field"
     (Ok "Alice")
     result
 
-let test_schema_multiple_fields () =
+let test_decoder_schema_multiple_fields () =
   let schema =
     Sch.Object.(
       define
@@ -20,14 +20,90 @@ let test_schema_multiple_fields () =
          and+ age = mem "age" Sch.int in
          name, age)
   in
-  let result =
-    Sch.Json_decoder.decode_string schema {|{"name": "Alice", "age": 30}|}
-    |> Sch.Validation.to_result
-  in
+  let result = decode_str_result schema {|{"name": "Alice", "age": 30}|} in
   Alcotest.(check (result (pair string int) (list (pair string string))))
     "parse multiple fields"
     (Ok ("Alice", 30))
     result
+
+let test_decoder_schema_with_defaults () =
+  let schema =
+    Sch.Object.(
+      define
+      @@ let+ name = mem "name" Sch.string
+         and+ role = mem ~default:"customer" "role" Sch.string in
+         name, role)
+  in
+  let result = decode_str_result schema {|{"name": "Bob"}|} in
+  Alcotest.(check (result (pair string string) (list (pair string string))))
+    "parse with default"
+    (Ok ("Bob", "customer"))
+    result
+
+let test_decoder_cross_field_validation () =
+  let schema_with_confirmation =
+    Sch.Object.(
+      define
+      @@ let+ password = mem "password" Sch.string
+         and+ confirm_password = mem "confirm_password" Sch.string in
+         password, confirm_password)
+  in
+  let schema =
+    Sch.custom
+      ~enc:(fun pwd -> pwd, pwd)
+      ~dec:(fun (pwd, conf) ->
+        if String.equal pwd conf
+        then Ok pwd
+        else Error [ "passwords do not match" ])
+      schema_with_confirmation
+  in
+  let valid_json = {|{"password": "secret", "confirm_password": "secret"}|} in
+  let invalid_json =
+    {|{"password": "secret", "confirm_password": "not_secret"}|}
+  in
+  Alcotest.(check (result string (list (pair string string))))
+    "valid passwords confirmation"
+    (Result.ok "secret")
+    (decode_str_result schema valid_json);
+  Alcotest.(check (result string (list (pair string string))))
+    "invalid passwords confirmation"
+    (Result.error [ "", "passwords do not match" ])
+    (decode_str_result schema invalid_json)
+
+let test_decoder_error_accum () =
+  let schema =
+    Sch.Object.(
+      define ~kind:"user"
+      @@
+      let+ name =
+        mem
+          "name"
+          Sch.(with_constraint ~constraint_:(Constraint.min_length 2) string)
+      and+ email =
+        mem
+          "email"
+          Sch.(with_constraint ~constraint_:(Constraint.format `Email) string)
+      and+ age =
+        mem
+          "age"
+          Sch.(with_constraint ~constraint_:(Constraint.int_range 17 120) int)
+      in
+      name, email, age)
+  in
+  let invalid_json =
+    {|{
+      "name": "A",
+      "email": "invalid-email",
+      "age": 15
+    }|}
+  in
+  match decode_str_result schema invalid_json with
+  | Ok _ -> Alcotest.fail "Expected validation errors"
+  | Error errors ->
+    let has_error field = List.exists (fun (f, _) -> f = field) errors in
+    Alcotest.(check bool) "name error present" true (has_error "name");
+    Alcotest.(check bool) "email error present" true (has_error "email");
+    Alcotest.(check bool) "age error present" true (has_error "age")
 
 (* json schema *)
 let test_json_type () =
@@ -364,9 +440,9 @@ let test_to_json_schema_object () =
   let codec =
     Sch.Object.(
       define ~kind:"user"
-      @@ let+ _name = mem "name" Sch.string
-         and+ _age = mem "age" Sch.int in
-         _name, _age)
+      @@ let+ name = mem "name" Sch.string
+         and+ age = mem "age" Sch.int in
+         name, age)
   in
   let schema = Sch.to_json_schema codec in
   Alcotest.(check bool)
@@ -387,9 +463,9 @@ let test_to_json_schema_optional_field () =
   let codec =
     Sch.Object.(
       define
-      @@ let+ _name = mem "name" Sch.string
-         and+ _tag = mem_opt Sch.string "tag" in
-         _name, _tag)
+      @@ let+ name = mem "name" Sch.string
+         and+ tag = mem_opt Sch.string "tag" in
+         name, tag)
   in
   let schema = Sch.to_json_schema codec in
   Alcotest.(check (option (list string)))
@@ -399,10 +475,7 @@ let test_to_json_schema_optional_field () =
 
 let test_to_json_schema_additional_properties () =
   let codec =
-    Sch.Object.(
-      define ~unknown:Error_on_unknown
-      @@ let+ _name = mem "name" Sch.string in
-         _name)
+    Sch.Object.(define ~unknown:Error_on_unknown @@ mem "name" Sch.string)
   in
   let schema = Sch.to_json_schema codec in
   let additional =
@@ -483,8 +556,11 @@ let test_to_json_schema_rec () =
 
 (** { 1 Schema Decoder Test Suites } *)
 let schema_decoder_tests =
-  [ "schema single field", `Quick, test_schema_single_field
-  ; "schema multiple fields", `Quick, test_schema_multiple_fields
+  [ "schema single field", `Quick, test_decoder_schema_single_field
+  ; "schema multiple fields", `Quick, test_decoder_schema_multiple_fields
+  ; "schema with defaults", `Quick, test_decoder_schema_with_defaults
+  ; "cross-field validation", `Quick, test_decoder_cross_field_validation
+  ; "schema error accumulation", `Quick, test_decoder_error_accum
   ]
 
 (** { 1 Test Suites } *)
