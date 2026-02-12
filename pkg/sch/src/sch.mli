@@ -67,14 +67,7 @@ val error_to_pair : decode_error -> string * string
 val type_name : 'a t -> string
 val format_name : 'a t -> string option
 val doc : 'a t -> string
-val with_doc_basemap : ?doc:string -> ('a, 'b) field -> ('a, 'b) field
-
-val with_constraint_basemap :
-   ?constraint_:'a Constraint.t
-  -> 'a base_map
-  -> 'a base_map
-
-val with_constraint : ?constraint_:'a Constraint.t -> 'a t -> 'a t
+val with_ : ?constraint_:'a Constraint.t -> ?doc:string -> 'a t -> 'a t
 val string : string t
 val password : string t
 val bool : bool t

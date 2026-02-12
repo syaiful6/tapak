@@ -130,27 +130,31 @@ let rec doc : type a. a t -> string = function
   | Rec t -> doc (Lazy.force t)
   | Iso { repr; _ } -> doc repr
 
-let with_doc_basemap ?doc:d c = { c with doc = Option.value d ~default:c.doc }
+let with_basemap ?constraint_:ct ?doc:d (c : 'a base_map) =
+  { constraint_ = ct <|> c.constraint_; doc = Option.value d ~default:c.doc }
 
-let with_constraint_basemap ?constraint_:ct c =
-  { c with constraint_ = ct <|> c.constraint_ }
-
-let rec with_constraint : type a. ?constraint_:a Constraint.t -> a t -> a t =
- fun ?constraint_ codec ->
+let rec with_ : type a. ?constraint_:a Constraint.t -> ?doc:string -> a t -> a t
+  =
+ fun ?constraint_ ?doc codec ->
   match codec with
-  | Str c -> Str (with_constraint_basemap ?constraint_ c)
-  | Password c -> Password (with_constraint_basemap ?constraint_ c)
-  | Int c -> Int (with_constraint_basemap ?constraint_ c)
-  | Int32 c -> Int32 (with_constraint_basemap ?constraint_ c)
-  | Int64 c -> Int64 (with_constraint_basemap ?constraint_ c)
+  | Str c -> Str (with_basemap ?constraint_ ?doc c)
+  | Password c -> Password (with_basemap ?constraint_ ?doc c)
+  | Int c -> Int (with_basemap ?constraint_ ?doc c)
+  | Int32 c -> Int32 (with_basemap ?constraint_ ?doc c)
+  | Int64 c -> Int64 (with_basemap ?constraint_ ?doc c)
   | Bool _ -> codec
-  | Float c -> Float (with_constraint_basemap ?constraint_ c)
-  | Double c -> Double (with_constraint_basemap ?constraint_ c)
+  | Float c -> Float (with_basemap ?constraint_ ?doc c)
+  | Double c -> Double (with_basemap ?constraint_ ?doc c)
   | File -> codec
   | Option _ -> codec
-  | List c -> List { c with constraint_ = constraint_ <|> c.constraint_ }
+  | List c ->
+    List
+      { c with
+        constraint_ = constraint_ <|> c.constraint_
+      ; doc = Option.value doc ~default:c.doc
+      }
   | Object _ -> codec
-  | Rec t -> Rec (lazy (with_constraint ?constraint_ (Lazy.force t)))
+  | Rec t -> Rec (lazy (with_ ?constraint_ ?doc (Lazy.force t)))
   | Iso _ -> codec
 
 let string = Str { doc = ""; constraint_ = None }

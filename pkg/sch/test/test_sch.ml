@@ -76,17 +76,11 @@ let test_decoder_error_accum () =
       define ~kind:"user"
       @@
       let+ name =
-        mem
-          "name"
-          Sch.(with_constraint ~constraint_:(Constraint.min_length 2) string)
+        mem "name" Sch.(with_ ~constraint_:(Constraint.min_length 2) string)
       and+ email =
-        mem
-          "email"
-          Sch.(with_constraint ~constraint_:(Constraint.format `Email) string)
+        mem "email" Sch.(with_ ~constraint_:(Constraint.format `Email) string)
       and+ age =
-        mem
-          "age"
-          Sch.(with_constraint ~constraint_:(Constraint.int_range 17 120) int)
+        mem "age" Sch.(with_ ~constraint_:(Constraint.int_range 17 120) int)
       in
       name, email, age)
   in
