@@ -18,6 +18,26 @@
 (documentation https://syaiful6.github.io/tapak/)
 
 (package
+ (name sch)
+ (synopsis
+  "Sch is schema validation, serialization and deserialization OCaml data structures")
+ (description
+  "Sch is schema validation, serialization and deserialization OCaml data structures\n  ")
+ (depends
+  (ocaml
+   (>= 5.2))
+  dune
+  (bytesrw
+   (>= 0.3.0))
+  jsont
+  (re
+   (>= 1.7.2))
+  uri
+  ipaddr
+  (alcotest :with-test)
+  (odoc :with-doc)))
+
+(package
  (name tapak)
  (synopsis "Composable framework for building web applications in OCaml")
  (description

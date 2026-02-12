@@ -7,6 +7,7 @@
 }:
 mkShell {
   inputsFrom = with ocamlPackages; [
+    sch
     tapak
     tapak-compressions
     tapak-ppx

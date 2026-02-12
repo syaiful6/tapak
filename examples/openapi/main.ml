@@ -91,6 +91,19 @@ let session_cookies_schema =
   and+ user_pref = Tapak.Schema.(option "theme" (Field.str ())) in
   session_id, user_pref
 
+let list_take n l =
+  let[@tail_mod_cons] rec aux n l =
+    match n, l with 0, _ | _, [] -> [] | n, x :: l -> x :: aux (n - 1) l
+  in
+  if n <= 0 then [] else aux n l
+
+let list_drop n l =
+  let rec aux i = function
+    | _x :: l when i < n -> aux (i + 1) l
+    | rest -> rest
+  in
+  if n <= 0 then l else aux 0 l
+
 let list_users search =
   let users =
     [ { id = 1; name = "Alice"; email = "alice@example.com" }
@@ -101,8 +114,8 @@ let list_users search =
   then []
   else
     users
-    |> List.drop search.offset
-    |> List.take search.limit
+    |> list_drop search.offset
+    |> list_take search.limit
     |>
     match search.q with
     | None -> Fun.id
