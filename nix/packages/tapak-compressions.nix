@@ -3,11 +3,13 @@
   lib,
   tapak,
   dune-configurator,
+  pkg-config,
   piaf,
-  camlzip,
   alcotest,
   brotli,
   zstd,
+  zlib,
+  bytesrw,
   doCheck ? true,
 }:
 
@@ -28,16 +30,21 @@ buildDunePackage {
       ];
     };
 
+  nativeBuildInputs = [
+    pkg-config
+  ];
+
   buildInputs = [
     dune-configurator
     brotli
     zstd
+    zlib
   ];
 
   propagatedBuildInputs = [
     tapak
     piaf
-    camlzip
+    bytesrw
   ];
 
   inherit doCheck;

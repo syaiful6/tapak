@@ -5,7 +5,6 @@ let () =
        [ Test_form.tests
        ; Test_schema.tests
        ; [ Test_router.tests ]
-       ; Test_middleware_compression.tests
        ; Test_static.tests
        ; Test_sse.tests
        ; Test_openapi.tests

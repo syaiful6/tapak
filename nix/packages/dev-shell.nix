@@ -4,6 +4,7 @@
   ocamlPackages,
   systemfd,
   watchexec,
+  pkg-config,
 }:
 mkShell {
   inputsFrom = with ocamlPackages; [
@@ -25,5 +26,6 @@ mkShell {
       treefmt
       systemfd
       watchexec
+      pkg-config
     ];
 }

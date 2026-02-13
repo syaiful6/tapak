@@ -87,13 +87,14 @@
   (ocaml
    (>= 5.2.0))
   (dune (>= 3.0.0))
+  bytesrw
+  conf-zlib
+  conf-zstd
   dune-configurator
   (tapak
    (= :version))
   (piaf
    (>= 0.2.0))
-  (camlzip
-   (>= 1.11))
   (alcotest :with-test)
   (odoc :with-doc))
  (tags

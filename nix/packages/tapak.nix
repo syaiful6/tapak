@@ -1,6 +1,7 @@
 {
   buildDunePackage,
   lib,
+  bytesrw,
   eio,
   eio_main,
   angstrom,
@@ -40,6 +41,7 @@ buildDunePackage {
     eio
     eio_main
     angstrom
+    bytesrw
     hmap
     logs
     re

@@ -1,13 +1,8 @@
 open Imports
 open Header_parser
+open Bytesrw
 
-module type S = sig
-  val decompress :
-     Bigstringaf.t Piaf.IOVec.t Piaf.Stream.t
-    -> (string Piaf.Stream.t, [> Piaf.Error.t ]) result
-end
-
-type decoder = Accept.encoding -> (module S) option
+type decoder = Accept.encoding -> Bytes.Reader.filter option
 type t = decoder
 
 let encoding_of_string = function
@@ -31,40 +26,26 @@ let call (decoder : decoder) next request =
   match content_encodings request with
   | None -> next request
   | Some encodings ->
-    let stream = Request.body request |> Body.to_stream in
-    let rec aux algorithms current_stream =
-      match algorithms with
-      | [] -> Ok current_stream
-      | algo :: rest ->
-        (match decoder algo with
-        | None -> Error `Unsupported_encoding
-        | Some (module D : S) ->
-          (match D.decompress current_stream with
-          | Error e -> Error (`Decompression_error e)
-          | Ok string_stream ->
-            let iovec_stream =
-              Piaf.Stream.from ~f:(fun () ->
-                match Piaf.Stream.take string_stream with
-                | None -> None
-                | Some str ->
-                  let len = String.length str in
-                  let buf = Bigstringaf.of_string ~off:0 ~len str in
-                  Some { Piaf.IOVec.buffer = buf; off = 0; len })
-            in
-            aux rest iovec_stream))
+    let reader =
+      Request.body request |> Body.to_stream |> Bytesrw_util.reader_of_stream
     in
-    (match aux encodings stream with
-    | Ok decompressed_stream ->
-      let string_stream =
-        Piaf.Stream.from ~f:(fun () ->
-          match Piaf.Stream.take decompressed_stream with
-          | None -> None
-          | Some { Piaf.IOVec.buffer; off; len } ->
-            Some (Bigstringaf.substring buffer ~off ~len))
-      in
+    let rec aux algorithms cr =
+      match algorithms with
+      | [] -> Ok cr
+      | algo :: rest ->
+        (match algo with
+        | `Identity -> aux rest cr
+        | _ ->
+          (match decoder algo with
+          | None -> Error `Unsupported_encoding
+          | Some filter -> aux rest (filter cr)))
+    in
+    (match aux encodings reader with
+    | Ok reader ->
       let new_request =
         request
-        |> Request.with_ ~body:(string_stream |> Body.of_string_stream)
+        |> Request.with_
+             ~body:(Bytesrw_util.stream_of_reader reader |> Body.of_stream)
         |> Request.remove_header "Content-Encoding"
         |> Request.remove_header "Content-Length"
       in

@@ -1,70 +1,32 @@
 module Brotli = Brotli
-module Zstd = Zstd
+module Bytesrw_brotli = Bytesrw_brotli
 module Predicate = Predicate
 
-module Decompressors = struct
-  include Gzip
-  module Brotli = Brotli_decompressor
-  module Zstd = Zstd_decompressor
-end
-
-module Compressors = struct
-  include Gzip
-  module Brotli = Brotli_compressor
-  module Zstd = Zstd_compressor
-end
-
-module type Decompressor = sig
-  val decompress :
-     Bigstringaf.t Piaf.IOVec.t Piaf.Stream.t
-    -> (string Piaf.Stream.t, [> Piaf.Error.t ]) result
-end
-
-module type Compressor = sig
-  val compress :
-     string Piaf.Stream.t
-    -> (string Piaf.Stream.t, [> Piaf.Error.t ]) result
-end
+type compressor = Bytesrw.Bytes.Reader.filter
+type decompressor = Bytesrw.Bytes.Reader.filter
 
 let decoder :
    [< `Gzip | `Deflate | `Br | `Zstd | `Identity | `Star | `Other of string ]
-  -> (module Decompressor) option
+  -> decompressor option
   =
  fun encoding ->
   match encoding with
-  | `Gzip -> Some (module Gzip.Gzip : Decompressor)
-  | `Deflate -> Some (module Gzip.Deflate : Decompressor)
-  | `Br -> Some (module Brotli_decompressor : Decompressor)
-  | `Zstd -> Some (module Zstd_decompressor : Decompressor)
-  | `Identity ->
-    Some
-      (module struct
-        let decompress body =
-          (* Convert IOVec stream to string stream *)
-          let string_stream =
-            Piaf.Stream.from ~f:(fun () ->
-              match Piaf.Stream.take body with
-              | None -> None
-              | Some { Piaf.IOVec.buffer; off; len } ->
-                Some (Bigstringaf.substring buffer ~off ~len))
-          in
-          Ok string_stream
-      end : Decompressor)
+  | `Gzip -> Some (Bytesrw_zlib.Gzip.decompress_reads ())
+  | `Deflate -> Some (Bytesrw_zlib.Deflate.decompress_reads ())
+  | `Br -> Some (Bytesrw_brotli.decompress_reads ())
+  | `Zstd -> Some (Bytesrw_zstd.decompress_reads ())
+  | `Identity -> None
   | `Star | `Other _ -> None
 
 let encoder :
    [< `Gzip | `Deflate | `Br | `Zstd | `Identity | `Star | `Other of string ]
-  -> (module Compressor) option
+  -> compressor option
   =
  fun encoding ->
   match encoding with
-  | `Gzip -> Some (module Gzip.Gzip.Compress : Compressor)
-  | `Deflate -> Some (module Gzip.Deflate.Compress : Compressor)
-  | `Br -> Some (module Brotli_compressor : Compressor)
-  | `Zstd -> Some (module Zstd_compressor : Compressor)
-  | `Identity ->
-    Some
-      (module struct
-        let compress body = Ok body
-      end : Compressor)
+  | `Gzip -> Some (Bytesrw_zlib.Gzip.compress_reads ~level:6 ())
+  | `Deflate -> Some (Bytesrw_zlib.Deflate.compress_reads ~level:6 ())
+  | `Br -> Some (Bytesrw_brotli.compress_reads ~quality:6 ())
+  | `Zstd -> Some (Bytesrw_zstd.compress_reads ())
+  | `Identity -> None
   | `Star | `Other _ -> None
