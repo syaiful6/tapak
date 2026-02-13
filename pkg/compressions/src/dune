@@ -1,10 +1,10 @@
 (library
  (name tapak_compressions)
  (public_name tapak-compressions)
- (libraries tapak piaf camlzip)
+ (libraries tapak piaf bytesrw bytesrw.zlib bytesrw.zstd)
  (foreign_stubs
   (language c)
-  (names brotli_stubs zstd_stubs)
+  (names brotli_stubs)
   (flags
    (:standard
     (:include ./config/c_flags.sexp))))

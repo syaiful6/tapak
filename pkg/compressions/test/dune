@@ -1,5 +1,5 @@
 (test
  (name test)
  (package tapak-compressions)
- (modules test test_zstd test_brotli test_gzip)
- (libraries alcotest tapak-compressions))
+ (modules test test_brotli test_bytesrw_brotli)
+ (libraries alcotest bytesrw tapak-compressions))

@@ -9,28 +9,19 @@ end
 val use : (module Intf with type t = 'a) -> 'a -> t
 
 module Decompression : sig
-  module type Decoder = sig
-    val decompress :
-       Bigstringaf.t Piaf.IOVec.t Piaf.Stream.t
-      -> (string Piaf.Stream.t, [> Piaf.Error.t ]) result
-  end
-
-  type decoder = Header_parser.Accept.encoding -> (module Decoder) option
+  type decoder =
+    Header_parser.Accept.encoding -> Bytesrw.Bytes.Reader.filter option
 
   include Intf with type t = decoder
 end
 
 module Compression : sig
-  module type Encoder = sig
-    val compress :
-       string Piaf.Stream.t
-      -> (string Piaf.Stream.t, [> Piaf.Error.t ]) result
-  end
+  type encoder =
+    Header_parser.Accept.encoding -> Bytesrw.Bytes.Reader.filter option
 
-  type encoder = Header_parser.Accept.encoding -> (module Encoder) option
   type predicate = Request.t -> Response.t -> bool
 
-  type t =
+  type t = Middleware_compression.t =
     { encoder : encoder
     ; predicate : predicate
     ; preferred_encodings : Header_parser.Accept.encoding list

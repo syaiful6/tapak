@@ -855,8 +855,6 @@ let resource ?(middlewares = []) prefix_builder (module R : Resource) =
     ; delete (R.id_path ()) |> request |> into R.delete
     ]
 
-(* Extended functions from src *)
-
 (** [routes ~not_found routes] creates a handler that dispatches to the given routes.
     If no route matches, the [not_found] handler is called instead of raising an exception. *)
 let routes

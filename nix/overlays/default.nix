@@ -1,6 +1,16 @@
 final: prev:
 let
   ocamlOverlay = final': prev': {
+    # fix for zlib and zstd linking issues, it needs pkg-config to find them
+    bytesrw = prev'.bytesrw.overrideAttrs (old: {
+      nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
+        final.pkg-config
+      ];
+      propagatedBuildInputs = (old.propagatedBuildInputs or [ ]) ++ [
+        final.zlib
+        final.zstd
+      ];
+    });
     sch = final'.callPackage ../packages/sch.nix {
       inherit (final.tapak) doCheck;
     };

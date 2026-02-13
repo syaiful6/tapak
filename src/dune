@@ -6,6 +6,7 @@
   magic-mime
   ptime
   eio
+  bytesrw
   ipaddr
   yojson
   str
