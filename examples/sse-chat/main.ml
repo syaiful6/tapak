@@ -6,6 +6,20 @@ module Chat_room = struct
     ; mutable next_user_id : int
     }
 
+  type message =
+    { user : int
+    ; text : string
+    ; timestamp : float
+    }
+
+  let jsont_message =
+    Jsont.Object.map ~kind:"message" (fun user text timestamp ->
+      { user; text; timestamp })
+    |> Jsont.Object.mem ~enc:(fun u -> u.user) "user" Jsont.int
+    |> Jsont.Object.mem ~enc:(fun u -> u.text) "text" Jsont.string
+    |> Jsont.Object.mem ~enc:(fun u -> u.timestamp) "timestamp" Jsont.number
+    |> Jsont.Object.finish
+
   let create () = { clients = Hashtbl.create 10; next_user_id = 1 }
 
   let add_client t writer =
@@ -22,14 +36,15 @@ module Chat_room = struct
     Log.info (fun m -> m "User %d left the chat" user_id)
 
   let broadcast t ~sender_id message_text =
-    let json =
-      `Assoc
-        [ "user", `Int sender_id
-        ; "text", `String message_text
-        ; "timestamp", `Float (Unix.gettimeofday ())
-        ]
+    let event =
+      Tapak.Sse.Event.json
+        ~event:"message"
+        jsont_message
+        { user = sender_id
+        ; text = message_text
+        ; timestamp = Unix.gettimeofday ()
+        }
     in
-    let event = Tapak.Sse.Event.json ~event:"message" json in
     Hashtbl.iter
       (fun user_id writer ->
          if user_id <> sender_id

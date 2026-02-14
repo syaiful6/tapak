@@ -1,8 +1,7 @@
 module Event = struct
   type data =
-    [ `Text of string
-    | `Json of Yojson.Safe.t
-    ]
+    | Text : string -> data
+    | Json : 'a Jsont.t * 'a -> data
 
   type t =
     { id : string option
@@ -15,10 +14,14 @@ module Event = struct
   let pp fmt t =
     let pp_opt pp_v fmt = function None -> () | Some v -> pp_v fmt v in
     let pp_data fmt = function
-      | `Text s ->
+      | Text s ->
         String.split_on_char '\n' s
         |> List.iter (fun line -> Format.fprintf fmt "data: %s\n" line)
-      | `Json j -> Format.fprintf fmt "data: %s\n" (Yojson.Safe.to_string j)
+      | Json (codec, data) ->
+        Format.fprintf
+          fmt
+          "data: %s\n"
+          (Jsont_bytesrw.encode_string codec data |> Result.get_ok)
     in
     pp_opt (fun fmt id -> Format.fprintf fmt "id: %s\n" id) fmt t.id;
     pp_opt pp_data fmt t.data;
@@ -32,14 +35,11 @@ module Event = struct
 
   let to_string t = Format.asprintf "%a" pp t
 
-  let make ?id ?data ?event ?comment ?retry () =
-    { id; data; event; comment; retry }
-
   let text ?id ?event ?comment ?retry data =
-    { id; data = Some (`Text data); event; comment; retry }
+    { id; data = Some (Text data); event; comment; retry }
 
-  let json ?id ?event ?comment ?retry data =
-    { id; data = Some (`Json data); event; comment; retry }
+  let json ?id ?event ?comment ?retry codec data =
+    { id; data = Some (Json (codec, data)); event; comment; retry }
 
   let comment text =
     { id = None; data = None; event = None; comment = Some text; retry = None }

@@ -9,6 +9,8 @@
   bytesrw
   ipaddr
   yojson
+  jsont
+  jsont.bytesrw
   str
   logs
   mirage-crypto
