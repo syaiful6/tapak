@@ -1,535 +1,434 @@
-module Topic_tests = struct
-  open Tapak.Channel.Topic
+module Channel = Tapak.Channel
+module Socket = Tapak.Socket
+module Presence = Tapak.Presence
 
-  let test_sprintf_literal () =
-    let pattern = s "room" in
-    let result = sprintf pattern in
-    Alcotest.(check string) "literal" "room" result
+let json_eq = Alcotest.testable Jsont.Json.pp Jsont.Json.equal
+let encode_json jsont v = Jsont_bytesrw.encode_string jsont v |> Result.get_ok
 
-  let test_sprintf_with_string () =
-    let pattern = s "room" / str in
-    let result = sprintf pattern "lobby" in
-    Alcotest.(check string) "room:str" "room:lobby" result
+let dummy_socket =
+  Socket.
+    { id = Some "test-socket"
+    ; assigns = Tapak.Context.empty
+    ; transport = "test"
+    ; joined_topics = []
+    }
 
-  let test_sprintf_with_int () =
-    let pattern = s "user" / int in
-    let result = sprintf pattern 123 in
-    Alcotest.(check string) "user:int" "user:123" result
+let dummy_payload = Jsont.Json.(object' [ mem (name "body") (string "hi") ])
 
-  let test_sprintf_with_int64 () =
-    let pattern = s "msg" / int64 in
-    let result = sprintf pattern 9876543210L in
-    Alcotest.(check string) "msg:int64" "msg:9876543210" result
-
-  let test_sprintf_complex () =
-    let pattern = s "user" / int / s "room" / str in
-    let result = sprintf pattern 42 "lobby" in
-    Alcotest.(check string) "complex" "user:42:room:lobby" result
-
-  let test_sscanf_literal () =
-    let pattern = s "room" in
-    match sscanf pattern "room" with
-    | Some f -> Alcotest.(check string) "literal match" "room" (f "room")
-    | None -> Alcotest.fail "should match"
-
-  let test_sscanf_literal_no_match () =
-    let pattern = s "room" in
-    match sscanf pattern "user" with
-    | Some _ -> Alcotest.fail "should not match"
-    | None -> ()
-
-  let test_sscanf_with_string () =
-    let pattern = s "room" / str in
-    match sscanf pattern "room:lobby" with
-    | Some f -> Alcotest.(check string) "extract string" "lobby" (f Fun.id)
-    | None -> Alcotest.fail "should match"
-
-  let test_sscanf_with_int () =
-    let pattern = s "user" / int in
-    match sscanf pattern "user:123" with
-    | Some f -> Alcotest.(check int) "extract int" 123 (f Fun.id)
-    | None -> Alcotest.fail "should match"
-
-  let test_sscanf_complex () =
-    let pattern = s "user" / int / s "room" / str in
-    match sscanf pattern "user:42:room:lobby" with
-    | Some f ->
-      let user_id, room_name = f (fun uid rname -> uid, rname) in
-      Alcotest.(check int) "user_id" 42 user_id;
-      Alcotest.(check string) "room_name" "lobby" room_name
-    | None -> Alcotest.fail "should match"
-
-  let test_sscanf_extra_parts () =
-    let pattern = s "room" / str in
-    match sscanf pattern "room:lobby:extra" with
-    | Some _ -> Alcotest.fail "should not match with extra parts"
-    | None -> ()
-
-  let test_sscanf_missing_parts () =
-    let pattern = s "room" / str in
-    match sscanf pattern "room" with
-    | Some _ -> Alcotest.fail "should not match with missing parts"
-    | None -> ()
-
-  let test_matches_true () =
-    let pattern = s "room" / str in
-    Alcotest.(check bool) "matches" true (matches pattern "room:lobby")
-
-  let test_matches_false () =
-    let pattern = s "room" / str in
-    Alcotest.(check bool) "not matches" false (matches pattern "user:123")
-
-  let tests =
-    [ "sprintf literal", `Quick, test_sprintf_literal
-    ; "sprintf with string", `Quick, test_sprintf_with_string
-    ; "sprintf with int", `Quick, test_sprintf_with_int
-    ; "sprintf with int64", `Quick, test_sprintf_with_int64
-    ; "sprintf complex", `Quick, test_sprintf_complex
-    ; "sscanf literal", `Quick, test_sscanf_literal
-    ; "sscanf literal no match", `Quick, test_sscanf_literal_no_match
-    ; "sscanf with string", `Quick, test_sscanf_with_string
-    ; "sscanf with int", `Quick, test_sscanf_with_int
-    ; "sscanf complex", `Quick, test_sscanf_complex
-    ; "sscanf extra parts", `Quick, test_sscanf_extra_parts
-    ; "sscanf missing parts", `Quick, test_sscanf_missing_parts
-    ; "matches true", `Quick, test_matches_true
-    ; "matches false", `Quick, test_matches_false
-    ]
-end
-
-module Protocol_tests = struct
-  open Tapak.Channel.Protocol
-
-  let test_encode_json () =
-    let msg =
+let test_protocol_encode_json () =
+  let msg =
+    Socket.Protocol.
       { join_ref = Some "1"
       ; ref_ = Some "2"
       ; topic = "room:lobby"
       ; event = "new_msg"
-      ; payload = `Assoc [ "body", `String "hello" ]
+      ; payload = Jsont.Json.(object' [ mem (name "body") (string "hello") ])
       }
-    in
-    let encoded = encode_json msg in
-    let expected = {|["1","2","room:lobby","new_msg",{"body":"hello"}]|} in
-    Alcotest.(check string) "encode" expected encoded
+  in
+  let encoded = encode_json Socket.Protocol.jsont msg in
+  let expected = {|["1","2","room:lobby","new_msg",{"body":"hello"}]|} in
+  Alcotest.(check string) "encode protocol" expected encoded
 
-  let test_encode_json_with_nulls () =
-    let msg =
+let test_protocol_encode_json_nulls () =
+  let msg =
+    Socket.Protocol.
       { join_ref = None
       ; ref_ = None
       ; topic = "room:lobby"
       ; event = "new_msg"
-      ; payload = `Assoc []
+      ; payload = Jsont.Json.(object' [])
       }
-    in
-    let encoded = encode_json msg in
-    let expected = {|[null,null,"room:lobby","new_msg",{}]|} in
-    Alcotest.(check string) "encode with nulls" expected encoded
+  in
+  let encoded = encode_json Socket.Protocol.jsont msg in
+  let expected = {|[null,null,"room:lobby","new_msg",{}]|} in
+  Alcotest.(check string) "encode protocol with nulls" expected encoded
 
-  let test_decode_json () =
-    let json = {|["1","2","room:lobby","new_msg",{"body":"hello"}]|} in
-    match decode_json json with
-    | Ok msg ->
-      Alcotest.(check (option string)) "join_ref" (Some "1") msg.join_ref;
-      Alcotest.(check (option string)) "ref_" (Some "2") msg.ref_;
-      Alcotest.(check string) "topic" "room:lobby" msg.topic;
-      Alcotest.(check string) "event" "new_msg" msg.event
-    | Error err -> Alcotest.fail err
+let test_protocol_decode_json () =
+  let json = {|["1","2","room:lobby","new_msg",{"body":"hello"}]|} in
+  let decoded = Jsont_bytesrw.decode_string Socket.Protocol.jsont json in
+  match decoded with
+  | Ok msg ->
+    Alcotest.(check (option string)) "join_ref" (Some "1") msg.join_ref;
+    Alcotest.(check (option string)) "ref" (Some "2") msg.ref_;
+    Alcotest.(check string) "topic" "room:lobby" msg.topic;
+    Alcotest.(check string) "event" "new_msg" msg.event
+  | Error e -> Alcotest.failf "Failed to decode protocol: %s" e
 
-  let test_decode_json_with_nulls () =
-    let json = {|[null,null,"room:lobby","new_msg",{}]|} in
-    match decode_json json with
-    | Ok msg ->
-      Alcotest.(check (option string)) "join_ref" None msg.join_ref;
-      Alcotest.(check (option string)) "ref_" None msg.ref_
-    | Error err -> Alcotest.fail err
+let test_protocol_decode_json_nulls () =
+  let json = {|[null,null,"room:lobby","new_msg",{}]|} in
+  let decoded = Jsont_bytesrw.decode_string Socket.Protocol.jsont json in
+  match decoded with
+  | Ok msg ->
+    Alcotest.(check (option string)) "join_ref" None msg.join_ref;
+    Alcotest.(check (option string)) "ref" None msg.ref_;
+    Alcotest.(check string) "topic" "room:lobby" msg.topic;
+    Alcotest.(check string) "event" "new_msg" msg.event
+  | Error e -> Alcotest.failf "Failed to decode protocol with nulls: %s" e
 
-  let test_decode_invalid () =
-    let json = {|{"not": "an array"}|} in
-    match decode_json json with
-    | Ok _ -> Alcotest.fail "should fail"
-    | Error _ -> ()
+let test_protocol_roundtrip () =
+  let msg =
+    Socket.Protocol.
+      { join_ref = Some "ref-1"
+      ; ref_ = Some "42"
+      ; topic = "chat:general"
+      ; event = "new_msg"
+      ; payload =
+          Jsont.Json.(
+            object'
+              [ mem (name "text") (string "hello")
+              ; mem (name "count") (number 3.)
+              ])
+      }
+  in
+  let encoded = encode_json Socket.Protocol.jsont msg in
+  match Jsont_bytesrw.decode_string Socket.Protocol.jsont encoded with
+  | Ok decoded ->
+    Alcotest.(check (option string)) "join_ref" msg.join_ref decoded.join_ref;
+    Alcotest.(check (option string)) "ref_" msg.ref_ decoded.ref_;
+    Alcotest.(check string) "topic" msg.topic decoded.topic;
+    Alcotest.(check string) "event" msg.event decoded.event;
+    Alcotest.(check json_eq) "payload" msg.payload decoded.payload
+  | Error e -> Alcotest.failf "Roundtrip failed: %s" e
 
-  let test_make_reply () =
-    let reply =
-      make_reply
-        ~join_ref:(Some "1")
-        ~ref_:"2"
-        ~topic:"room:lobby"
-        ~status:Tapak.Channel.Channel.Ok
-        ~payload:(`Assoc [ "data", `String "test" ])
-    in
-    Alcotest.(check string) "event" phx_reply reply.event;
-    Alcotest.(check (option string)) "ref_" (Some "2") reply.ref_;
-    match reply.payload with
-    | `Assoc fields ->
-      (match List.assoc_opt "status" fields with
-      | Some (`String "ok") -> ()
-      | _ -> Alcotest.fail "status should be ok")
-    | _ -> Alcotest.fail "payload should be assoc"
+let protocol_tests =
+  [ "encode_json", `Quick, test_protocol_encode_json
+  ; "encode_json_nulls", `Quick, test_protocol_encode_json_nulls
+  ; "decode_json", `Quick, test_protocol_decode_json
+  ; "decode_json_nulls", `Quick, test_protocol_decode_json_nulls
+  ; "roundtrip", `Quick, test_protocol_roundtrip
+  ]
 
-  let test_make_push () =
-    let push =
-      make_push
-        ~topic:"room:lobby"
-        ~event:"user_joined"
-        ~payload:(`Assoc [ "user", `String "alice" ])
-    in
-    Alcotest.(check (option string)) "join_ref" None push.join_ref;
-    Alcotest.(check (option string)) "ref_" None push.ref_;
-    Alcotest.(check string) "topic" "room:lobby" push.topic;
-    Alcotest.(check string) "event" "user_joined" push.event
+let test_reply_string_of_status () =
+  Alcotest.(check string) "ok" "ok" (Channel.Reply.string_of_status `Ok);
+  Alcotest.(check string)
+    "error"
+    "error"
+    (Channel.Reply.string_of_status `Error)
 
-  let test_reserved_events () =
-    Alcotest.(check string) "phx_join" "phx_join" phx_join;
-    Alcotest.(check string) "phx_leave" "phx_leave" phx_leave;
-    Alcotest.(check string) "phx_reply" "phx_reply" phx_reply;
-    Alcotest.(check string) "phx_error" "phx_error" phx_error;
-    Alcotest.(check string) "phx_close" "phx_close" phx_close;
-    Alcotest.(check string) "heartbeat" "heartbeat" heartbeat
+let test_reply_respond () =
+  let transition = Channel.{ state = 42; socket = dummy_socket } in
+  match
+    Channel.Reply.respond ~transition ~status:`Ok ~payload:dummy_payload
+  with
+  | Channel.Reply.Respond { transition = t; status; payload } ->
+    Alcotest.(check int) "state" 42 t.state;
+    Alcotest.(check string)
+      "status"
+      "ok"
+      (Channel.Reply.string_of_status status);
+    Alcotest.(check json_eq) "payload" dummy_payload payload
+  | _ -> Alcotest.fail "Expected Respond"
 
-  let tests =
-    [ "encode json", `Quick, test_encode_json
-    ; "encode json with nulls", `Quick, test_encode_json_with_nulls
-    ; "decode json", `Quick, test_decode_json
-    ; "decode json with nulls", `Quick, test_decode_json_with_nulls
-    ; "decode invalid", `Quick, test_decode_invalid
-    ; "make reply", `Quick, test_make_reply
-    ; "make push", `Quick, test_make_push
-    ; "reserved events", `Quick, test_reserved_events
-    ]
+let test_reply_stop () =
+  let transition = Channel.{ state = "stopped"; socket = dummy_socket } in
+  match Channel.Reply.stop ~transition ~reason:"timeout" with
+  | Channel.Reply.Stop { transition = t; reason } ->
+    Alcotest.(check string) "state" "stopped" t.state;
+    Alcotest.(check string) "reason" "timeout" reason
+  | _ -> Alcotest.fail "Expected Stop"
+
+let test_reply_noop () =
+  let transition = Channel.{ state = 99; socket = dummy_socket } in
+  match Channel.Reply.noop transition with
+  | Channel.Reply.Noop t -> Alcotest.(check int) "state" 99 t.state
+  | _ -> Alcotest.fail "Expected Noop"
+
+let reply_tests =
+  [ "string_of_status", `Quick, test_reply_string_of_status
+  ; "respond", `Quick, test_reply_respond
+  ; "stop", `Quick, test_reply_stop
+  ; "noop", `Quick, test_reply_noop
+  ]
+
+let test_join_ok () =
+  let transition = Channel.{ state = "ready"; socket = dummy_socket } in
+  let response =
+    Jsont.Json.(object' [ mem (name "status") (string "joined") ])
+  in
+  match Channel.Join.ok ~transition ~response with
+  | Channel.Join.Ok { transition = t; response = r } ->
+    Alcotest.(check string) "state" "ready" t.state;
+    Alcotest.(check json_eq) "response" response r
+  | _ -> Alcotest.fail "Expected Ok"
+
+let test_join_error () =
+  let reason = Jsont.Json.(string "unauthorized") in
+  match Channel.Join.error reason with
+  | Channel.Join.Error { reason = r } ->
+    Alcotest.(check json_eq) "reason" reason r
+  | _ -> Alcotest.fail "Expected Error"
+
+let join_tests =
+  [ "ok", `Quick, test_join_ok; "error", `Quick, test_join_error ]
+
+let test_push_push () =
+  let transition = Channel.{ state = 10; socket = dummy_socket } in
+  let push = Channel.Push.push ~transition ~payload:dummy_payload in
+  Alcotest.(check int) "state" 10 (Channel.Push.state push);
+  Alcotest.(check (option string))
+    "socket.id"
+    (Some "test-socket")
+    (Socket.id (Channel.Push.socket push));
+  match push with
+  | Channel.Push.Push { payload; _ } ->
+    Alcotest.(check json_eq) "payload" dummy_payload payload
+  | _ -> Alcotest.fail "Expected Push"
+
+let test_push_intercept () =
+  let transition = Channel.{ state = 20; socket = dummy_socket } in
+  let push = Channel.Push.intercept ~transition ~payload:dummy_payload in
+  Alcotest.(check int) "state" 20 (Channel.Push.state push);
+  match push with
+  | Channel.Push.Intercept { payload; _ } ->
+    Alcotest.(check json_eq) "payload" dummy_payload payload
+  | _ -> Alcotest.fail "Expected Intercept"
+
+let test_push_suppress () =
+  let transition = Channel.{ state = 30; socket = dummy_socket } in
+  let push = Channel.Push.suppress transition in
+  Alcotest.(check int) "state" 30 (Channel.Push.state push);
+  match push with
+  | Channel.Push.Suppress _ -> ()
+  | _ -> Alcotest.fail "Expected Suppress"
+
+let push_tests =
+  [ "push", `Quick, test_push_push
+  ; "intercept", `Quick, test_push_intercept
+  ; "suppress", `Quick, test_push_suppress
+  ]
+
+let test_default_handle_info () =
+  let msg =
+    Channel.{ topic = "room:1"; event = "msg"; payload = dummy_payload }
+  in
+  let push = Channel.Default.handle_info msg ~socket:dummy_socket "mystate" in
+  Alcotest.(check string) "state" "mystate" (Channel.Push.state push);
+  match push with
+  | Channel.Push.Push { payload; _ } ->
+    Alcotest.(check json_eq) "forwards payload" dummy_payload payload
+  | _ -> Alcotest.fail "Expected Push from handle_info"
+
+let test_default_handle_out () =
+  let push =
+    Channel.Default.handle_out
+      ~event:"new_msg"
+      ~payload:dummy_payload
+      ~socket:dummy_socket
+      "mystate"
+  in
+  Alcotest.(check string) "state" "mystate" (Channel.Push.state push);
+  match push with
+  | Channel.Push.Push { payload; _ } ->
+    Alcotest.(check json_eq) "forwards payload" dummy_payload payload
+  | _ -> Alcotest.fail "Expected Push from handle_out"
+
+let test_default_terminate () =
+  Channel.Default.terminate ~reason:Normal ~socket:dummy_socket ();
+  Channel.Default.terminate ~reason:Left ~socket:dummy_socket ();
+  Channel.Default.terminate ~reason:Closed ~socket:dummy_socket ();
+  Channel.Default.terminate
+    ~reason:(Error (Failure "boom"))
+    ~socket:dummy_socket
+    ()
+
+let test_default_intercept () =
+  Alcotest.(check (list string)) "empty" [] Channel.Default.intercept
+
+let default_tests =
+  [ "handle_info forwards payload", `Quick, test_default_handle_info
+  ; "handle_out forwards payload", `Quick, test_default_handle_out
+  ; "terminate is no-op", `Quick, test_default_terminate
+  ; "intercept is empty", `Quick, test_default_intercept
+  ]
+
+let test_presence_state_to_json_empty () =
+  let state : Presence.state = Hashtbl.create 0 in
+  let json = Presence.state_to_json state in
+  Alcotest.(check json_eq) "empty state" (Jsont.Json.object' []) json
+
+let test_presence_state_to_json () =
+  let state : Presence.state = Hashtbl.create 4 in
+  let meta1 = Jsont.Json.(object' [ mem (name "phx_ref") (string "ref-1") ]) in
+  Hashtbl.add state "user1" Presence.{ metas = [ meta1 ] };
+  let json = Presence.state_to_json state in
+  let encoded = encode_json Jsont.json json in
+  (* Must be an object with key "user1" containing {"metas": [...]} *)
+  let decoded = Jsont_bytesrw.decode_string Jsont.json_object encoded in
+  match decoded with
+  | Ok (Jsont.Object (mems, _)) ->
+    (* Should have one member "user1" *)
+    Alcotest.(check int) "one member" 1 (List.length mems);
+    (* Check the structure: user1 -> {metas: [{phx_ref: "ref-1"}]} *)
+    let expected_str = {|{"user1":{"metas":[{"phx_ref":"ref-1"}]}}|} in
+    Alcotest.(check string) "json shape" expected_str encoded
+  | Ok _ -> Alcotest.fail "Expected JSON object"
+  | Error e -> Alcotest.failf "Failed to decode: %s" e
+
+let test_presence_state_to_json_multiple_keys () =
+  let state : Presence.state = Hashtbl.create 4 in
+  let meta_a = Jsont.Json.(object' [ mem (name "phx_ref") (string "a") ]) in
+  let meta_b = Jsont.Json.(object' [ mem (name "phx_ref") (string "b") ]) in
+  Hashtbl.add state "alice" Presence.{ metas = [ meta_a ] };
+  Hashtbl.add state "bob" Presence.{ metas = [ meta_b ] };
+  let json = Presence.state_to_json state in
+  let encoded = encode_json Jsont.json json in
+  (* Decode and verify both keys exist with proper structure *)
+  let decoded = Jsont_bytesrw.decode_string Jsont.json_object encoded in
+  match decoded with
+  | Ok (Jsont.Object (mems, _)) ->
+    Alcotest.(check int) "two members" 2 (List.length mems)
+  | Ok _ -> Alcotest.fail "Expected JSON object"
+  | Error e -> Alcotest.failf "Failed to decode: %s" e
+
+let test_presence_state_to_json_multiple_metas () =
+  let state : Presence.state = Hashtbl.create 4 in
+  let meta1 = Jsont.Json.(object' [ mem (name "phx_ref") (string "r1") ]) in
+  let meta2 = Jsont.Json.(object' [ mem (name "phx_ref") (string "r2") ]) in
+  Hashtbl.add state "user1" Presence.{ metas = [ meta1; meta2 ] };
+  let json = Presence.state_to_json state in
+  let encoded = encode_json Jsont.json json in
+  let expected = {|{"user1":{"metas":[{"phx_ref":"r1"},{"phx_ref":"r2"}]}}|} in
+  Alcotest.(check string) "multiple metas" expected encoded
+
+let presence_tests =
+  [ "state_to_json empty", `Quick, test_presence_state_to_json_empty
+  ; "state_to_json single key", `Quick, test_presence_state_to_json
+  ; ( "state_to_json multiple keys"
+    , `Quick
+    , test_presence_state_to_json_multiple_keys )
+  ; ( "state_to_json multiple metas"
+    , `Quick
+    , test_presence_state_to_json_multiple_metas )
+  ]
+
+module Dummy_channel : Channel.S = struct
+  type t = unit
+
+  let init () = ()
+
+  let join ~topic:_ ~payload:_ ~socket _ =
+    Channel.Join.ok
+      ~transition:{ state = (); socket }
+      ~response:(Jsont.Json.object' [])
+
+  let handle_in ~event:_ ~payload:_ ~socket state =
+    Channel.Reply.noop { state; socket }
+
+  let handle_info (msg : Channel.broadcast) ~socket state =
+    Channel.Push.push ~transition:{ state; socket } ~payload:msg.payload
+
+  let handle_out ~event:_ ~payload ~socket state =
+    Channel.Push.push ~transition:{ state; socket } ~payload
+
+  let terminate ~reason:_ ~socket:_ _ = ()
+  let intercept = []
 end
 
-module Pubsub_tests = struct
-  open Tapak.Channel.Pubsub
+let test_find_channel_exact () =
+  let channels =
+    [ Socket.Endpoint.channel "^room:.*$" (module Dummy_channel) ]
+  in
+  let result = Socket.Endpoint.find_channel channels "room:lobby" in
+  Alcotest.(check bool) "matches room:lobby" true (Option.is_some result)
 
-  let test_local_subscribe_broadcast () =
-    Eio_main.run @@ fun _env ->
-    Eio.Switch.run @@ fun sw ->
-    let pubsub = Tapak.Channel.local_pubsub ~sw in
-    let received = ref false in
-    let _sub =
-      subscribe pubsub "room:lobby" (fun msg ->
-        if String.equal msg.topic "room:lobby" && String.equal msg.event "test"
-        then received := true)
-    in
-    broadcast pubsub { topic = "room:lobby"; event = "test"; payload = `Null };
-    Alcotest.(check bool) "received" true !received
+let test_find_channel_wildcard () =
+  let channels =
+    [ Socket.Endpoint.channel "^chat:.*$" (module Dummy_channel) ]
+  in
+  Alcotest.(check bool)
+    "matches chat:general"
+    true
+    (Option.is_some (Socket.Endpoint.find_channel channels "chat:general"));
+  Alcotest.(check bool)
+    "matches chat:123"
+    true
+    (Option.is_some (Socket.Endpoint.find_channel channels "chat:123"))
 
-  let test_local_unsubscribe () =
-    Eio_main.run @@ fun _env ->
-    Eio.Switch.run @@ fun sw ->
-    let pubsub = Tapak.Channel.local_pubsub ~sw in
-    let received = ref false in
-    let sub = subscribe pubsub "room:lobby" (fun _msg -> received := true) in
-    unsubscribe pubsub sub;
-    broadcast pubsub { topic = "room:lobby"; event = "test"; payload = `Null };
-    Alcotest.(check bool) "not received after unsubscribe" false !received
+let test_find_channel_no_match () =
+  let channels =
+    [ Socket.Endpoint.channel "^room:.*$" (module Dummy_channel) ]
+  in
+  let result = Socket.Endpoint.find_channel channels "chat:lobby" in
+  Alcotest.(check bool) "no match for chat:lobby" true (Option.is_none result)
 
-  let test_local_topic_filtering () =
-    Eio_main.run @@ fun _env ->
-    Eio.Switch.run @@ fun sw ->
-    let pubsub = Tapak.Channel.local_pubsub ~sw in
-    let room1_received = ref false in
-    let room2_received = ref false in
-    let _sub1 =
-      subscribe pubsub "room:1" (fun _msg -> room1_received := true)
-    in
-    let _sub2 =
-      subscribe pubsub "room:2" (fun _msg -> room2_received := true)
-    in
-    broadcast pubsub { topic = "room:1"; event = "test"; payload = `Null };
-    Alcotest.(check bool) "room1 received" true !room1_received;
-    Alcotest.(check bool) "room2 not received" false !room2_received
-
-  let test_broadcast_from () =
-    Eio_main.run @@ fun _env ->
-    Eio.Switch.run @@ fun sw ->
-    let pubsub = Tapak.Channel.local_pubsub ~sw in
-    let sub1_received = ref false in
-    let sub2_received = ref false in
-    let sub1 = subscribe pubsub "room:1" (fun _msg -> sub1_received := true) in
-    let _sub2 = subscribe pubsub "room:1" (fun _msg -> sub2_received := true) in
-    broadcast_from
-      pubsub
-      ~self:sub1
-      { topic = "room:1"; event = "test"; payload = `Null };
-    Alcotest.(check bool) "sender not received" false !sub1_received;
-    Alcotest.(check bool) "other received" true !sub2_received
-
-  let tests =
-    [ "local subscribe and broadcast", `Quick, test_local_subscribe_broadcast
-    ; "local unsubscribe", `Quick, test_local_unsubscribe
-    ; "local topic filtering", `Quick, test_local_topic_filtering
-    ; "broadcast from", `Quick, test_broadcast_from
+let test_find_channel_multiple_routes () =
+  let channels =
+    [ Socket.Endpoint.channel "^room:.*$" (module Dummy_channel)
+    ; Socket.Endpoint.channel "^chat:.*$" (module Dummy_channel)
     ]
-end
+  in
+  Alcotest.(check bool)
+    "room matches"
+    true
+    (Option.is_some (Socket.Endpoint.find_channel channels "room:1"));
+  Alcotest.(check bool)
+    "chat matches"
+    true
+    (Option.is_some (Socket.Endpoint.find_channel channels "chat:general"));
+  Alcotest.(check bool)
+    "users no match"
+    true
+    (Option.is_none (Socket.Endpoint.find_channel channels "users:1"))
 
-module Presence_tests = struct
-  open Tapak.Channel.Presence
-
-  let test_track_and_list () =
-    Eio_main.run @@ fun env ->
-    Eio.Switch.run @@ fun sw ->
-    let pubsub = Tapak.Channel.local_pubsub ~sw in
-    let clock = Eio.Stdenv.clock env in
-    let presence =
-      create ~sw ~pubsub ~node_name:"test-node" ~clock ~broadcast_period:10.0 ()
-    in
-    let meta = `Assoc [ "online_at", `Int 1234567890 ] in
-    let _phx_ref = track presence ~topic:"room:lobby" ~key:"user:1" ~meta in
-    let state = list presence ~topic:"room:lobby" in
-    let json = to_json state in
-    close presence;
-    (* Check that user:1 is in the JSON *)
-    match json with
-    | `Assoc fields ->
-      (match List.assoc_opt "user:1" fields with
-      | Some _ -> ()
-      | None -> Alcotest.fail "user should be tracked")
-    | _ -> Alcotest.fail "should be an object"
-
-  let test_untrack () =
-    Eio_main.run @@ fun env ->
-    Eio.Switch.run @@ fun sw ->
-    let pubsub = Tapak.Channel.local_pubsub ~sw in
-    let clock = Eio.Stdenv.clock env in
-    let presence =
-      create ~sw ~pubsub ~node_name:"test-node" ~clock ~broadcast_period:10.0 ()
-    in
-    let meta = `Assoc [ "online_at", `Int 1234567890 ] in
-    let phx_ref = track presence ~topic:"room:lobby" ~key:"user:1" ~meta in
-    untrack_ref presence ~topic:"room:lobby" ~phx_ref;
-    let state = list presence ~topic:"room:lobby" in
-    let json = to_json state in
-    close presence;
-    match json with
-    | `Assoc fields ->
-      (match List.assoc_opt "user:1" fields with
-      | Some _ -> Alcotest.fail "user should be untracked"
-      | None -> ())
-    | _ -> Alcotest.fail "should be an object"
-
-  let test_to_json () =
-    Eio_main.run @@ fun env ->
-    Eio.Switch.run @@ fun sw ->
-    let pubsub = Tapak.Channel.local_pubsub ~sw in
-    let clock = Eio.Stdenv.clock env in
-    let presence =
-      create ~sw ~pubsub ~node_name:"test-node" ~clock ~broadcast_period:10.0 ()
-    in
-    let meta = `Assoc [ "online_at", `Int 1234567890 ] in
-    let _phx_ref = track presence ~topic:"room:lobby" ~key:"user:1" ~meta in
-    let state = list presence ~topic:"room:lobby" in
-    let json = to_json state in
-    close presence;
-    match json with
-    | `Assoc _ -> () (* Just check it's valid JSON *)
-    | _ -> Alcotest.fail "should be an object"
-
-  let tests =
-    [ "track and list", `Quick, test_track_and_list
-    ; "untrack", `Quick, test_untrack
-    ; "to_json", `Quick, test_to_json
+let test_find_channel_first_match_wins () =
+  let channels =
+    [ Socket.Endpoint.channel "^room:lobby$" (module Dummy_channel)
+    ; Socket.Endpoint.channel "^room:.*$" (module Dummy_channel)
     ]
-end
+  in
+  Alcotest.(check bool)
+    "matches"
+    true
+    (Option.is_some (Socket.Endpoint.find_channel channels "room:lobby"))
 
-module Tracker_tests = struct
-  open Tapak.Channel.Presence
+let route_tests =
+  [ "exact match", `Quick, test_find_channel_exact
+  ; "wildcard match", `Quick, test_find_channel_wildcard
+  ; "no match", `Quick, test_find_channel_no_match
+  ; "multiple routes", `Quick, test_find_channel_multiple_routes
+  ; "first match wins", `Quick, test_find_channel_first_match_wins
+  ]
 
-  let test_single_node_track () =
-    Eio_main.run @@ fun env ->
-    Eio.Switch.run @@ fun sw ->
-    let pubsub = Tapak.Channel.local_pubsub ~sw in
-    let clock = Eio.Stdenv.clock env in
-    let tracker =
-      create ~sw ~pubsub ~node_name:"node-a" ~broadcast_period:10.0 ~clock ()
-    in
-    let meta = `Assoc [ "online_at", `Int 1234567890 ] in
-    let phx_ref = track tracker ~topic:"room:lobby" ~key:"user:1" ~meta in
-    Alcotest.(check bool) "phx_ref not empty" true (String.length phx_ref > 0);
-    let state = list tracker ~topic:"room:lobby" in
-    let json = Tapak.Channel.Presence.to_json state in
-    close tracker;
-    match json with
-    | `Assoc fields ->
-      (match List.assoc_opt "user:1" fields with
-      | Some _ -> ()
-      | None -> Alcotest.fail "user should be tracked")
-    | _ -> Alcotest.fail "should be an object"
+let user_key : string Tapak.Context.key =
+  Tapak.Context.Key.create { name = Some "user"; show = Some Fun.id }
 
-  let test_single_node_untrack () =
-    Eio_main.run @@ fun env ->
-    Eio.Switch.run @@ fun sw ->
-    let pubsub = Tapak.Channel.local_pubsub ~sw in
-    let clock = Eio.Stdenv.clock env in
-    let tracker =
-      create ~sw ~pubsub ~node_name:"node-a" ~broadcast_period:10.0 ~clock ()
-    in
-    let meta = `Assoc [ "online_at", `Int 1234567890 ] in
-    let phx_ref = track tracker ~topic:"room:lobby" ~key:"user:1" ~meta in
-    untrack_ref tracker ~topic:"room:lobby" ~phx_ref;
-    let state = list tracker ~topic:"room:lobby" in
-    let json = Tapak.Channel.Presence.to_json state in
-    close tracker;
-    match json with
-    | `Assoc fields ->
-      (match List.assoc_opt "user:1" fields with
-      | Some _ -> Alcotest.fail "user should be untracked"
-      | None -> ())
-    | _ -> Alcotest.fail "should be an object"
+let test_socket_assign () =
+  let socket = Socket.assign user_key "alice" dummy_socket in
+  Alcotest.(check (option string))
+    "find assigned"
+    (Some "alice")
+    (Socket.find_assign user_key socket)
 
-  let test_multi_node_sync () =
-    Eio_main.run @@ fun env ->
-    Eio.Switch.run @@ fun sw ->
-    let pubsub = Tapak.Channel.local_pubsub ~sw in
-    let clock = Eio.Stdenv.clock env in
-    let tracker_a =
-      create ~sw ~pubsub ~node_name:"node-a" ~broadcast_period:10.0 ~clock ()
-    in
-    let tracker_b =
-      create ~sw ~pubsub ~node_name:"node-b" ~broadcast_period:10.0 ~clock ()
-    in
-    let meta_a = `Assoc [ "device", `String "mobile" ] in
-    let _phx_ref_a =
-      track tracker_a ~topic:"room:lobby" ~key:"user:1" ~meta:meta_a
-    in
-    let meta_b = `Assoc [ "device", `String "desktop" ] in
-    let _phx_ref_b =
-      track tracker_b ~topic:"room:lobby" ~key:"user:2" ~meta:meta_b
-    in
-    let state_a = list tracker_a ~topic:"room:lobby" in
-    let state_b = list tracker_b ~topic:"room:lobby" in
-    let json_a = Tapak.Channel.Presence.to_json state_a in
-    let json_b = Tapak.Channel.Presence.to_json state_b in
-    close tracker_a;
-    close tracker_b;
-    let check_both_users json label =
-      match json with
-      | `Assoc fields ->
-        let has_user1 = Option.is_some (List.assoc_opt "user:1" fields) in
-        let has_user2 = Option.is_some (List.assoc_opt "user:2" fields) in
-        Alcotest.(check bool) (label ^ " has user:1") true has_user1;
-        Alcotest.(check bool) (label ^ " has user:2") true has_user2
-      | _ -> Alcotest.fail "should be an object"
-    in
-    check_both_users json_a "tracker_a";
-    check_both_users json_b "tracker_b"
+let test_socket_find_assign_missing () =
+  Alcotest.(check (option string))
+    "missing key"
+    None
+    (Socket.find_assign user_key dummy_socket)
 
-  let test_multi_node_untrack_sync () =
-    Eio_main.run @@ fun env ->
-    Eio.Switch.run @@ fun sw ->
-    let pubsub = Tapak.Channel.local_pubsub ~sw in
-    let clock = Eio.Stdenv.clock env in
-    let tracker_a =
-      create ~sw ~pubsub ~node_name:"node-a" ~broadcast_period:10.0 ~clock ()
-    in
-    let tracker_b =
-      create ~sw ~pubsub ~node_name:"node-b" ~broadcast_period:10.0 ~clock ()
-    in
-    let meta = `Assoc [ "device", `String "mobile" ] in
-    let phx_ref = track tracker_a ~topic:"room:lobby" ~key:"user:1" ~meta in
-    let state_b_before = list tracker_b ~topic:"room:lobby" in
-    let json_b_before = Tapak.Channel.Presence.to_json state_b_before in
-    (match json_b_before with
-    | `Assoc fields ->
-      Alcotest.(check bool)
-        "tracker_b sees user before untrack"
-        true
-        (Option.is_some (List.assoc_opt "user:1" fields))
-    | _ -> Alcotest.fail "should be an object");
-    untrack_ref tracker_a ~topic:"room:lobby" ~phx_ref;
-    let state_b_after = list tracker_b ~topic:"room:lobby" in
-    let json_b_after = Tapak.Channel.Presence.to_json state_b_after in
-    close tracker_a;
-    close tracker_b;
-    match json_b_after with
-    | `Assoc fields ->
-      Alcotest.(check bool)
-        "tracker_b sees user removed after untrack"
-        false
-        (Option.is_some (List.assoc_opt "user:1" fields))
-    | _ -> Alcotest.fail "should be an object"
+let test_socket_accessors () =
+  Alcotest.(check (option string))
+    "id"
+    (Some "test-socket")
+    (Socket.id dummy_socket);
+  Alcotest.(check string) "transport" "test" (Socket.transport dummy_socket);
+  Alcotest.(check (list string))
+    "joined_topics"
+    []
+    (Socket.joined_topics dummy_socket)
 
-  let test_disconnect_broadcast () =
-    Eio_main.run @@ fun env ->
-    Eio.Switch.run @@ fun sw ->
-    let pubsub = Tapak.Channel.local_pubsub ~sw in
-    let clock = Eio.Stdenv.clock env in
-    let tracker_a =
-      create ~sw ~pubsub ~node_name:"node-a" ~broadcast_period:10.0 ~clock ()
-    in
-    let tracker_b =
-      create ~sw ~pubsub ~node_name:"node-b" ~broadcast_period:10.0 ~clock ()
-    in
-    let disconnected_socket = ref None in
-    on_disconnect tracker_b (fun socket_id ->
-      disconnected_socket := Some socket_id);
-    broadcast_disconnect tracker_a ~socket_id:"user:123";
-    close tracker_a;
-    close tracker_b;
-    Alcotest.(check (option string))
-      "disconnect received"
-      (Some "user:123")
-      !disconnected_socket
-
-  let test_node_name () =
-    Eio_main.run @@ fun env ->
-    Eio.Switch.run @@ fun sw ->
-    let pubsub = Tapak.Channel.local_pubsub ~sw in
-    let clock = Eio.Stdenv.clock env in
-    let tracker =
-      create ~sw ~pubsub ~node_name:"my-node" ~broadcast_period:10.0 ~clock ()
-    in
-    let name = node_name tracker in
-    close tracker;
-    Alcotest.(check string) "node name" "my-node" name
-
-  let test_multiple_metas_per_key () =
-    Eio_main.run @@ fun env ->
-    Eio.Switch.run @@ fun sw ->
-    let pubsub = Tapak.Channel.local_pubsub ~sw in
-    let clock = Eio.Stdenv.clock env in
-    let tracker =
-      create ~sw ~pubsub ~node_name:"node-a" ~broadcast_period:10.0 ~clock ()
-    in
-    let meta1 = `Assoc [ "device", `String "mobile" ] in
-    let meta2 = `Assoc [ "device", `String "desktop" ] in
-    let _phx_ref1 =
-      track tracker ~topic:"room:lobby" ~key:"user:1" ~meta:meta1
-    in
-    let _phx_ref2 =
-      track tracker ~topic:"room:lobby" ~key:"user:1" ~meta:meta2
-    in
-    let state = list tracker ~topic:"room:lobby" in
-    let json = Tapak.Channel.Presence.to_json state in
-    close tracker;
-    match json with
-    | `Assoc fields ->
-      (match List.assoc_opt "user:1" fields with
-      | Some (`Assoc user_fields) ->
-        (match List.assoc_opt "metas" user_fields with
-        | Some (`List metas) ->
-          Alcotest.(check int) "two metas" 2 (List.length metas)
-        | _ -> Alcotest.fail "metas should be a list")
-      | _ -> Alcotest.fail "user should be tracked")
-    | _ -> Alcotest.fail "should be an object"
-
-  let tests =
-    [ "single node track", `Quick, test_single_node_track
-    ; "single node untrack", `Quick, test_single_node_untrack
-    ; "multi node sync", `Quick, test_multi_node_sync
-    ; "multi node untrack sync", `Quick, test_multi_node_untrack_sync
-    ; "disconnect broadcast", `Quick, test_disconnect_broadcast
-    ; "node name", `Quick, test_node_name
-    ; "multiple metas per key", `Quick, test_multiple_metas_per_key
-    ]
-end
+let socket_tests =
+  [ "assign and find", `Quick, test_socket_assign
+  ; "find missing key", `Quick, test_socket_find_assign_missing
+  ; "accessors", `Quick, test_socket_accessors
+  ]
 
 let tests =
-  [ "Topic", Topic_tests.tests
-  ; "Protocol", Protocol_tests.tests
-  ; "Pubsub", Pubsub_tests.tests
-  ; "Presence", Presence_tests.tests
-  ; "Tracker", Tracker_tests.tests
+  [ "Socket Protocol", protocol_tests
+  ; "Channel.Reply", reply_tests
+  ; "Channel.Join", join_tests
+  ; "Channel.Push", push_tests
+  ; "Channel.Default", default_tests
+  ; "Presence encoding", presence_tests
+  ; "Channel routes", route_tests
+  ; "Socket", socket_tests
   ]
