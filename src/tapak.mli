@@ -14,11 +14,48 @@ module Cookies = Cookies
 module Csrf = Csrf
 module Static = Static
 module Sse = Sse
+module Pubsub = Pubsub
 module Channel = Channel
 
-module type SOCKET = Channel.SOCKET
-module type CHANNEL = Channel.CHANNEL
-module type PUBSUB = Channel.PUBSUB
+module Socket : sig
+  type t = Socket.t =
+    { id : string option
+    ; assigns : Context.t
+    ; transport : string
+    ; joined_topics : string list
+    }
+
+  type connect_info = Socket.connect_info =
+    { request : Request.t
+    ; params : Form.Urlencoded.t
+    }
+
+  module type S = Socket.S
+
+  val assigns : t -> Context.t
+  val assign : 'a Context.key -> 'a -> t -> t
+  val find_assign : 'a Context.key -> t -> 'a option
+  val find_assign_exn : 'a Context.key -> t -> 'a
+  val id : t -> string option
+  val transport : t -> string
+  val joined_topics : t -> string list
+
+  module Endpoint = Socket_endpoint
+  module Protocol = Socket_protocol
+
+  val mount :
+     ?middlewares:Middleware.t list
+    -> ?transports:(module Endpoint.Transport) list
+    -> ('a, 'a) Router.path
+    -> Socket_endpoint.t
+    -> Router.route
+end
+
+module Presence = Presence
+
+module type SOCKET = Socket.S
+module type CHANNEL = Channel.S
+module type PUBSUB = Pubsub.S
 
 type request = Request.t
 and response = Response.t

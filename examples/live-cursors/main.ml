@@ -5,12 +5,9 @@ let user_color_key : string Tapak.Context.key =
   Tapak.Context.Key.create { name = Some "user_color"; show = Some Fun.id }
 
 module Cursor_socket : Tapak.SOCKET = struct
-  let connect (info : Tapak.Channel.Socket.connect_info) =
-    let open Yojson.Safe.Util in
+  let connect (info : Tapak.Socket.connect_info) =
     let user_id =
-      match
-        info.Tapak.Channel.Socket.params |> member "user_id" |> to_string_option
-      with
+      match info.Tapak.Socket.params |> Tapak.Form.Urlencoded.get "user_id" with
       | Some id -> id
       | None -> Printf.sprintf "user_%d" (Random.int 10000)
     in
@@ -41,8 +38,52 @@ module Cursor_socket : Tapak.SOCKET = struct
     | None -> None
 end
 
+module Point = struct
+  type t =
+    { x : float
+    ; y : float
+    }
+
+  let jsont =
+    Jsont.Object.map ~kind:"point" (fun x y -> { x; y })
+    |> Jsont.Object.mem ~enc:(fun p -> p.x) "x" Jsont.number
+    |> Jsont.Object.mem ~enc:(fun p -> p.y) "y" Jsont.number
+    |> Jsont.Object.finish
+end
+
+module User_cursor = struct
+  type t =
+    { user_id : string
+    ; color : string
+    ; x : float
+    ; y : float
+    }
+
+  let jsont =
+    Jsont.Object.map ~kind:"user_cursor" (fun user_id color x y ->
+      { user_id; color; x; y })
+    |> Jsont.Object.mem ~enc:(fun c -> c.user_id) "user_id" Jsont.string
+    |> Jsont.Object.mem ~enc:(fun c -> c.color) "color" Jsont.string
+    |> Jsont.Object.mem ~enc:(fun c -> c.x) "x" Jsont.number
+    |> Jsont.Object.mem ~enc:(fun c -> c.y) "y" Jsont.number
+    |> Jsont.Object.finish
+end
+
+module User_meta = struct
+  type t =
+    { user_id : string
+    ; color : string
+    }
+
+  let jsont : t Jsont.t =
+    Jsont.Object.map ~kind:"user_meta" (fun user_id color -> { user_id; color })
+    |> Jsont.Object.mem ~enc:(fun u -> u.user_id) "user_id" Jsont.string
+    |> Jsont.Object.mem ~enc:(fun u -> u.color) "color" Jsont.string
+    |> Jsont.Object.finish
+end
+
 module Cursor_channel : Tapak.CHANNEL = struct
-  type state =
+  type t =
     { user_id : string
     ; color : string
     ; phx_ref : string
@@ -53,73 +94,64 @@ module Cursor_channel : Tapak.CHANNEL = struct
   let join ~topic ~payload:_ ~socket _state =
     if String.equal topic "cursors:lobby"
     then (
-      let user_id = Tapak.Channel.Socket.get_assign_exn user_id_key socket in
-      let color = Tapak.Channel.Socket.get_assign_exn user_color_key socket in
+      let user_id = Tapak.Socket.find_assign_exn user_id_key socket in
+      let color = Tapak.Socket.find_assign_exn user_color_key socket in
 
       Logs.info (fun m -> m "User %s joining cursors:lobby" user_id);
 
       let meta =
-        `Assoc [ "user_id", `String user_id; "color", `String color ]
+        Jsont.Json.encode User_meta.jsont User_meta.{ user_id; color }
+        |> Result.get_ok
       in
-      let phx_ref = Tapak.Channel.Channel.track_presence ~key:user_id ~meta in
+      let phx_ref = Tapak.Channel.track_presence ~key:user_id ~meta in
 
       Logs.info (fun m ->
         m "Tracked presence for user %s with phx_ref %s" user_id phx_ref);
 
-      Ok ({ user_id; color; phx_ref }, socket, `Assoc []))
-    else Error (`Assoc [ "reason", `String "invalid topic" ])
+      let state = { user_id; color; phx_ref } in
+      let transition : t Tapak.Channel.transition = { state; socket } in
+      Tapak.Channel.Join.ok ~transition ~response:(Jsont.Json.object' []))
+    else
+      Tapak.Channel.Join.error
+        Jsont.Json.(object' [ mem (name "reason") (string "invalid topic") ])
 
-  let handle_in ~event ~payload ~socket state =
+  let handle_in ~event ~payload ~socket (state : t) =
     match event with
     | "cursor_move" ->
-      (try
-         let open Yojson.Safe.Util in
-         let x =
-           match payload |> member "x" with
-           | `Int i -> float_of_int i
-           | `Float f -> f
-           | _ -> 0.0
-         in
-         let y =
-           match payload |> member "y" with
-           | `Int i -> float_of_int i
-           | `Float f -> f
-           | _ -> 0.0
-         in
-         let broadcast_payload =
-           `Assoc
-             [ "user_id", `String state.user_id
-             ; "color", `String state.color
-             ; "x", `Float x
-             ; "y", `Float y
-             ]
-         in
-         Tapak.Channel.Channel.broadcast_from
-           ~topic:"cursors:lobby"
-           ~event:"cursor_update"
-           ~payload:broadcast_payload;
-         Tapak.Channel.Channel.Reply
-           (Ok, `Assoc [ "status", `String "ok" ], state, socket)
-       with
-      | exn ->
-        Logs.err (fun m ->
-          m "Error in cursor_move handler: %s" (Printexc.to_string exn));
-        Tapak.Channel.Channel.Reply
-          ( Error
-          , `Assoc [ "error", `String (Printexc.to_string exn) ]
-          , state
-          , socket ))
-    | _ ->
-      Logs.debug (fun m -> m "Unknown event: %s" event);
-      Tapak.Channel.Channel.No_reply (state, socket)
+      let point = Jsont.Json.decode Point.jsont payload in
+      (match point with
+      | Ok point ->
+        let broadcast =
+          User_cursor.
+            { user_id = state.user_id
+            ; color = state.color
+            ; x = point.x
+            ; y = point.y
+            }
+          |> Jsont.Json.encode User_cursor.jsont
+          |> Result.get_ok
+        in
+        Tapak.Channel.broadcast_from
+          ~topic:"cursors:lobby"
+          ~event:"cursor_update"
+          ~payload:broadcast;
 
-  let handle_info (msg : Tapak.Channel.Channel.broadcast_msg) ~socket state =
-    Tapak.Channel.Channel.Push msg.Tapak.Channel.Channel.payload, state, socket
+        Tapak.Channel.Reply.respond
+          ~transition:{ state; socket }
+          ~status:`Ok
+          ~payload:Jsont.Json.(object' [ mem (name "status") (string "ok") ])
+      | Error _ -> Tapak.Channel.Reply.noop { state; socket })
+    | _ -> Tapak.Channel.Reply.noop { state; socket }
+
+  let handle_info (msg : Tapak.Channel.broadcast) ~socket state =
+    let transition : t Tapak.Channel.transition = { state; socket } in
+    Tapak.Channel.Push.push ~transition ~payload:msg.payload
 
   let handle_out ~event:_ ~payload ~socket state =
-    Tapak.Channel.Channel.Push payload, state, socket
+    let transition : t Tapak.Channel.transition = { state; socket } in
+    Tapak.Channel.Push.push ~transition ~payload
 
-  let terminate ~reason:_ ~socket:_ state =
+  let terminate ~reason:_ ~socket:_ (state : t) =
     Logs.info (fun m ->
       m "User %s terminating (phx_ref: %s)" state.user_id state.phx_ref)
 
@@ -159,21 +191,17 @@ let () =
 
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
-  let pubsub = Tapak.Channel.local_pubsub ~sw in
+  let pubsub = Tapak.Pubsub.local ~sw in
   let clock = Eio.Stdenv.clock env in
   let node_name = Printf.sprintf "node-%d" (Random.int 10000) in
-  let presence =
-    Tapak.Channel.Presence.create ~sw ~pubsub ~node_name ~clock ()
-  in
+  let presence = Tapak.Presence.create ~sw ~pubsub ~node_name ~clock () in
   let now () = Eio.Time.now clock in
 
-  let cursor_channel_pattern = Tapak.Channel.Topic.(s "cursors" / str) in
-  let ws_config =
-    Tapak.Channel.(
-      Endpoint.create_config
+  let endpoint =
+    Tapak.Socket.Endpoint.(
+      create
         ~socket:(module Cursor_socket)
-        ~channels:
-          [ Endpoint.channel cursor_channel_pattern (module Cursor_channel) ]
+        ~channels:[ channel "^cursors:.*$" (module Cursor_channel) ]
         ~pubsub
         ~presence
         ~clock
@@ -184,8 +212,7 @@ let () =
     Tapak.Router.
       [ get (s "") |> unit |> into (fun () -> serve_static_file "index.html")
       ; get (s "static" / str) |> into (fun file -> serve_static_file file)
-      ; (* Mount WebSocket endpoint at /socket/websocket *)
-        scope (s "socket") (Tapak.Channel.Endpoint.routes ws_config)
+      ; Tapak.Socket.mount (s "socket") endpoint
       ]
   in
   let app =

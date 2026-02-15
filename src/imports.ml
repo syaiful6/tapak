@@ -49,6 +49,14 @@ end
 module Result = struct
   include Result
 
+  let traverse_list f xs =
+    let rec aux acc = function
+      | [] -> Ok (List.rev acc)
+      | x :: xs ->
+        (match f x with Error e -> Error e | Ok y -> aux (y :: acc) xs)
+    in
+    aux [] xs
+
   module Syntax = struct
     let ( let+ ) result f = map f result
     let ( let* ) = bind

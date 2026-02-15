@@ -16,11 +16,32 @@ module Csrf = Csrf
 module Static = Static
 module Sse = Sse
 module Openapi = Openapi
+module Pubsub = Pubsub
 module Channel = Channel
+module Presence = Presence
 
-module type SOCKET = Channel.SOCKET
-module type PUBSUB = Channel.PUBSUB
-module type CHANNEL = Channel.CHANNEL
+module Socket = struct
+  include Socket
+  module Endpoint = Socket_endpoint
+  module Protocol = Socket_protocol
+
+  let mount
+        ?(middlewares = [])
+        ?(transports = [ (module Websocket : Endpoint.Transport) ])
+        prefix
+        endpoint
+    =
+    let routes =
+      transports
+      |> List.concat_map (fun (module T : Endpoint.Transport) ->
+        T.routes endpoint)
+    in
+    Router.scope ~middlewares prefix routes
+end
+
+module type SOCKET = Socket.S
+module type PUBSUB = Pubsub.S
+module type CHANNEL = Channel.S
 
 type request = Request.t
 and response = Response.t

@@ -14,6 +14,7 @@
   ptime,
   saturn,
   yojson,
+  jsont,
   mirage-crypto,
   mirage-crypto-rng,
   alcotest,
@@ -51,6 +52,7 @@ buildDunePackage {
     ptime
     saturn
     yojson
+    jsont
     mirage-crypto
     mirage-crypto-rng
   ];

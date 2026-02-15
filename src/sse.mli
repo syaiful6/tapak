@@ -1,28 +1,8 @@
 module Event : sig
-  type data =
-    [ `Json of Yojson.Safe.t
-    | `Text of string
-    ]
-
-  type t =
-    { id : string option
-    ; data : data option
-    ; event : string option
-    ; comment : string option
-    ; retry : int option
-    }
+  type t
 
   val pp : Format.formatter -> t -> unit
   val to_string : t -> string
-
-  val make :
-     ?id:string
-    -> ?data:data
-    -> ?event:string
-    -> ?comment:string
-    -> ?retry:int
-    -> unit
-    -> t
 
   val text :
      ?id:string
@@ -37,7 +17,8 @@ module Event : sig
     -> ?event:string
     -> ?comment:string
     -> ?retry:int
-    -> Yojson.Safe.t
+    -> 'a Jsont.t
+    -> 'a
     -> t
 
   val comment : string -> t
