@@ -99,6 +99,282 @@ let test_decoder_error_accum () =
     Alcotest.(check bool) "email error present" true (has_error "email");
     Alcotest.(check bool) "age error present" true (has_error "age")
 
+type shape =
+  | Circle of float
+  | Rectangle of float * float
+
+let circle_schema =
+  Sch.Object.(
+    define ~unknown:Error_on_unknown @@ mem ~enc:Fun.id "radius" Sch.float)
+
+let rectangle_schema =
+  Sch.Object.(
+    define ~unknown:Error_on_unknown
+    @@ let+ width = mem ~enc:Stdlib.fst "width" Sch.float
+       and+ height = mem ~enc:Stdlib.snd "height" Sch.float in
+       width, height)
+
+let shape_union_schema =
+  Sch.Union.(
+    define
+      ~discriminator:"type"
+      [ case
+          ~tag:"circle"
+          ~inj:(fun c -> Circle c)
+          ~proj:(function Circle c -> Some c | _ -> None)
+          circle_schema
+      ; case
+          ~tag:"rectangle"
+          ~inj:(fun (w, h) -> Rectangle (w, h))
+          ~proj:(function Rectangle (w, h) -> Some (w, h) | _ -> None)
+          rectangle_schema
+      ])
+
+let test_union_decode () =
+  (match
+     decode_str_result shape_union_schema {|{"type":"circle","radius":2.5}|}
+   with
+  | Ok (Circle rad) -> Alcotest.(check (float 1e-4)) "radius" 2.5 rad
+  | Ok _ -> Alcotest.fail "Expected circle variant"
+  | Error errs ->
+    Alcotest.failf
+      "Unexpected errors: %a"
+      Fmt.(list (pair ~sep:comma string string))
+      errs);
+  match
+    decode_str_result
+      shape_union_schema
+      {|{"type":"rectangle","width":3.0,"height":4.0}|}
+  with
+  | Ok (Rectangle (width, height)) ->
+    Alcotest.(check (float 1e-4)) "width" 3.0 width;
+    Alcotest.(check (float 1e-4)) "height" 4.0 height
+  | Ok _ -> Alcotest.fail "Expected rectangle variant"
+  | Error errs ->
+    Alcotest.failf
+      "Unexpected errors: %a"
+      Fmt.(list (pair ~sep:comma string string))
+      errs
+
+let test_union_decode_missing_discriminator () =
+  match decode_str_result shape_union_schema {|{"radius":1.0}|} with
+  | Error [ (field, msg) ] ->
+    Alcotest.(check string) "discriminator field" "type" field;
+    Alcotest.(check string)
+      "discriminator msg"
+      "Missing discriminator field"
+      msg
+  | _ -> Alcotest.fail "Expected discriminator error"
+
+let test_union_decode_unknown_tag () =
+  match
+    decode_str_result shape_union_schema {|{"type":"triangle","radius":1.0}|}
+  with
+  | Error [ (field, msg) ] ->
+    Alcotest.(check string) "unknown tag field" "type" field;
+    Alcotest.(check string)
+      "unknown tag message"
+      "Unknown discriminator value triangle (expected one of: circle, \
+       rectangle)"
+      msg
+  | _ -> Alcotest.fail "Expected unknown tag error"
+
+let test_union_encode () =
+  let result =
+    Sch.Json_encoder.encode_string shape_union_schema (Rectangle (2., 4.))
+  in
+  Alcotest.(check string)
+    "encode union"
+    {|{"type":"rectangle","width":2,"height":4}|}
+    result
+
+let test_union_roundtrip () =
+  let shapes = [ Circle 3.5; Rectangle (10., 20.) ] in
+  List.iter
+    (fun shape ->
+       let json = Sch.Json_encoder.encode_string shape_union_schema shape in
+       match decode_str_result shape_union_schema json with
+       | Ok (Circle r) ->
+         (match shape with
+         | Circle expected ->
+           Alcotest.(check (float 1e-4)) "roundtrip radius" expected r
+         | _ -> Alcotest.fail "Wrong variant after roundtrip")
+       | Ok (Rectangle (w, h)) ->
+         (match shape with
+         | Rectangle (ew, eh) ->
+           Alcotest.(check (float 1e-4)) "roundtrip width" ew w;
+           Alcotest.(check (float 1e-4)) "roundtrip height" eh h
+         | _ -> Alcotest.fail "Wrong variant after roundtrip")
+       | Error errs ->
+         Alcotest.failf
+           "Roundtrip error: %a"
+           Fmt.(list (pair ~sep:comma string string))
+           errs)
+    shapes
+
+type notif =
+  | Email of
+      { to_ : string
+      ; subject : string
+      ; body : string option
+      }
+  | Sms of
+      { phone : string
+      ; message : string
+      }
+
+let email_schema =
+  Sch.Object.(
+    define
+    @@ let+ to_ = mem ~enc:(fun (t, _, _) -> t) "to" Sch.string
+       and+ subject = mem ~enc:(fun (_, s, _) -> s) "subject" Sch.string
+       and+ body = mem_opt ~enc:(fun (_, _, b) -> b) Sch.string "body" in
+       to_, subject, body)
+
+let sms_schema =
+  Sch.Object.(
+    define
+    @@ let+ phone = mem ~enc:Stdlib.fst "phone" Sch.string
+       and+ message = mem ~enc:Stdlib.snd "message" Sch.string in
+       phone, message)
+
+let notif_schema =
+  Sch.Union.(
+    define
+      ~discriminator:"channel"
+      [ case
+          ~tag:"email"
+          ~inj:(fun (t, s, b) -> Email { to_ = t; subject = s; body = b })
+          ~proj:(function
+            | Email { to_; subject; body } -> Some (to_, subject, body)
+            | _ -> None)
+          email_schema
+      ; case
+          ~tag:"sms"
+          ~inj:(fun (p, m) -> Sms { phone = p; message = m })
+          ~proj:(function
+            | Sms { phone; message } -> Some (phone, message) | _ -> None)
+          sms_schema
+      ])
+
+let test_union_option_field () =
+  (match
+     decode_str_result
+       notif_schema
+       {|{"channel":"email","to":"a@b.com","subject":"hi","body":"hello"}|}
+   with
+  | Ok (Email { to_; subject; body }) ->
+    Alcotest.(check string) "to" "a@b.com" to_;
+    Alcotest.(check string) "subject" "hi" subject;
+    Alcotest.(check (option string)) "body" (Some "hello") body
+  | Ok _ -> Alcotest.fail "Expected email"
+  | Error errs ->
+    Alcotest.failf
+      "Unexpected errors: %a"
+      Fmt.(list (pair ~sep:comma string string))
+      errs);
+  match
+    decode_str_result
+      notif_schema
+      {|{"channel":"email","to":"a@b.com","subject":"hi"}|}
+  with
+  | Ok (Email { body; _ }) ->
+    Alcotest.(check (option string)) "body absent" None body
+  | Ok _ -> Alcotest.fail "Expected email"
+  | Error errs ->
+    Alcotest.failf
+      "Unexpected errors: %a"
+      Fmt.(list (pair ~sep:comma string string))
+      errs
+
+type payload =
+  | Text of string
+  | Count of int
+
+let payload_schema =
+  Sch.Union.(
+    define
+      [ case
+          ~tag:"text"
+          ~inj:(fun s -> Text s)
+          ~proj:(function Text s -> Some s | _ -> None)
+          Sch.string
+      ; case
+          ~tag:"count"
+          ~inj:(fun n -> Count n)
+          ~proj:(function Count n -> Some n | _ -> None)
+          Sch.int
+      ])
+
+let test_union_scalar_case_encode () =
+  let result = Sch.Json_encoder.encode_string payload_schema (Text "hello") in
+  Alcotest.(check string)
+    "encode scalar case"
+    {|{"type":"text","value":"hello"}|}
+    result
+
+let test_union_scalar_case_decode () =
+  (match
+     decode_str_result payload_schema {|{"type":"text","value":"hello"}|}
+   with
+  | Ok (Text s) -> Alcotest.(check string) "text payload" "hello" s
+  | Ok _ -> Alcotest.fail "Expected Text"
+  | Error errs ->
+    Alcotest.failf
+      "Unexpected errors: %a"
+      Fmt.(list (pair ~sep:comma string string))
+      errs);
+  match decode_str_result payload_schema {|{"type":"count","value":42}|} with
+  | Ok (Count n) -> Alcotest.(check int) "count payload" 42 n
+  | Ok _ -> Alcotest.fail "Expected Count"
+  | Error errs ->
+    Alcotest.failf
+      "Unexpected errors: %a"
+      Fmt.(list (pair ~sep:comma string string))
+      errs
+
+let test_union_error_on_unknown_rejects_extra () =
+  match
+    decode_str_result
+      shape_union_schema
+      {|{"type":"circle","radius":1.0,"width":5.0}|}
+  with
+  | Error errs ->
+    let has_unknown =
+      List.exists
+        (fun (_, msg) -> String.starts_with ~prefix:"Unknown field" msg)
+        errs
+    in
+    Alcotest.(check bool) "has unknown field error" true has_unknown
+  | Ok _ -> Alcotest.fail "Expected error for unknown field"
+
+let test_union_to_json_schema () =
+  let schema = Sch.to_json_schema shape_union_schema in
+  let required = Option.value ~default:[] schema.Json_schema.required in
+  Alcotest.(check (list string)) "union required" [ "type" ] required;
+  (match schema.Json_schema.properties with
+  | Some props ->
+    (match List.assoc_opt "type" props with
+    | Some (Json_schema.Or_bool.Schema (Json_schema.Or_ref.Value obj)) ->
+      (match obj.Json_schema.enum with
+      | Some enums ->
+        let tags =
+          enums
+          |> List.filter_map (function
+            | Jsont.String (s, _) -> Some s
+            | _ -> None)
+        in
+        Alcotest.(check (list string))
+          "discriminator enum"
+          [ "circle"; "rectangle" ]
+          tags
+      | None -> Alcotest.fail "Expected discriminator enum")
+    | _ -> Alcotest.fail "Expected discriminator property")
+  | None -> Alcotest.fail "Expected properties for discriminator");
+  match schema.Json_schema.one_of with
+  | Some cases -> Alcotest.(check int) "oneOf length" 2 (List.length cases)
+  | None -> Alcotest.fail "Expected oneOf definitions"
+
 (* json schema *)
 let test_json_type () =
   let value = Json_schema.Json_type.(union string number) in
@@ -555,6 +831,17 @@ let schema_decoder_tests =
   ; "schema with defaults", `Quick, test_decoder_schema_with_defaults
   ; "cross-field validation", `Quick, test_decoder_cross_field_validation
   ; "schema error accumulation", `Quick, test_decoder_error_accum
+  ; "union decode", `Quick, test_union_decode
+  ; ( "union decode missing discriminator"
+    , `Quick
+    , test_union_decode_missing_discriminator )
+  ; "union decode unknown tag", `Quick, test_union_decode_unknown_tag
+  ; "union roundtrip", `Quick, test_union_roundtrip
+  ; "union option field in case", `Quick, test_union_option_field
+  ; "union scalar case decode", `Quick, test_union_scalar_case_decode
+  ; ( "union error_on_unknown rejects extra"
+    , `Quick
+    , test_union_error_on_unknown_rejects_extra )
   ]
 
 (** { 1 Test Suites } *)
@@ -588,6 +875,8 @@ let encoder_tests =
   ; "encode object indented", `Quick, test_encode_object_indented
   ; "encode nested indented", `Quick, test_encode_nested_indented
   ; "encode empty list", `Quick, test_encode_empty_list
+  ; "union encode", `Quick, test_union_encode
+  ; "union scalar case encode", `Quick, test_union_scalar_case_encode
   ; "encode list indented", `Quick, test_encode_list_indented
   ; "list of objects indented", `Quick, test_encode_list_of_objects_indented
   ; "omit field skipped", `Quick, test_encode_omit_skips
@@ -605,6 +894,7 @@ let to_json_schema_tests =
   ; "option schema", `Quick, test_to_json_schema_option
   ; "roundtrip", `Quick, test_to_json_schema_roundtrip
   ; "recursive schema", `Quick, test_to_json_schema_rec
+  ; "union schema", `Quick, test_union_to_json_schema
   ]
 
 let () =
