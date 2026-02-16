@@ -23,6 +23,18 @@ and 'a base_map =
   ; constraint_ : 'a Constraint.t option
   }
 
+and 'a union_case =
+  | Case :
+      { tag : string
+      ; doc : string
+      ; codec : 'b t
+      ; inject : 'b -> 'a
+      ; project : 'a -> 'b option
+      }
+      -> 'a union_case
+  (** a prism like structure for union cases, the inject and project functions are
+   used to convert between the case payload and the union type *)
+
 and _ t =
   | Str : string base_map -> string t
   | Password : string base_map -> string t
@@ -47,6 +59,12 @@ and _ t =
       ; members : ('o fieldk, 'o) Free.t
       }
       -> 'o t
+  | Union :
+      { doc : string
+      ; discriminator : string
+      ; cases : 'a union_case list
+      }
+      -> 'a t
   | Rec : 'a t Lazy.t -> 'a t
   | Iso :
       { fwd : 'b -> ('a, string list) result
@@ -67,7 +85,14 @@ val error_to_pair : decode_error -> string * string
 val type_name : 'a t -> string
 val format_name : 'a t -> string option
 val doc : 'a t -> string
-val with_ : ?constraint_:'a Constraint.t -> ?doc:string -> 'a t -> 'a t
+
+val with_ :
+   ?constraint_:'a Constraint.t
+  -> ?doc:string
+  -> ?discriminator:string
+  -> 'a t
+  -> 'a t
+
 val string : string t
 val password : string t
 val bool : bool t
@@ -116,6 +141,20 @@ module Object : sig
     -> ?unknown:unknown_handling
     -> ('a fieldk, 'a) Free.t
     -> 'a t
+end
+
+module Union : sig
+  type 'a case
+
+  val case :
+     ?doc:string
+    -> tag:string
+    -> inj:('b -> 'a)
+    -> proj:('a -> 'b option)
+    -> 'b t
+    -> 'a case
+
+  val define : ?doc:string -> ?discriminator:string -> 'a case list -> 'a t
 end
 
 module Validation : sig

@@ -27,6 +27,18 @@ and 'a base_map =
   ; constraint_ : 'a Constraint.t option
   }
 
+and 'a union_case =
+  | Case :
+      { tag : string
+      ; doc : string
+      ; codec : 'b t
+      ; inject : 'b -> 'a
+      ; project : 'a -> 'b option
+      }
+      -> 'a union_case
+  (** a prism like structure for union cases, the inject and project functions are
+   used to convert between the case payload and the union type *)
+
 and _ t =
   | Str : string base_map -> string t
   | Password : string base_map -> string t
@@ -51,6 +63,12 @@ and _ t =
       ; members : ('o fieldk, 'o) Free.t
       }
       -> 'o t
+  | Union :
+      { doc : string
+      ; discriminator : string
+      ; cases : 'a union_case list
+      }
+      -> 'a t
   | Rec : 'a t Lazy.t -> 'a t
   | Iso :
       { fwd : 'b -> ('a, string list) result
@@ -58,6 +76,28 @@ and _ t =
       ; repr : 'b t
       }
       -> 'a t
+
+let case_tags (cases : _ union_case list) =
+  List.map (fun (Case c) -> c.tag) cases
+
+let find_case_by_tag tag cases =
+  List.find_opt (fun (Case c) -> String.equal c.tag tag) cases
+
+type 'a projected_case =
+  | Projected :
+      { tag : string
+      ; codec : 'b t
+      ; payload : 'b
+      }
+      -> 'a projected_case
+
+let rec find_case_for_value value (cases : 'a union_case list) =
+  match cases with
+  | [] -> None
+  | Case c :: rest ->
+    (match c.project value with
+    | Some payload -> Some (Projected { tag = c.tag; codec = c.codec; payload })
+    | None -> find_case_for_value value rest)
 
 type decode_error =
   { path : string list  (** Field path, e.g., ["user"; "address"; "city"] *)
@@ -94,6 +134,7 @@ let rec type_name : type a. a t -> string = function
   | Option ta -> type_name ta
   | List _ -> "array"
   | Object _ -> "object"
+  | Union _ -> "object"
   | Rec t -> type_name (Lazy.force t)
   | Iso { repr; _ } -> type_name repr
 
@@ -111,6 +152,7 @@ let rec format_name : type a. a t -> string option = function
   | Option ta -> format_name ta
   | List _ -> None
   | Object _ -> None
+  | Union _ -> None
   | Rec t -> format_name (Lazy.force t)
   | Iso { repr; _ } -> format_name repr
 
@@ -127,15 +169,28 @@ let rec doc : type a. a t -> string = function
   | Option t -> doc t
   | List { doc; _ } -> doc
   | Object { doc; _ } -> doc
+  | Union { doc; _ } -> doc
   | Rec t -> doc (Lazy.force t)
   | Iso { repr; _ } -> doc repr
+
+let rec is_object_codec : type a. a t -> bool = function
+  | Object _ -> true
+  | Union _ -> true
+  | Rec t -> is_object_codec (Lazy.force t)
+  | Iso { repr; _ } -> is_object_codec repr
+  | _ -> false
 
 let with_basemap ?constraint_:ct ?doc:d (c : 'a base_map) =
   { constraint_ = ct <|> c.constraint_; doc = Option.value d ~default:c.doc }
 
-let rec with_ : type a. ?constraint_:a Constraint.t -> ?doc:string -> a t -> a t
+let rec with_ : type a.
+  ?constraint_:a Constraint.t
+  -> ?doc:string
+  -> ?discriminator:string
+  -> a t
+  -> a t
   =
- fun ?constraint_ ?doc codec ->
+ fun ?constraint_ ?doc ?discriminator codec ->
   match codec with
   | Str c -> Str (with_basemap ?constraint_ ?doc c)
   | Password c -> Password (with_basemap ?constraint_ ?doc c)
@@ -154,7 +209,13 @@ let rec with_ : type a. ?constraint_:a Constraint.t -> ?doc:string -> a t -> a t
       ; doc = Option.value doc ~default:c.doc
       }
   | Object _ -> codec
-  | Rec t -> Rec (lazy (with_ ?constraint_ ?doc (Lazy.force t)))
+  | Union u ->
+    Union
+      { u with
+        doc = Option.value doc ~default:u.doc
+      ; discriminator = Option.value discriminator ~default:u.discriminator
+      }
+  | Rec t -> Rec (lazy (with_ ?constraint_ ?doc ?discriminator (Lazy.force t)))
   | Iso _ -> codec
 
 let string = Str { doc = ""; constraint_ = None }
@@ -192,6 +253,33 @@ module Object = struct
 
   let define ?(kind = "") ?(doc = "") ?(unknown = Skip) members =
     Object { kind; doc; unknown; members }
+end
+
+module Union = struct
+  type 'a case = 'a union_case
+
+  let case ?(doc = "") ~tag ~inj ~proj codec =
+    if String.equal tag ""
+    then invalid_arg "Sch.Union.case: tag cannot be empty"
+    else Case { tag; doc; codec; inject = inj; project = proj }
+
+  let ensure_unique_tags cases =
+    let seen = Hashtbl.create 8 in
+    let check (Case c) =
+      if Hashtbl.mem seen c.tag
+      then invalid_arg "Sch.Union.define: duplicate case tag"
+      else Hashtbl.add seen c.tag ()
+    in
+    List.iter check cases
+
+  let define ?(doc = "") ?(discriminator = "type") cases =
+    match cases with
+    | [] -> invalid_arg "Sch.Union.define: at least one case required"
+    | _ when String.equal discriminator "" ->
+      invalid_arg "Sch.Union.define: discriminator cannot be empty"
+    | _ ->
+      ensure_unique_tags cases;
+      Union { doc; discriminator; cases }
 end
 
 module Validation = struct
@@ -263,29 +351,34 @@ module Json_decoder = struct
     | Int { constraint_; _ } ->
       (match int_of_string_opt s with
       | Some i -> apply_constraint constraint_ i
-      | None -> Error [ error (Printf.sprintf "Invalid integer: %s" s) ])
+      | None ->
+        Validation.Error [ error (Printf.sprintf "Invalid integer: %s" s) ])
     | Int32 { constraint_; _ } ->
       (match Int32.of_string_opt s with
       | Some i -> apply_constraint constraint_ i
-      | None -> Error [ error (Printf.sprintf "Invalid int32: %s" s) ])
+      | None ->
+        Validation.Error [ error (Printf.sprintf "Invalid int32: %s" s) ])
     | Int64 { constraint_; _ } ->
       (match Int64.of_string_opt s with
       | Some i -> apply_constraint constraint_ i
-      | None -> Error [ error (Printf.sprintf "Invalid int64: %s" s) ])
+      | None ->
+        Validation.Error [ error (Printf.sprintf "Invalid int64: %s" s) ])
     | Bool _ ->
       (match String.lowercase_ascii s with
-      | "true" | "1" | "yes" | "on" -> Success true
-      | "false" | "0" | "no" | "off" -> Success false
-      | _ -> Error [ error (Printf.sprintf "Invalid boolean: %s" s) ])
+      | "true" | "1" | "yes" | "on" -> Validation.Success true
+      | "false" | "0" | "no" | "off" -> Validation.Success false
+      | _ -> Validation.Error [ error (Printf.sprintf "Invalid boolean: %s" s) ])
     | Float { constraint_; _ } ->
       (match float_of_string_opt s with
       | Some f -> apply_constraint constraint_ f
-      | None -> Error [ error (Printf.sprintf "Invalid number: %s" s) ])
+      | None ->
+        Validation.Error [ error (Printf.sprintf "Invalid number: %s" s) ])
     | Double { constraint_; _ } ->
       (match float_of_string_opt s with
       | Some f -> apply_constraint constraint_ f
-      | None -> Error [ error (Printf.sprintf "Invalid number: %s" s) ])
-    | _ -> Error [ error "Cannot coerce string to this type" ]
+      | None ->
+        Validation.Error [ error (Printf.sprintf "Invalid number: %s" s) ])
+    | _ -> Validation.Error [ error "Cannot coerce string to this type" ]
 
   let decode ?(lookup = mem_exact) =
     let is_known =
@@ -297,50 +390,50 @@ module Json_decoder = struct
       | Str { constraint_; _ } ->
         (match json with
         | String (s, _) -> apply_constraint constraint_ s
-        | _ -> Error [ error "Expected string" ])
+        | _ -> Validation.Error [ error "Expected string" ])
       | Password { constraint_; _ } ->
         (match json with
         | String (s, _) -> apply_constraint constraint_ s
-        | _ -> Error [ error "Expected string" ])
+        | _ -> Validation.Error [ error "Expected string" ])
       | Int { constraint_; _ } ->
         (match json with
         | Number (f, _) -> apply_constraint constraint_ (Float.to_int f)
         | String (s, _) -> coerce_string codec s
-        | _ -> Error [ error "Expected integer" ])
+        | _ -> Validation.Error [ error "Expected integer" ])
       | Int32 { constraint_; _ } ->
         (match json with
         | Number (f, _) -> apply_constraint constraint_ (Int32.of_float f)
         | String (s, _) -> coerce_string codec s
-        | _ -> Error [ error "Expected int32" ])
+        | _ -> Validation.Error [ error "Expected int32" ])
       | Int64 { constraint_; _ } ->
         (match json with
         | Number (f, _) -> apply_constraint constraint_ (Int64.of_float f)
         | String (s, _) -> coerce_string codec s
-        | _ -> Error [ error "Expected int64" ])
+        | _ -> Validation.Error [ error "Expected int64" ])
       | Bool _ ->
         (match json with
-        | Bool (b, _) -> Success b
+        | Bool (b, _) -> Validation.Success b
         | String (s, _) -> coerce_string codec s
-        | _ -> Error [ error "Expected boolean" ])
+        | _ -> Validation.Error [ error "Expected boolean" ])
       | Float { constraint_; _ } ->
         (match json with
         | Number (f, _) -> apply_constraint constraint_ f
         | String (s, _) -> coerce_string codec s
-        | _ -> Error [ error "Expected number" ])
+        | _ -> Validation.Error [ error "Expected number" ])
       | Double { constraint_; _ } ->
         (match json with
         | Number (f, _) -> apply_constraint constraint_ f
         | String (s, _) -> coerce_string codec s
-        | _ -> Error [ error "Expected number" ])
-      | File -> Error [ error "File cannot be decoded from JSON" ]
+        | _ -> Validation.Error [ error "Expected number" ])
+      | File -> Validation.Error [ error "File cannot be decoded from JSON" ]
       | Option inner ->
         (match json with
-        | Null _ -> Success None
+        | Null _ -> Validation.Success None
         | _ -> Validation.map Option.some (go inner json))
       | List { item; constraint_; _ } ->
         (match json with
         | Array (items, _) -> go_list item constraint_ 0 items
-        | _ -> Error [ error "Expected array" ])
+        | _ -> Validation.Error [ error "Expected array" ])
       | Object { members; unknown; _ } ->
         (match json with
         | Object (mems, _) ->
@@ -357,28 +450,78 @@ module Json_decoder = struct
             in
             (match unknown_keys, result with
             | [], _ -> result
-            | keys, Error errs ->
-              Error
+            | keys, Validation.Error errs ->
+              Validation.Error
                 (errs
                 @ List.map
                     (fun ((k, _), _) ->
                        error (Printf.sprintf "Unknown field: %s" k))
                     keys)
-            | keys, Success _ ->
-              Error
+            | keys, Validation.Success _ ->
+              Validation.Error
                 (List.map
                    (fun ((k, _), _) ->
                       error (Printf.sprintf "Unknown field: %s" k))
                    keys)))
-        | _ -> Error [ error "Expected object" ])
+        | _ -> Validation.Error [ error "Expected object" ])
+      | Union { discriminator; cases; _ } -> go_union discriminator cases json
       | Rec t -> go (Lazy.force t) json
       | Iso { fwd; repr; _ } ->
         (match go repr json with
-        | Success b ->
+        | Validation.Success b ->
           (match fwd b with
-          | Ok a -> Success a
-          | Error msgs -> Error (errors msgs))
-        | Error errs -> Error errs)
+          | Ok a -> Validation.Success a
+          | Error msgs -> Validation.Error (errors msgs))
+        | Validation.Error errs -> Validation.Error errs)
+    and go_union : type a.
+      string -> a union_case list -> Jsont.json -> a Validation.t
+      =
+     fun discriminator cases json ->
+      match json with
+      | Object (mems, meta) ->
+        (match lookup discriminator mems with
+        | None ->
+          Validation.Error
+            (in_field discriminator [ error "Missing discriminator field" ])
+        | Some (String (tag, _)) ->
+          (match find_case_by_tag tag cases with
+          | None ->
+            let expected = String.concat ", " (case_tags cases) in
+            Validation.Error
+              (in_field
+                 discriminator
+                 [ error
+                     (Printf.sprintf
+                        "Unknown discriminator value %s (expected one of: %s)"
+                        tag
+                        expected)
+                 ])
+          | Some (Case case) ->
+            let filtered =
+              List.filter
+                (fun ((k, _), _) -> not (String.equal k discriminator))
+                mems
+            in
+            let case_result =
+              if is_object_codec case.codec
+              then go case.codec (Object (filtered, meta))
+              else
+                match lookup "value" filtered with
+                | Some v -> go case.codec v
+                | None ->
+                  Validation.Error
+                    (in_field "value" [ error "Missing required field" ])
+            in
+            (match case_result with
+            | Validation.Success payload ->
+              Validation.Success (case.inject payload)
+            | Validation.Error errs -> Validation.Error errs))
+        | Some _ ->
+          Validation.Error
+            (in_field
+               discriminator
+               [ error "Discriminator field must be a string" ]))
+      | _ -> Validation.Error [ error "Expected object" ]
     and go_list : type a.
       a t
       -> a list Constraint.t option
@@ -392,14 +535,16 @@ module Json_decoder = struct
       | json :: rest ->
         let head =
           match go item json with
-          | Success x -> Validation.Success x
-          | Error errs -> Error (in_field (string_of_int idx) errs)
+          | Validation.Success x -> Validation.Success x
+          | Validation.Error errs ->
+            Validation.Error (in_field (string_of_int idx) errs)
         in
         let tail = go_list item constraint_ (idx + 1) rest in
         (match head, tail with
-        | Success h, Success t -> Success (h :: t)
-        | Error e1, Error e2 -> Error (e1 @ e2)
-        | Error e, _ | _, Error e -> Error e)
+        | Validation.Success h, Validation.Success t ->
+          Validation.Success (h :: t)
+        | Validation.Error e1, Validation.Error e2 -> Validation.Error (e1 @ e2)
+        | Validation.Error e, _ | _, Validation.Error e -> Validation.Error e)
     and object_nat : type a.
       Jsont.object' -> (string, unit) Hashtbl.t -> (a fieldk, V.t) Sig.nat
       =
@@ -583,6 +728,28 @@ module Json_encoder = struct
     loop 0 0 (len - 1);
     write_char t '"'
 
+  type 'a object_case =
+    | Object_case :
+        { members : ('o fieldk, 'o) Free.t
+        ; extract : 'a -> 'o
+        }
+        -> 'a object_case
+
+  let rec object_case_of_codec : type a. a codec -> a object_case option =
+    function
+    | Object { members; _ } -> Some (Object_case { members; extract = Fun.id })
+    | Rec t -> object_case_of_codec (Lazy.force t)
+    | Iso { bwd; repr; _ } ->
+      (match object_case_of_codec repr with
+      | Some (Object_case data) ->
+        Some
+          (Object_case
+             { members = data.members
+             ; extract = (fun a -> data.extract (bwd a))
+             })
+      | None -> None)
+    | _ -> None
+
   let rec is_object_item : type a. a codec -> bool = function
     | Object _ -> true
     | Rec t -> is_object_item (Lazy.force t)
@@ -654,6 +821,27 @@ module Json_encoder = struct
         write_indent w ~nest
       end;
       write_char w '}'
+    | Union { discriminator; cases; _ } ->
+      write_char w '{';
+      let inner = nest + indent_step w in
+      let written = ref false in
+      write_newline w;
+      write_indent w ~nest:inner;
+      write_json_string w discriminator;
+      write_colon_sep w;
+      (match find_case_for_value a cases with
+      | Some (Projected { tag; codec; payload }) ->
+        write_json_string w tag;
+        written := true;
+        write_union_case_fields w ~nest:inner written codec payload
+      | None ->
+        invalid_arg "Sch.Json_encoder: value does not match any union case");
+      if !written
+      then begin
+        write_newline w;
+        write_indent w ~nest
+      end;
+      write_char w '}'
     | Rec t -> write_value w ~nest (Lazy.force t) a
     | Iso { bwd; repr; _ } ->
       let b = bwd a in
@@ -679,6 +867,23 @@ module Json_encoder = struct
           end;
           U.inj ())
     }
+
+  and write_union_case_fields : type a.
+    t -> nest:int -> bool ref -> a codec -> a -> unit
+    =
+   fun w ~nest rf codec value ->
+    match object_case_of_codec codec with
+    | Some (Object_case { members; extract }) ->
+      let obj = extract value in
+      ignore @@ Free.run unit_applicative (write_members rf w ~nest obj) members
+    | None ->
+      if !rf then write_sep w;
+      rf := true;
+      write_newline w;
+      write_indent w ~nest;
+      write_json_string w "value";
+      write_colon_sep w;
+      write_value w ~nest codec value
 
   let encode ?buf ?(eod = true) ?(format = Minify) t a w =
     let encoder = make ?buf ~format w in
@@ -818,6 +1023,8 @@ module To_json_schema = struct
         }
     | Object { doc; unknown; members; _ } ->
       object_schema state doc unknown members
+    | Union { doc; discriminator; cases } ->
+      union_schema state doc discriminator cases
     | Rec lazy_t -> rec_schema state lazy_t
     | Iso { repr; _ } -> to_schema state repr
 
@@ -869,6 +1076,50 @@ module To_json_schema = struct
           | r -> Some r)
       ; additional_properties
       ; description = (if doc <> "" then Some doc else None)
+      }
+
+  and union_schema : type a.
+    state -> string -> string -> a union_case list -> Json_schema.schema
+    =
+   fun state doc discriminator cases ->
+    let discriminator_values =
+      List.map (fun tag -> Jsont.Json.string tag) (case_tags cases)
+    in
+    let discriminator_property =
+      ( discriminator
+      , wrap
+          { Json_schema.empty with
+            type_ = Json_type.string
+          ; enum = Some discriminator_values
+          } )
+    in
+    let case_schema (Case c) =
+      let base = to_schema state c.codec in
+      let guard =
+        wrap
+          { Json_schema.empty with
+            type_ = Json_type.object_
+          ; properties =
+              Some
+                [ ( discriminator
+                  , wrap
+                      { Json_schema.empty with
+                        type_ = Json_type.string
+                      ; const = Some (Jsont.Json.string c.tag)
+                      } )
+                ]
+          ; required = Some [ discriminator ]
+          }
+      in
+      wrap { Json_schema.empty with all_of = Some [ base; guard ] }
+    in
+    wrap
+      { Json_schema.empty with
+        type_ = Json_type.object_
+      ; properties = Some [ discriminator_property ]
+      ; required = Some [ discriminator ]
+      ; one_of = Some (List.map case_schema cases)
+      ; description = (if not (String.equal doc "") then Some doc else None)
       }
 
   and rec_schema : type a. state -> a t Lazy.t -> Json_schema.schema =
