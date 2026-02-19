@@ -2,6 +2,7 @@ type message =
   { topic : string
   ; event : string
   ; payload : Jsont.json
+  ; origin : string option
   }
 
 type t
@@ -21,8 +22,6 @@ val create : (module S with type subscription = 's and type t = 'a) -> 'a -> t
 val subscribe : t -> string -> (message -> unit) -> int
 val unsubscribe : t -> int -> unit
 val broadcast : t -> message -> unit
-val broadcast_from : t -> self:int -> message -> unit
-val direct_broadcast : t -> int -> message -> unit
 val node_name : t -> string
 
 module Local : sig

@@ -109,8 +109,8 @@ module Cursor_channel : Tapak.CHANNEL = struct
         m "Tracked presence for user %s with phx_ref %s" user_id phx_ref);
 
       let state = { user_id; color; phx_ref } in
-      let transition : t Tapak.Channel.transition = { state; socket } in
-      Tapak.Channel.Join.ok ~transition ~response:(Jsont.Json.object' []))
+      let ctx : t Tapak.Channel.ctx = { state; socket } in
+      Tapak.Channel.Join.ok ctx (Jsont.Json.object' []))
     else
       Tapak.Channel.Join.error
         Jsont.Json.(object' [ mem (name "reason") (string "invalid topic") ])
@@ -136,20 +136,19 @@ module Cursor_channel : Tapak.CHANNEL = struct
           ~event:"cursor_update"
           ~payload:broadcast;
 
-        Tapak.Channel.Reply.respond
-          ~transition:{ state; socket }
-          ~status:`Ok
-          ~payload:Jsont.Json.(object' [ mem (name "status") (string "ok") ])
+        Tapak.Channel.Reply.ok
+          { state; socket }
+          Jsont.Json.(object' [ mem (name "status") (string "ok") ])
       | Error _ -> Tapak.Channel.Reply.noop { state; socket })
     | _ -> Tapak.Channel.Reply.noop { state; socket }
 
   let handle_info (msg : Tapak.Channel.broadcast) ~socket state =
-    let transition : t Tapak.Channel.transition = { state; socket } in
-    Tapak.Channel.Push.push ~transition ~payload:msg.payload
+    let ctx : t Tapak.Channel.ctx = { state; socket } in
+    Tapak.Channel.Push.push ctx msg.payload
 
   let handle_out ~event:_ ~payload ~socket state =
-    let transition : t Tapak.Channel.transition = { state; socket } in
-    Tapak.Channel.Push.push ~transition ~payload
+    let ctx : t Tapak.Channel.ctx = { state; socket } in
+    Tapak.Channel.Push.push ctx payload
 
   let terminate ~reason:_ ~socket:_ (state : t) =
     Logs.info (fun m ->

@@ -1,4 +1,4 @@
-type 'a transition =
+type 'a ctx =
   { state : 'a
   ; socket : Socket.t
   }
@@ -11,55 +11,51 @@ module Reply : sig
 
   type 'a t =
     | Respond of
-        { transition : 'a transition
+        { ctx : 'a ctx
         ; status : status
         ; payload : Jsont.json
         }
     | Stop of
-        { transition : 'a transition
+        { ctx : 'a ctx
         ; reason : string
         }
-    | Noop of 'a transition
+    | Noop of 'a ctx
 
   val string_of_status : status -> string
-
-  val respond :
-     transition:'a transition
-    -> status:status
-    -> payload:Jsont.json
-    -> 'a t
-
-  val stop : transition:'a transition -> reason:string -> 'a t
-  val noop : 'a transition -> 'a t
+  val respond : 'a ctx -> status -> Jsont.json -> 'a t
+  val ok : 'a ctx -> Jsont.json -> 'a t
+  val error : 'a ctx -> Jsont.json -> 'a t
+  val stop : 'a ctx -> string -> 'a t
+  val noop : 'a ctx -> 'a t
 end
 
 module Join : sig
   type 'a t =
     | Ok of
-        { transition : 'a transition
+        { ctx : 'a ctx
         ; response : Jsont.json
         }
     | Error of { reason : Jsont.json }
 
-  val ok : transition:'a transition -> response:Jsont.json -> 'a t
+  val ok : 'a ctx -> Jsont.json -> 'a t
   val error : Jsont.json -> 'a t
 end
 
 module Push : sig
   type 'a t =
     | Push of
-        { transition : 'a transition
+        { ctx : 'a ctx
         ; payload : Jsont.json
         }
     | Intercept of
-        { transition : 'a transition
+        { ctx : 'a ctx
         ; payload : Jsont.json
         }
-    | Suppress of 'a transition
+    | Suppress of 'a ctx
 
-  val push : transition:'a transition -> payload:Jsont.json -> 'a t
-  val intercept : transition:'a transition -> payload:Jsont.json -> 'a t
-  val suppress : 'a transition -> 'a t
+  val push : 'a ctx -> Jsont.json -> 'a t
+  val intercept : 'a ctx -> Jsont.json -> 'a t
+  val suppress : 'a ctx -> 'a t
   val socket : 'a t -> Socket.t
   val state : 'a t -> 'a
 end

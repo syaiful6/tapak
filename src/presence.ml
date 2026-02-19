@@ -329,6 +329,7 @@ let handle_sync_message t msg =
         { topic = sync_topic
         ; event = "sync"
         ; payload = Jsont.Json.encode Message.jsont response |> Result.get_ok
+        ; origin = None
         }
   | State_response { node; state } ->
     if not (String.equal node t.node_name)
@@ -405,6 +406,7 @@ let run_heartbeat_loop t =
                t.pubsub
                { topic = sync_topic
                ; event = "sync"
+               ; origin = None
                ; payload = Jsont.Json.encode Message.jsont msg |> Result.get_ok
                };
              check_node_health t);
@@ -459,6 +461,7 @@ let create
     pubsub
     { topic = sync_topic
     ; event = "sync"
+    ; origin = None
     ; payload = Jsont.Json.encode Message.jsont request |> Result.get_ok
     };
   t
@@ -488,6 +491,7 @@ let track ~topic ~key ~meta t =
     t.pubsub
     { topic = sync_topic
     ; event = "sync"
+    ; origin = None
     ; payload = Jsont.Json.encode Message.jsont delta |> Result.get_ok
     };
   let diff =
@@ -499,6 +503,7 @@ let track ~topic ~key ~meta t =
     t.pubsub
     { topic
     ; event = "presence_diff"
+    ; origin = None
     ; payload = Jsont.Json.encode Diff.jsont diff |> Result.get_ok
     };
   phx_ref
@@ -535,6 +540,7 @@ let untrack_ref t ~topic ~phx_ref =
       t.pubsub
       { topic = sync_topic
       ; event = "sync"
+      ; origin = None
       ; payload = Jsont.Json.encode Message.jsont delta |> Result.get_ok
       };
     let entry =
@@ -546,6 +552,7 @@ let untrack_ref t ~topic ~phx_ref =
       t.pubsub
       { topic
       ; event = "presence_diff"
+      ; origin = None
       ; payload = Jsont.Json.encode Diff.jsont diff |> Result.get_ok
       }
   | None -> ()
@@ -562,6 +569,7 @@ let broadcast_disconnect t ~socket_id =
     t.pubsub
     { topic = sync_topic
     ; event = "sync"
+    ; origin = None
     ; payload = Jsont.Json.encode Message.jsont msg |> Result.get_ok
     }
 

@@ -106,11 +106,9 @@ let test_reply_string_of_status () =
     (Channel.Reply.string_of_status `Error)
 
 let test_reply_respond () =
-  let transition = Channel.{ state = 42; socket = dummy_socket } in
-  match
-    Channel.Reply.respond ~transition ~status:`Ok ~payload:dummy_payload
-  with
-  | Channel.Reply.Respond { transition = t; status; payload } ->
+  let ctx = Channel.{ state = 42; socket = dummy_socket } in
+  match Channel.Reply.respond ctx `Ok dummy_payload with
+  | Channel.Reply.Respond { ctx = t; status; payload } ->
     Alcotest.(check int) "state" 42 t.state;
     Alcotest.(check string)
       "status"
@@ -120,9 +118,9 @@ let test_reply_respond () =
   | _ -> Alcotest.fail "Expected Respond"
 
 let test_reply_stop () =
-  let transition = Channel.{ state = "stopped"; socket = dummy_socket } in
-  match Channel.Reply.stop ~transition ~reason:"timeout" with
-  | Channel.Reply.Stop { transition = t; reason } ->
+  let ctx = Channel.{ state = "stopped"; socket = dummy_socket } in
+  match Channel.Reply.stop ctx "timeout" with
+  | Channel.Reply.Stop { ctx = t; reason } ->
     Alcotest.(check string) "state" "stopped" t.state;
     Alcotest.(check string) "reason" "timeout" reason
   | _ -> Alcotest.fail "Expected Stop"
@@ -141,12 +139,12 @@ let reply_tests =
   ]
 
 let test_join_ok () =
-  let transition = Channel.{ state = "ready"; socket = dummy_socket } in
+  let ctx = Channel.{ state = "ready"; socket = dummy_socket } in
   let response =
     Jsont.Json.(object' [ mem (name "status") (string "joined") ])
   in
-  match Channel.Join.ok ~transition ~response with
-  | Channel.Join.Ok { transition = t; response = r } ->
+  match Channel.Join.ok ctx response with
+  | Channel.Join.Ok { ctx = t; response = r } ->
     Alcotest.(check string) "state" "ready" t.state;
     Alcotest.(check json_eq) "response" response r
   | _ -> Alcotest.fail "Expected Ok"
@@ -162,8 +160,8 @@ let join_tests =
   [ "ok", `Quick, test_join_ok; "error", `Quick, test_join_error ]
 
 let test_push_push () =
-  let transition = Channel.{ state = 10; socket = dummy_socket } in
-  let push = Channel.Push.push ~transition ~payload:dummy_payload in
+  let ctx = Channel.{ state = 10; socket = dummy_socket } in
+  let push = Channel.Push.push ctx dummy_payload in
   Alcotest.(check int) "state" 10 (Channel.Push.state push);
   Alcotest.(check (option string))
     "socket.id"
@@ -175,8 +173,8 @@ let test_push_push () =
   | _ -> Alcotest.fail "Expected Push"
 
 let test_push_intercept () =
-  let transition = Channel.{ state = 20; socket = dummy_socket } in
-  let push = Channel.Push.intercept ~transition ~payload:dummy_payload in
+  let ctx = Channel.{ state = 20; socket = dummy_socket } in
+  let push = Channel.Push.intercept ctx dummy_payload in
   Alcotest.(check int) "state" 20 (Channel.Push.state push);
   match push with
   | Channel.Push.Intercept { payload; _ } ->
@@ -307,18 +305,16 @@ module Dummy_channel : Channel.S = struct
   let init () = ()
 
   let join ~topic:_ ~payload:_ ~socket _ =
-    Channel.Join.ok
-      ~transition:{ state = (); socket }
-      ~response:(Jsont.Json.object' [])
+    Channel.Join.ok { state = (); socket } (Jsont.Json.object' [])
 
   let handle_in ~event:_ ~payload:_ ~socket state =
     Channel.Reply.noop { state; socket }
 
   let handle_info (msg : Channel.broadcast) ~socket state =
-    Channel.Push.push ~transition:{ state; socket } ~payload:msg.payload
+    Channel.Push.push { state; socket } msg.payload
 
   let handle_out ~event:_ ~payload ~socket state =
-    Channel.Push.push ~transition:{ state; socket } ~payload
+    Channel.Push.push { state; socket } payload
 
   let terminate ~reason:_ ~socket:_ _ = ()
   let intercept = []

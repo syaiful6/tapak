@@ -1,4 +1,4 @@
-type 'a transition =
+type 'a ctx =
   { state : 'a
   ; socket : Socket.t
   }
@@ -11,62 +11,61 @@ module Reply = struct
 
   type 'a t =
     | Respond of
-        { transition : 'a transition
+        { ctx : 'a ctx
         ; status : status
         ; payload : Jsont.json
         }
     | Stop of
-        { transition : 'a transition
+        { ctx : 'a ctx
         ; reason : string
         }
-    | Noop of 'a transition
+    | Noop of 'a ctx
 
   let string_of_status = function `Ok -> "ok" | `Error -> "error"
-
-  let respond ~transition ~status ~payload =
-    Respond { transition; status; payload }
-
-  let stop ~transition ~reason = Stop { transition; reason }
-  let noop transition = Noop transition
+  let respond ctx status payload = Respond { ctx; status; payload }
+  let ok ctx payload = respond ctx `Ok payload
+  let error ctx payload = respond ctx `Error payload
+  let stop ctx reason = Stop { ctx; reason }
+  let noop ctx = Noop ctx
 end
 
 module Join = struct
   type 'a t =
     | Ok of
-        { transition : 'a transition
+        { ctx : 'a ctx
         ; response : Jsont.json
         }
     | Error of { reason : Jsont.json }
 
-  let ok ~transition ~response = Ok { transition; response }
+  let ok ctx response = Ok { ctx; response }
   let error reason = Error { reason }
 end
 
 module Push = struct
   type 'a t =
     | Push of
-        { transition : 'a transition
+        { ctx : 'a ctx
         ; payload : Jsont.json
         }
     | Intercept of
-        { transition : 'a transition
+        { ctx : 'a ctx
         ; payload : Jsont.json
         }
-    | Suppress of 'a transition
+    | Suppress of 'a ctx
 
-  let push ~transition ~payload = Push { transition; payload }
-  let intercept ~transition ~payload = Intercept { transition; payload }
-  let suppress transition = Suppress transition
+  let push ctx payload = Push { ctx; payload }
+  let intercept ctx payload = Intercept { ctx; payload }
+  let suppress ctx = Suppress ctx
 
   let socket = function
-    | Push { transition = { socket; _ }; _ }
-    | Intercept { transition = { socket; _ }; _ }
+    | Push { ctx = { socket; _ }; _ }
+    | Intercept { ctx = { socket; _ }; _ }
     | Suppress { socket; _ } ->
       socket
 
   let state = function
-    | Push { transition = { state; _ }; _ }
-    | Intercept { transition = { state; _ }; _ }
+    | Push { ctx = { state; _ }; _ }
+    | Intercept { ctx = { state; _ }; _ }
     | Suppress { state; _ } ->
       state
 end
@@ -116,11 +115,10 @@ module type S = sig
 end
 
 module Default = struct
-  let handle_info msg ~socket state =
-    Push.push ~transition:{ state; socket } ~payload:msg.payload
+  let handle_info msg ~socket state = Push.push { state; socket } msg.payload
 
   let handle_out ~event:_ ~payload ~socket state =
-    Push.push ~transition:{ state; socket } ~payload
+    Push.push { state; socket } payload
 
   let terminate ~reason:_ ~socket:_ _state = ()
   let intercept = []
