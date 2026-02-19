@@ -64,11 +64,10 @@ module Effect_handler = struct
     { pubsub : Pubsub.t
     ; presence : Presence.t option
     ; topic : string
-    ; push :
-        Channel.broadcast
-        -> unit (* what to do when the channel pushes a message *)
+    ; push : Channel.broadcast -> unit
     ; presence_refs : (string * string) list ref
     ; subscription : int option
+    ; origin : string option
     }
 
   let make_handler : type a. t -> (a, a) Effect.Deep.handler =
@@ -81,18 +80,16 @@ module Effect_handler = struct
           | Channel_effect.Broadcast { topic; event; payload } ->
             Some
               (fun (k : (b, a) Effect.Deep.continuation) ->
-                Pubsub.broadcast ctx.pubsub { topic; event; payload };
+                Pubsub.broadcast
+                  ctx.pubsub
+                  { topic; event; payload; origin = None };
                 Effect.Deep.continue k ())
           | Channel_effect.Broadcast_from { topic; event; payload } ->
             Some
               (fun k ->
-                (match ctx.subscription with
-                | Some sub ->
-                  Pubsub.broadcast_from
-                    ctx.pubsub
-                    ~self:sub
-                    { topic; event; payload }
-                | None -> Pubsub.broadcast ctx.pubsub { topic; event; payload });
+                Pubsub.broadcast
+                  ctx.pubsub
+                  { topic; event; payload; origin = ctx.origin };
                 Effect.Deep.continue k ())
           | Channel_effect.Push { event; payload } ->
             Some

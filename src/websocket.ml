@@ -63,10 +63,17 @@ module Transport = struct
       Log.err (fun m -> m "Failed to encode %s: %s" what e)
 end
 
+let next_session_id = Atomic.make 0
+
+let generate_sender_id pubsub =
+  let id = Atomic.fetch_and_add next_session_id 1 in
+  Printf.sprintf "%s-ws-%d" (Pubsub.node_name pubsub) id
+
 module Session = struct
   type t =
     { config : Socket_endpoint.t
     ; socket : Socket.t ref
+    ; id : string
     ; channels : (string, Socket_endpoint.channel_state) Hashtbl.t
     ; subscriptions : (string, int) Hashtbl.t
     ; broadcast_queue : Pubsub.message Eio.Stream.t
@@ -78,6 +85,7 @@ module Session = struct
     }
 
   let create ~config ~socket ~ws ~sockets ~mutex =
+    let id = generate_sender_id (config : Socket_endpoint.t).pubsub in
     { config
     ; socket
     ; channels = Hashtbl.create 8
@@ -85,6 +93,7 @@ module Session = struct
     ; broadcast_queue = Eio.Stream.create 100
     ; last_heartbeat = ref (Eio.Time.now config.clock)
     ; closed = ref false
+    ; id
     ; ws
     ; active_sockets = sockets
     ; active_sockets_mutex = mutex
@@ -112,6 +121,7 @@ module Session = struct
         { pubsub = session.config.pubsub
         ; presence = session.config.presence
         ; push = push_message session.ws
+        ; origin = Some session.id
         ; topic
         ; presence_refs
         ; subscription
@@ -129,7 +139,12 @@ module Session = struct
     let state = H.init () in
     let sub =
       Pubsub.subscribe session.config.pubsub topic (fun pmsg ->
-        Eio.Stream.add session.broadcast_queue pmsg)
+        match pmsg.Pubsub.origin with
+        | None -> Eio.Stream.add session.broadcast_queue pmsg
+        | Some origin when String.equal origin session.id ->
+          ()
+          (* exclude our own messages, this is broadcast with broadcast_from *)
+        | Some _ -> Eio.Stream.add session.broadcast_queue pmsg)
     in
     Hashtbl.replace session.subscriptions topic sub;
     let presence_refs_acc = ref [] in
@@ -149,18 +164,16 @@ module Session = struct
         Channel.Join.error (Jsont.Json.string "join crashed")
     in
     match join_result with
-    | Channel.Join.Ok { transition; response } ->
+    | Channel.Join.Ok { ctx; response } ->
       let updated_socket =
-        { transition.socket with
-          joined_topics = topic :: transition.socket.joined_topics
-        }
+        { ctx.socket with joined_topics = topic :: ctx.socket.joined_topics }
       in
       session.socket := updated_socket;
       let join_ref = Option.value msg.join_ref ~default:"" in
       let chan_state =
         Socket_endpoint.Channel_state
           { channel = (module H)
-          ; state = transition.state
+          ; state = ctx.state
           ; topic
           ; join_ref
           ; presence_refs = !presence_refs_acc
@@ -270,14 +283,14 @@ module Session = struct
           Result.error "handle in crashed"
       in
       (match handle_result with
-      | Ok (Channel.Reply.Respond { transition; status; payload }) ->
-        session.socket := transition.socket;
+      | Ok (Channel.Reply.Respond { ctx; status; payload }) ->
+        session.socket := ctx.socket;
         Hashtbl.replace
           session.channels
           topic
           (Socket_endpoint.Channel_state
              { channel = (module H)
-             ; state = transition.state
+             ; state = ctx.state
              ; topic
              ; join_ref
              ; presence_refs = !current_presence_refs
@@ -301,12 +314,12 @@ module Session = struct
              ; join_ref
              ; presence_refs = !current_presence_refs
              })
-      | Ok (Channel.Reply.Stop { transition; reason }) ->
-        session.socket := transition.socket;
+      | Ok (Channel.Reply.Stop { ctx; reason }) ->
+        session.socket := ctx.socket;
         H.terminate
           ~reason:(Error (Failure reason))
           ~socket:!(session.socket)
-          transition.state;
+          ctx.state;
         Hashtbl.remove session.channels topic
       | Error reason ->
         Log.err (fun m -> m "Channel handler for topic %s crashed" topic);
@@ -393,7 +406,7 @@ module Session = struct
                  });
             let should_intercept = List.mem pubsubmsg.event H.intercept in
             match push with
-            | Channel.Push.Push { transition; payload } ->
+            | Channel.Push.Push { ctx; payload } ->
               if should_intercept
               then (
                 let push_out =
@@ -401,7 +414,7 @@ module Session = struct
                     ~event:pubsubmsg.event
                     ~payload
                     ~socket:!(session.socket)
-                    transition.state
+                    ctx.state
                 in
                 session.socket := Channel.Push.socket push_out;
                 Hashtbl.replace
@@ -419,7 +432,7 @@ module Session = struct
                   send_push payload
                 | Suppress _ -> ())
               else send_push payload
-            | Intercept { payload; transition = { state; socket } } ->
+            | Intercept { payload; ctx = { state; socket } } ->
               let push_out =
                 H.handle_out
                   ~event:pubsubmsg.event

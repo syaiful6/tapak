@@ -2,14 +2,13 @@ type message =
   { topic : string
   ; event : string
   ; payload : Jsont.json
+  ; origin : string option
   }
 
 type t =
   { subscribe : string -> (message -> unit) -> int
   ; unsubscribe : int -> unit
-  ; broadcast : message -> unit
-  ; broadcast_from_impl : self:int -> message -> unit
-  ; direct_broadcast_impl : int -> message -> unit
+  ; broadcast_impl : message -> unit
   ; node_name : unit -> string
   }
 
@@ -46,30 +45,16 @@ let create : type a s.
       ignore (Saturn.Htbl.try_remove subscriptions sub)
     | None -> ()
   in
-  let broadcast msg = B.broadcast backend msg in
-  let broadcast_from_impl ~self msg =
-    Saturn.Htbl.to_seq subscriptions
-    |> Seq.iter (fun (id, (_, callback)) ->
-      if not (Int.equal self id) then callback msg)
-  in
-  let direct_broadcast_impl sub msg =
-    match Saturn.Htbl.find_opt subscriptions sub with
-    | Some (_, callback) -> callback msg
-    | None -> ()
-  in
+  let broadcast_impl msg = B.broadcast backend msg in
   { subscribe
   ; unsubscribe
-  ; broadcast
-  ; broadcast_from_impl
-  ; direct_broadcast_impl
+  ; broadcast_impl
   ; node_name = (fun () -> B.node_name backend)
   }
 
 let subscribe t = t.subscribe
 let unsubscribe t = t.unsubscribe
-let broadcast t = t.broadcast
-let broadcast_from t ~self msg = t.broadcast_from_impl ~self msg
-let direct_broadcast t sub msg = t.direct_broadcast_impl sub msg
+let broadcast t msg = t.broadcast_impl msg
 let node_name t = t.node_name ()
 
 module Local : S with type subscription = int = struct
