@@ -19,6 +19,7 @@
   uri
   hmap
   re
+  sch
   saturn
   httpun-ws
   bigstringaf
