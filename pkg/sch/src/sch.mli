@@ -192,7 +192,7 @@ module Json_encoder : sig
     | Minify
     | Indent of int
 
-  val encode :
+  val encode_writer :
      ?buf:Bytesrw.Bytes.t
     -> ?eod:bool
     -> ?format:format
@@ -202,6 +202,7 @@ module Json_encoder : sig
     -> unit
 
   val encode_string : ?format:format -> 'a t -> 'a -> string
+  val encode : 'a t -> 'a -> Jsont.json
 end
 
 val to_json_schema : ?draft:Json_schema.Draft.t -> 'a t -> Json_schema.t

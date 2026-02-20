@@ -4,6 +4,11 @@ module Json_schema = Sch.Json_schema
 let decode_str_result schema str =
   Sch.Json_decoder.decode_string schema str |> Sch.Validation.to_result
 
+let encode_roundtrip codec value =
+  Sch.Json_encoder.encode codec value
+  |> Sch.Json_decoder.decode codec
+  |> Sch.Validation.to_result
+
 let test_decoder_schema_single_field () =
   let schema = Sch.Object.(define @@ Sch.Object.mem "name" Sch.string) in
   let result = decode_str_result schema {|{"name": "Alice"}|} in
@@ -897,6 +902,224 @@ let to_json_schema_tests =
   ; "union schema", `Quick, test_union_to_json_schema
   ]
 
+let errs_t = Alcotest.(list (pair string string))
+
+let test_encode_to_json_string () =
+  Alcotest.(check (result string errs_t))
+    "string roundtrip"
+    (Ok "hello world")
+    (encode_roundtrip Sch.string "hello world")
+
+let test_encode_to_json_int () =
+  Alcotest.(check (result int errs_t))
+    "int roundtrip"
+    (Ok 42)
+    (encode_roundtrip Sch.int 42)
+
+let test_encode_to_json_bool () =
+  Alcotest.(check (result bool errs_t))
+    "bool roundtrip"
+    (Ok true)
+    (encode_roundtrip Sch.bool true)
+
+let test_encode_to_json_int32 () =
+  Alcotest.(check (result int32 errs_t))
+    "int32 roundtrip"
+    (Ok 2147483647l)
+    (encode_roundtrip Sch.int32 2147483647l)
+
+let test_encode_to_json_int64 () =
+  (* int64 encodes as a JSON string, decoded via coerce_string *)
+  Alcotest.(check (result int64 errs_t))
+    "int64 roundtrip"
+    (Ok 9223372036854775807L)
+    (encode_roundtrip Sch.int64 9223372036854775807L)
+
+let test_encode_to_json_float () =
+  (* float goes into Jsont.Json.number and comes back as exactly the same
+     float *)
+  Alcotest.(check (result (float 0.) errs_t))
+    "float roundtrip exact"
+    (Ok Float.pi)
+    (encode_roundtrip Sch.float Float.pi)
+
+let test_encode_to_json_double () =
+  Alcotest.(check (result (float 0.) errs_t))
+    "double roundtrip exact"
+    (Ok Float.pi)
+    (encode_roundtrip Sch.double Float.pi)
+
+let test_encode_to_json_option_none () =
+  Alcotest.(check (result (option int) errs_t))
+    "option none roundtrip"
+    (Ok None)
+    (encode_roundtrip (Sch.option Sch.int) None)
+
+let test_encode_to_json_option_some () =
+  Alcotest.(check (result (option int) errs_t))
+    "option some roundtrip"
+    (Ok (Some 42))
+    (encode_roundtrip (Sch.option Sch.int) (Some 42))
+
+let test_encode_to_json_list () =
+  Alcotest.(check (result (list int) errs_t))
+    "list roundtrip"
+    (Ok [ 1; 2; 3 ])
+    (encode_roundtrip (Sch.list Sch.int) [ 1; 2; 3 ])
+
+let test_encode_to_json_object () =
+  let schema =
+    Sch.Object.(
+      define
+      @@ let+ name = mem "name" ~enc:Stdlib.fst Sch.string
+         and+ age = mem "age" ~enc:Stdlib.snd Sch.int in
+         name, age)
+  in
+  Alcotest.(check (result (pair string int) errs_t))
+    "object roundtrip"
+    (Ok ("Alice", 30))
+    (encode_roundtrip schema ("Alice", 30))
+
+let test_encode_to_json_omit () =
+  let schema =
+    Sch.Object.(
+      define
+      @@ let+ name = mem "name" ~enc:Stdlib.fst Sch.string
+         and+ tag = mem_opt ~enc:Stdlib.snd Sch.string "tag" in
+         name, tag)
+  in
+  Alcotest.(check (result (pair string (option string)) errs_t))
+    "omit field roundtrip – none"
+    (Ok ("Alice", None))
+    (encode_roundtrip schema ("Alice", None));
+  Alcotest.(check (result (pair string (option string)) errs_t))
+    "omit field roundtrip – some"
+    (Ok ("Alice", Some "admin"))
+    (encode_roundtrip schema ("Alice", Some "admin"))
+
+let shape_testable =
+  Alcotest.testable
+    (fun ppf -> function
+       | Circle r -> Format.fprintf ppf "Circle(%f)" r
+       | Rectangle (w, h) -> Format.fprintf ppf "Rectangle(%f,%f)" w h)
+    (fun a b ->
+       match a, b with
+       | Circle r1, Circle r2 -> Float.equal r1 r2
+       | Rectangle (w1, h1), Rectangle (w2, h2) ->
+         Float.equal w1 w2 && Float.equal h1 h2
+       | _ -> false)
+
+let test_encode_to_json_union_object_case () =
+  let check label v =
+    Alcotest.(check (result shape_testable errs_t))
+      label
+      (Ok v)
+      (encode_roundtrip shape_union_schema v)
+  in
+  check "circle roundtrip" (Circle 3.5);
+  check "rectangle roundtrip" (Rectangle (10., 20.))
+
+let payload_testable =
+  Alcotest.testable
+    (fun ppf -> function
+       | Text s -> Format.fprintf ppf "Text(%s)" s
+       | Count n -> Format.fprintf ppf "Count(%d)" n)
+    (fun a b ->
+       match a, b with
+       | Text s1, Text s2 -> String.equal s1 s2
+       | Count n1, Count n2 -> Int.equal n1 n2
+       | _ -> false)
+
+let test_encode_to_json_union_scalar_case () =
+  let check label v =
+    Alcotest.(check (result payload_testable errs_t))
+      label
+      (Ok v)
+      (encode_roundtrip payload_schema v)
+  in
+  check "text roundtrip" (Text "hello");
+  check "count roundtrip" (Count 42)
+
+let test_encode_to_json_iso () =
+  let bool_str =
+    Sch.custom
+      ~enc:(fun b -> if b then "yes" else "no")
+      ~dec:(fun s ->
+        match s with
+        | "yes" -> Ok true
+        | "no" -> Ok false
+        | _ -> Error [ "invalid" ])
+      Sch.string
+  in
+  Alcotest.(check (result bool errs_t))
+    "iso roundtrip true"
+    (Ok true)
+    (encode_roundtrip bool_str true);
+  Alcotest.(check (result bool errs_t))
+    "iso roundtrip false"
+    (Ok false)
+    (encode_roundtrip bool_str false)
+
+let rec tree_equal a b =
+  a.value = b.value
+  && List.length a.children = List.length b.children
+  && List.for_all2 tree_equal a.children b.children
+
+let rec pp_tree ppf t =
+  Format.fprintf
+    ppf
+    "{value=%d; children=[%a]}"
+    t.value
+    (Format.pp_print_list
+       ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ", ")
+       pp_tree)
+    t.children
+
+let tree_testable = Alcotest.testable pp_tree tree_equal
+
+let test_encode_to_json_rec () =
+  let rec tree_codec =
+    lazy
+      Sch.Object.(
+        define ~kind:"tree"
+        @@ let+ value = mem "value" ~enc:(fun t -> t.value) Sch.int
+           and+ children =
+             mem
+               "children"
+               ~enc:(fun t -> t.children)
+               (Sch.list (Sch.rec' tree_codec))
+           in
+           { value; children })
+  in
+  let v =
+    { value = 1
+    ; children = [ { value = 2; children = [] }; { value = 3; children = [] } ]
+    }
+  in
+  Alcotest.(check (result tree_testable errs_t))
+    "rec roundtrip"
+    (Ok v)
+    (encode_roundtrip (Sch.rec' tree_codec) v)
+
+let encode_to_json_tests =
+  [ "string", `Quick, test_encode_to_json_string
+  ; "int", `Quick, test_encode_to_json_int
+  ; "bool", `Quick, test_encode_to_json_bool
+  ; "int32", `Quick, test_encode_to_json_int32
+  ; "int64", `Quick, test_encode_to_json_int64
+  ; "float", `Quick, test_encode_to_json_float
+  ; "double", `Quick, test_encode_to_json_double
+  ; "option none", `Quick, test_encode_to_json_option_none
+  ; "option some", `Quick, test_encode_to_json_option_some
+  ; "list", `Quick, test_encode_to_json_list
+  ; "object", `Quick, test_encode_to_json_object
+  ; "omit field", `Quick, test_encode_to_json_omit
+  ; "union object case", `Quick, test_encode_to_json_union_object_case
+  ; "union scalar case", `Quick, test_encode_to_json_union_scalar_case
+  ; "iso codec", `Quick, test_encode_to_json_iso
+  ; "rec codec", `Quick, test_encode_to_json_rec
+  ]
+
 let () =
   Alcotest.run
     "Sch"
@@ -904,4 +1127,5 @@ let () =
     ; "Decoder", schema_decoder_tests
     ; "Encoder", encoder_tests
     ; "To_json_schema", to_json_schema_tests
+    ; "Encode_to_json", encode_to_json_tests
     ]
