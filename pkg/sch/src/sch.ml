@@ -439,9 +439,7 @@ module Json_decoder = struct
         | Object (mems, _) ->
           let known = Hashtbl.create 16 in
           let nat = object_nat mems known in
-          let (result : a Validation.t) =
-            V.prj (Free.run validation_applicative nat members)
-          in
+          let result = V.prj (Free.run validation_applicative nat members) in
           (match unknown with
           | Skip -> result
           | Error_on_unknown ->
@@ -579,6 +577,15 @@ module Json_decoder = struct
     match Jsont_bytesrw.decode Jsont.json reader with
     | Error msg -> Validation.Error [ error msg ]
     | Ok json -> decode ?lookup codec json
+end
+
+module Diflist = struct
+  type 'a t = 'a list -> 'a list
+
+  let[@inline] single : 'a -> 'a t = fun x -> fun xs -> x :: xs
+  let empty : 'a t = fun xs -> xs
+  let[@inline] concat : 'a t -> 'a t -> 'a t = fun a b -> fun xs -> a (b xs)
+  let[@inline] to_list : 'a t -> 'a list = fun dl -> dl []
 end
 
 module Json_encoder = struct
@@ -885,7 +892,7 @@ module Json_encoder = struct
       write_colon_sep w;
       write_value w ~nest codec value
 
-  let encode ?buf ?(eod = true) ?(format = Minify) t a w =
+  let encode_writer ?buf ?(eod = true) ?(format = Minify) t a w =
     let encoder = make ?buf ~format w in
     write_value encoder ~nest:0 t a;
     write_eod ~eod encoder
@@ -893,21 +900,94 @@ module Json_encoder = struct
   let encode_string ?(format = Minify) t a =
     let buf = Buffer.create 256 in
     let writer = Bytes.Writer.of_buffer buf in
-    encode ~eod:true ~format t a writer;
+    encode_writer ~eod:true ~format t a writer;
     Buffer.contents buf
+
+  module Jsont_tree = struct
+    type jsonfield = (Jsont.name * Jsont.json) Diflist.t
+
+    module Fc = Sig.Make (struct
+        type 'a t = jsonfield
+      end)
+
+    let fc_applicative : Fc.t Sig.applicative =
+      { pure = (fun _ -> Fc.inj Diflist.empty)
+      ; map = (fun _f va -> Fc.inj (Fc.prj va))
+      ; apply = (fun vf va -> Fc.inj (Diflist.concat (Fc.prj va) (Fc.prj vf)))
+      }
+
+    let rec to_json : type a. a codec -> a -> Jsont.json =
+     fun codec a ->
+      match codec with
+      | Str _ -> Jsont.Json.string a
+      | Password _ -> Jsont.Json.string a
+      | Int _ -> Jsont.Json.number (Float.of_int a)
+      | Int32 _ -> Jsont.Json.number (Float.of_int (Int32.to_int a))
+      | Int64 _ -> Jsont.Json.string (Int64.to_string a)
+      | Bool _ -> Jsont.Json.bool a
+      | Float _ -> Jsont.Json.number a
+      | Double _ -> Jsont.Json.number a
+      | File -> failwith "Cannot encode File to JSON"
+      | Option ta ->
+        (match a with None -> Jsont.Json.null () | Some v -> to_json ta v)
+      | List { item; _ } -> Jsont.Json.list (List.map (to_json item) a)
+      | Object { members; _ } ->
+        let fields =
+          Fc.prj @@ Free.run fc_applicative (object_member_nat a) members
+        in
+        Jsont.Json.object' (Diflist.to_list fields)
+      | Union { discriminator; cases; _ } ->
+        Jsont.Json.object' (union_to_fields a discriminator cases)
+      | Rec t -> to_json (Lazy.force t) a
+      | Iso { bwd; repr; _ } ->
+        let b = bwd a in
+        to_json repr b
+
+    and union_to_fields : type a.
+      a -> string -> a union_case list -> (Jsont.name * Jsont.json) list
+      =
+     fun obj discriminator cases ->
+      match find_case_for_value obj cases with
+      | Some (Projected { tag; codec; payload }) ->
+        (match object_case_of_codec codec with
+        | Some (Object_case { members; extract }) ->
+          let obj = extract payload in
+          let fields =
+            Fc.prj @@ Free.run fc_applicative (object_member_nat obj) members
+          in
+          Diflist.to_list
+            (Diflist.concat
+               (Diflist.single
+                  (Jsont.Json.name discriminator, Jsont.Json.string tag))
+               fields)
+        | None ->
+          let value = to_json codec payload in
+          [ Jsont.Json.name discriminator, Jsont.Json.string tag
+          ; Jsont.Json.name "value", value
+          ])
+      | None ->
+        invalid_arg "Sch.Json_encoder: value does not match any union case"
+
+    and object_member_nat : type a. a -> (a fieldk, Fc.t) Sig.nat =
+     fun obj ->
+      { Sig.run =
+          (fun (type b) (fa : (b, a fieldk) Sig.app) ->
+            let field = Object.prj fa in
+            let v = field.get obj in
+            if not (field.omit v)
+            then
+              Fc.inj
+                (Diflist.single
+                   (Jsont.Json.name field.name, to_json field.codec v))
+            else Fc.inj Diflist.empty)
+      }
+  end
+
+  let encode = Jsont_tree.to_json
 end
 
 module To_json_schema = struct
   module Json_type = Json_schema.Json_type
-
-  module Diflist = struct
-    type 'a t = 'a list -> 'a list
-
-    let[@inline] single : 'a -> 'a t = fun x -> fun xs -> x :: xs
-    let empty : 'a t = fun xs -> xs
-    let[@inline] concat : 'a t -> 'a t -> 'a t = fun a b -> fun xs -> a (b xs)
-    let[@inline] to_list : 'a t -> 'a list = fun dl -> dl []
-  end
 
   type state =
     { defs : (string * Json_schema.schema) list ref

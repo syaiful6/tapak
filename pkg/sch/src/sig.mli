@@ -23,6 +23,6 @@ module Make : functor (T : FUNCTOR) -> sig
   type 'a s = 'a T.t
   type t = Common.t
 
-  external inj : 'a -> 'b = "%identity"
-  external prj : 'a -> 'b = "%identity"
+  external inj : 'a s -> ('a, t) app = "%identity"
+  external prj : ('a, t) app -> 'a s = "%identity"
 end
