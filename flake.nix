@@ -47,6 +47,7 @@
             tapak
             tapak-compressions
             tapak-ppx
+            sch
             ;
         }
       );
