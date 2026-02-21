@@ -60,6 +60,7 @@
    (>= 4.4.0))
   yojson
   (saturn (>= 1.0.0))
+  (sch (= :version))
   magic-mime
   mirage-crypto
   (mirage-crypto-rng (>= 1.2.0))

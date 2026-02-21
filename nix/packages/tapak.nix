@@ -15,6 +15,7 @@
   saturn,
   yojson,
   jsont,
+  sch,
   mirage-crypto,
   mirage-crypto-rng,
   alcotest,
@@ -53,6 +54,7 @@ buildDunePackage {
     saturn
     yojson
     jsont
+    sch
     mirage-crypto
     mirage-crypto-rng
   ];
