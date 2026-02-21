@@ -4,4 +4,13 @@
  (public_name tapak-openapi-examples)
  (enabled_if
   (= %{profile} dev))
- (libraries tapak eio_main yojson logs logs.fmt fmt.tty logs.threaded))
+ (libraries
+  tapak
+  eio_main
+  sch
+  jsont
+  jsont.bytesrw
+  logs
+  logs.fmt
+  fmt.tty
+  logs.threaded))

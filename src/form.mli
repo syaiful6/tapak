@@ -78,15 +78,27 @@ module Multipart : sig
 
   type node =
     | Object of (string, node) Hashtbl.t
-    | Array of node list ref
-    | Value of part
-    (** Tree node representing multipart form structure. The structure follow
-    the coventional bracket notation used in popular frameworks. *)
+    | Array of node list
+    | Part of part
+    (** Tree node representing multipart form structure per OpenAPI spec.
+
+        Per the OpenAPI multipart spec, complex fields (objects, arrays) are
+        encoded as a single part with [Content-Type: application/json]. Repeated
+        parts with the same field name produce an [Array] node. Simple scalar
+        fields are [Part] nodes whose body is read as a plain string.
+
+        Decoders (e.g. in [Sch_ext]) inspect [part.content_type] to decide how
+        to interpret each [Part]:
+        - ["application/json"] → parse body as JSON, decode against schema
+        - binary / with filename → treat as file upload ([Sch.File])
+        - otherwise → read body as a string scalar *)
 
   val to_tree : t -> node
-  (** [to_tree t] convert multipart form parts into a tree structure based on
-      bracket notation in field names (e.g., [user[name]], [files[]]). This allows
-      deep schema validation for multipart forms. *)
+  (** [to_tree parts] organises multipart parts into a lookup tree.
+
+      Parts are grouped by field name. A field that appears only once becomes a
+      [Part] leaf; a field that appears multiple times (repeated fields, i.e. an
+      array of values) becomes an [Array] of [Part] leaves. *)
 end
 
 module Urlencoded : sig
@@ -111,8 +123,8 @@ module Urlencoded : sig
   val get_list : string -> t -> string list
   (** [get_list key params] returns all values associated with [key] across all occurrences. *)
 
-  val to_yojson : t -> Yojson.Safe.t
-  (** [to_yojson params] converts the URL-encoded parameters into a nested
-      Yojson.Safe.t structure, interpreting bracket notation (e.g., [user[name]])
+  val to_json : t -> Jsont.json
+  (** [to_json params] converts the URL-encoded parameters into a nested
+      Jsont.json structure, interpreting bracket notation (e.g., [user[name]])
       as nested objects and arrays. This allows deep schema validation for forms. *)
 end

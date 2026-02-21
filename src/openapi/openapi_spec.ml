@@ -320,6 +320,7 @@ module Json_schema = struct
             |> remove_member "externalDocs"
             |> remove_member "example"
             |> remove_member "examples"
+            |> remove_member "$schema"
             |> add_member
                  "discriminator"
                  (Option.map
@@ -600,6 +601,7 @@ module Parameter = struct
     |> Jsont.Object.opt_mem ~enc:(fun p -> p.example) "example" Jsont.json
     |> Jsont.Object.mem
          ~enc:(fun p -> p.content)
+         ~enc_omit:(fun s -> List.is_empty s)
          ~dec_absent:[]
          "content"
          (String_map.jsont Media_type.jsont)
@@ -726,18 +728,50 @@ module Responses = struct
     }
 
   let jsont =
-    Jsont.Object.map ~kind:"Responses" (fun default responses ->
-      { default; responses })
-    |> Jsont.Object.opt_mem
-         ~enc:(fun r -> r.default)
-         "default"
-         (Json_schema.Or_ref.jsont Response.jsont)
-    |> Jsont.Object.mem
-         ~enc:(fun r -> r.responses)
-         ~dec_absent:[]
-         "responses"
-         (String_map.jsont Response.response_or_ref)
-    |> Jsont.Object.finish
+    let enc r =
+      let members =
+        List.map
+          (fun (code, resp) ->
+             ( (code, Jsont.Meta.none)
+             , Json_schema.encode_with Response.response_or_ref resp ))
+          r.responses
+      in
+      let members =
+        match r.default with
+        | None -> members
+        | Some d ->
+          ( ("default", Jsont.Meta.none)
+          , Json_schema.encode_with Response.response_or_ref d )
+          :: members
+      in
+      Jsont.Object (members, Jsont.Meta.none)
+    in
+    let dec json =
+      match json with
+      | Jsont.Object (members, _) ->
+        let default =
+          List.find_map
+            (fun ((name, _), value) ->
+               if String.equal name "default"
+               then
+                 Some (Json_schema.decode_with Response.response_or_ref value)
+               else None)
+            members
+        in
+        let responses =
+          List.filter_map
+            (fun ((name, _), value) ->
+               if String.equal name "default"
+               then None
+               else
+                 Some
+                   (name, Json_schema.decode_with Response.response_or_ref value))
+            members
+        in
+        { default; responses }
+      | _ -> Jsont.Error.msg Jsont.Meta.none "Responses must be an object"
+    in
+    Jsont.map ~kind:"Responses" ~dec ~enc Jsont.json
 end
 
 module Security_requirement = struct
@@ -827,6 +861,7 @@ module Operation = struct
     |> Jsont.Object.mem ~enc:(fun o -> o.responses) "responses" Responses.jsont
     |> Jsont.Object.mem
          ~enc:(fun o -> o.callbacks)
+         ~enc_omit:List.is_empty
          "callbacks"
          (String_map.jsont (Json_schema.Or_ref.jsont Callback.jsont))
     |> Jsont.Object.mem ~enc:(fun o -> o.deprecated) "deprecated" Jsont.bool
@@ -836,6 +871,7 @@ module Operation = struct
          (Jsont.list Security_requirement.jsont)
     |> Jsont.Object.mem
          ~enc:(fun o -> o.servers)
+         ~enc_omit:List.is_empty
          "servers"
          (Jsont.list Server.jsont)
     |> Jsont.Object.finish
@@ -1194,6 +1230,7 @@ let jsont =
        (String_map.jsont Path_item.path_item_or_ref)
   |> Jsont.Object.mem
        ~enc:(fun o -> o.webhooks)
+       ~enc_omit:List.is_empty
        "webhooks"
        (String_map.jsont Path_item.path_item_or_ref)
   |> Jsont.Object.opt_mem
@@ -1202,9 +1239,14 @@ let jsont =
        Component.jsont
   |> Jsont.Object.mem
        ~enc:(fun o -> o.security)
+       ~enc_omit:List.is_empty
        "security"
        (Jsont.list Security_requirement.jsont)
-  |> Jsont.Object.mem ~enc:(fun o -> o.tags) "tags" (Jsont.list Tag.jsont)
+  |> Jsont.Object.mem
+       ~enc:(fun o -> o.tags)
+       ~enc_omit:List.is_empty
+       "tags"
+       (Jsont.list Tag.jsont)
   |> Jsont.Object.opt_mem
        ~enc:(fun o -> o.external_docs)
        "externalDocs"

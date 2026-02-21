@@ -1,41 +1,20 @@
 open Imports
+module Spec = Openapi_spec
+module Json_schema = Sch.Json_schema
 
-type parameter =
-  { name : string
-  ; in_ : [ `Path | `Query | `Header | `Cookie ]
-  ; description : string option
-  ; required : bool
-  ; schema : Yojson.Safe.t
-  ; style : string option
-  ; explode : bool option
-  }
+let wrap_schema t = Json_schema.(Or_bool.Schema (Or_ref.Value t))
 
-type request_body =
-  { description : string option
-  ; required : bool
-  ; content : (string * Yojson.Safe.t) list
-  }
+module Diflist = struct
+  type 'a t = 'a list -> 'a list
 
-type operation =
-  { operation_id : string option
-  ; summary : string option
-  ; description : string option
-  ; tags : string list
-  ; parameters : parameter list
-  ; request_body : request_body option
-  ; responses : Yojson.Safe.t
-  }
+  let[@inline] single : 'a -> 'a t = fun x -> fun xs -> x :: xs
+  let empty : 'a t = fun xs -> xs
+  let[@inline] concat : 'a t -> 'a t -> 'a t = fun a b -> fun xs -> a (b xs)
+  let[@inline] to_list : 'a t -> 'a list = fun dl -> dl []
+end
 
-type path_item =
-  { get : operation option
-  ; post : operation option
-  ; put : operation option
-  ; patch : operation option
-  ; delete : operation option
-  ; head : operation option
-  }
-
-let rec path_to_string : type a b. (a, b) Router.path -> string * parameter list
+let rec path_to_string : type a b.
+  (a, b) Router.path -> string * Spec.Parameter.t list
   =
  fun path ->
   match path with
@@ -47,47 +26,66 @@ let rec path_to_string : type a b. (a, b) Router.path -> string * parameter list
     let rest_path, params = path_to_string rest in
     let param_name = "param" ^ string_of_int (List.length params) in
     let schema =
-      match format_name with
-      | Some format ->
-        `Assoc [ "type", `String type_name; "format", `String format ]
-      | None -> `Assoc [ "type", `String type_name ]
+      Spec.Json_schema.of_base
+        { Json_schema.empty with
+          type_ =
+            Option.value
+              (Json_schema.Json_type.type_of_string type_name)
+              ~default:Json_schema.Json_type.String
+            |> Json_schema.Json_type.of_value
+        ; format = format_name
+        }
     in
     let param =
-      { name = param_name
-      ; in_ = `Path
-      ; description = None
-      ; required = true
-      ; schema
-      ; style = None
-      ; explode = None
-      }
+      Spec.Parameter.
+        { name = param_name
+        ; in_ = Spec.Location.Path
+        ; description = None
+        ; required = true
+        ; schema = Some (wrap_schema schema)
+        ; style = None
+        ; explode = None
+        ; allow_reserved = false
+        ; allow_empty_value = false
+        ; deprecated = false
+        ; example = None
+        ; content = []
+        }
     in
-    Format.sprintf "/{%s}%s" param_name rest_path, param :: params
+    Printf.sprintf "/{%s}%s" param_name rest_path, param :: params
   | Enum { type_name; format_name; values; rest; format; _ } ->
     let rest_path, params = path_to_string rest in
     let param_name = "param" ^ string_of_int (List.length params) in
-    let enum_values = List.map (fun v -> `String (format v)) values in
+    let enum_values = List.map (fun v -> Jsont.Json.string (format v)) values in
     let schema =
-      match format_name with
-      | Some format ->
-        `Assoc
-          [ "type", `String type_name
-          ; "format", `String format
-          ; "enum", `List enum_values
-          ]
-      | None -> `Assoc [ "type", `String type_name; "enum", `List enum_values ]
+      Spec.Json_schema.of_base
+        { Json_schema.empty with
+          type_ =
+            Option.value
+              (Json_schema.Json_type.type_of_string type_name)
+              ~default:Json_schema.Json_type.String
+            |> Json_schema.Json_type.of_value
+        ; format = format_name
+        ; enum = Some enum_values
+        }
     in
     let param =
-      { name = param_name
-      ; in_ = `Path
-      ; description = None
-      ; required = true
-      ; schema
-      ; style = None
-      ; explode = None
-      }
+      Spec.Parameter.
+        { name = param_name
+        ; in_ = Spec.Location.Path
+        ; description = None
+        ; required = true
+        ; schema = Some (wrap_schema schema)
+        ; style = None
+        ; explode = None
+        ; allow_reserved = false
+        ; allow_empty_value = false
+        ; deprecated = false
+        ; example = None
+        ; content = []
+        }
     in
-    Format.sprintf "/{%s}%s" param_name rest_path, param :: params
+    Printf.sprintf "/{%s}%s" param_name rest_path, param :: params
   | Annotated { segment; name; description } ->
     let seg_path, params = path_to_string segment in
     (match params with
@@ -102,15 +100,25 @@ let rec path_to_string : type a b. (a, b) Router.path -> string * parameter list
   | Splat rest ->
     let rest_path, params = path_to_string rest in
     let param_name = "splat" in
+    let schema =
+      Spec.Json_schema.of_base
+        { Json_schema.empty with type_ = Json_schema.Json_type.string }
+    in
     let param =
-      { name = param_name
-      ; in_ = `Path
-      ; description = Some "Catch-all path segments"
-      ; required = true
-      ; schema = `Assoc [ "type", `String "string" ]
-      ; style = None
-      ; explode = None
-      }
+      Spec.Parameter.
+        { name = param_name
+        ; in_ = Spec.Location.Path
+        ; description = Some "Catch-all path segments"
+        ; required = true
+        ; schema = Some (wrap_schema schema)
+        ; style = None
+        ; explode = None
+        ; allow_reserved = false
+        ; allow_empty_value = false
+        ; deprecated = false
+        ; example = None
+        ; content = []
+        }
     in
     Format.sprintf "/{%s}%s" param_name rest_path, param :: params
 
@@ -142,642 +150,351 @@ let rec extract_metadata : type a b. (a, b) Router.schema -> Router.metadata =
     ; include_in_schema = meta.include_in_schema && base_meta.include_in_schema
     }
 
-let rec schema_to_openapi_schema : type a. a Schema.t -> Yojson.Safe.t =
+let schema_to_openapi_schema : type a. a Sch.t -> Spec.Json_schema.t =
  fun schema ->
-  match schema with
-  | Str { default; constraint_ } ->
-    let base = [ "type", `String "string" ] in
-    let with_default =
-      match default with
-      | Some d -> ("default", `String d) :: base
-      | None -> base
-    in
-    let with_constraints =
-      match constraint_ with
-      | Some c -> Schema.Constraint.to_json_schema c @ with_default
-      | None -> with_default
-    in
-    `Assoc with_constraints
-  | Int { default; constraint_ } ->
-    let base = [ "type", `String "integer"; "format", `String "int32" ] in
-    let with_default =
-      match default with Some d -> ("default", `Int d) :: base | None -> base
-    in
-    let with_constraints =
-      match constraint_ with
-      | Some c -> Schema.Constraint.to_json_schema c @ with_default
-      | None -> with_default
-    in
-    `Assoc with_constraints
-  | Int32 { default; constraint_ } ->
-    let base = [ "type", `String "integer"; "format", `String "int32" ] in
-    let with_default =
-      match default with
-      | Some d -> ("default", `Int (Int32.to_int d)) :: base
-      | None -> base
-    in
-    let with_constraints =
-      match constraint_ with
-      | Some c -> Schema.Constraint.to_json_schema c @ with_default
-      | None -> with_default
-    in
-    `Assoc with_constraints
-  | Int64 { default; constraint_ } ->
-    let base = [ "type", `String "integer"; "format", `String "int64" ] in
-    let with_default =
-      match default with
-      | Some d -> ("default", `Int (Int64.to_int d)) :: base
-      | None -> base
-    in
-    let with_constraints =
-      match constraint_ with
-      | Some c -> Schema.Constraint.to_json_schema c @ with_default
-      | None -> with_default
-    in
-    `Assoc with_constraints
-  | Bool { default } ->
-    let base = [ "type", `String "boolean" ] in
-    let with_default =
-      match default with Some d -> ("default", `Bool d) :: base | None -> base
-    in
-    `Assoc with_default
-  | Float { default; constraint_ } ->
-    let base = [ "type", `String "number"; "format", `String "float" ] in
-    let with_default =
-      match default with
-      | Some d -> ("default", `Float d) :: base
-      | None -> base
-    in
-    let with_constraints =
-      match constraint_ with
-      | Some c -> Schema.Constraint.to_json_schema c @ with_default
-      | None -> with_default
-    in
-    `Assoc with_constraints
-  | Option inner ->
-    let inner_schema = schema_to_openapi_schema inner in
-    (match inner_schema with
-    | `Assoc fields -> `Assoc (("nullable", `Bool true) :: fields)
-    | _ -> inner_schema)
-  | List { item; default; constraint_ } ->
-    let item_schema = schema_to_openapi_schema item in
-    let base = [ "type", `String "array"; "items", item_schema ] in
-    let with_default =
-      match default with
-      | Some [] -> ("default", `List []) :: base
-      | Some _ -> base
-      | None -> base
-    in
-    let with_constraints =
-      match constraint_ with
-      | Some c -> Schema.Constraint.to_json_schema c @ with_default
-      | None -> with_default
-    in
-    `Assoc with_constraints
-  | File -> `Assoc [ "type", `String "string"; "format", `String "binary" ]
-  | Choice { choices; default; _ } ->
-    let enum_values = List.map (fun (key, _) -> `String key) choices in
-    let base = [ "type", `String "string"; "enum", `List enum_values ] in
-    let with_default = match default with Some _ -> base | None -> base in
-    `Assoc with_default
-  | Field { schema = inner; name } ->
-    let field_schema = schema_to_openapi_schema inner in
-    `Assoc
-      [ "type", `String "object"; "properties", `Assoc [ name, field_schema ] ]
-  | App (left, right) ->
-    let left_schema = schema_to_openapi_schema left in
-    let right_schema = schema_to_openapi_schema right in
-    (match left_schema, right_schema with
-    | `Assoc left_fields, `Assoc right_fields ->
-      let left_props =
-        List.assoc_opt "properties" left_fields
-        |> Option.value ~default:(`Assoc [])
+  let t = Sch.to_json_schema schema in
+  Spec.Json_schema.of_base t
+
+module To_parameter = struct
+  type fieldc = Spec.Parameter.t Diflist.t
+
+  module Fc = Sch.Sig.Make (struct
+      type 'a t = fieldc
+    end)
+
+  let fc_applicative : Fc.t Sch.Sig.applicative =
+    { pure = (fun _ -> Fc.inj Diflist.empty)
+    ; map = (fun _f va -> Fc.inj (Fc.prj va))
+    ; apply = (fun vf va -> Fc.inj (Diflist.concat (Fc.prj va) (Fc.prj vf)))
+    }
+
+  let rec convert : type a. Spec.Location.t -> a Sch.t -> Spec.Parameter.t list =
+   fun loc codec ->
+    match codec with
+    | Sch.Object { members; _ } ->
+      let result =
+        Fc.prj @@ Sch.Free.run fc_applicative (field_nat loc) members
       in
-      let right_props =
-        List.assoc_opt "properties" right_fields
-        |> Option.value ~default:(`Assoc [])
+      Diflist.to_list result
+    | Rec t -> convert loc (Lazy.force t)
+    | Iso { repr; _ } -> convert loc repr
+    | Union { discriminator; cases; _ } ->
+      let enums =
+        List.map (fun (Sch.Case c) -> Jsont.Json.string c.tag) cases
       in
-      (match left_props, right_props with
-      | `Assoc lp, `Assoc rp ->
-        `Assoc [ "type", `String "object"; "properties", `Assoc (lp @ rp) ]
-      | _ -> left_schema)
-    | _ -> left_schema)
-  | Map { tree; _ } -> schema_to_openapi_schema tree
+      let dp =
+        Spec.Parameter.
+          { name = discriminator
+          ; in_ = loc
+          ; schema =
+              Some
+                (wrap_schema
+                   (Spec.Json_schema.of_base
+                      { Json_schema.empty with
+                        type_ = Json_schema.Json_type.string
+                      ; enum = Some enums
+                      }))
+          ; description = None
+          ; required = true
+          ; deprecated = false
+          ; allow_empty_value = false
+          ; allow_reserved = false
+          ; explode = None
+          ; style = None
+          ; example = None
+          ; content = []
+          }
+      in
+      let case_params =
+        List.concat_map
+          (fun (Sch.Case c) ->
+             let params = convert loc c.codec in
+             List.map
+               (fun p -> { p with Spec.Parameter.required = false })
+               params)
+          cases
+      in
+      let seen = Hashtbl.create 8 in
+      let unique_case_params =
+        List.filter
+          (fun (p : Spec.Parameter.t) ->
+             if Hashtbl.mem seen p.name
+             then false
+             else (
+               Hashtbl.add seen p.name ();
+               true))
+          case_params
+      in
+      dp :: unique_case_params
+    | _ -> []
 
-let rec schema_to_query_parameters : type a. a Schema.t -> parameter list =
- fun schema ->
-  match schema with
-  | Field { schema = field; name } ->
-    let is_required, param_schema =
-      match field with
-      | Option inner -> false, schema_to_openapi_schema inner
-      | List { default; _ } ->
-        ( (match default with Some _ -> false | None -> true)
-        , schema_to_openapi_schema field )
-      | _ ->
-        let has_default =
-          match field with
-          | Str { default = Some _; _ }
-          | Int { default = Some _; _ }
-          | Int32 { default = Some _; _ }
-          | Int64 { default = Some _; _ }
-          | Bool { default = Some _ }
-          | Float { default = Some _; _ }
-          | Choice { default = Some _; _ } ->
-            true
-          | _ -> false
-        in
-        not has_default, schema_to_openapi_schema field
-    in
-    let style, explode =
-      match field with List _ -> Some "form", Some true | _ -> None, None
-    in
-    [ { name
-      ; in_ = `Query
-      ; description = None
-      ; required = is_required
-      ; schema = param_schema
-      ; style
-      ; explode
-      }
-    ]
-  | App (left, right) ->
-    schema_to_query_parameters left @ schema_to_query_parameters right
-  | Map { tree; _ } -> schema_to_query_parameters tree
-  | _ -> []
+  and field_nat : type o. Spec.Location.t -> (o Sch.fieldk, Fc.t) Sch.Sig.nat =
+   fun location ->
+    { Sch.Sig.run =
+        (fun (type b) (fa : (b, o Sch.fieldk) Sch.Sig.app) ->
+          let field = Sch.Object.prj fa in
+          let schema = schema_to_openapi_schema field.codec in
+          let required = Option.is_none field.default in
+          let style, explode =
+            match field.codec with
+            | Sch.List _ -> Some Spec.Style.Form, Some true
+            | _ -> None, None
+          in
+          let parameter =
+            Spec.Parameter.
+              { name = field.name
+              ; in_ = location
+              ; description =
+                  (if String.equal field.doc "" then None else Some field.doc)
+              ; schema = Some (wrap_schema schema)
+              ; required
+              ; deprecated = false
+              ; allow_empty_value = false
+              ; allow_reserved = false
+              ; explode
+              ; style
+              ; example = None
+              ; content = []
+              }
+          in
+          Fc.inj (Diflist.single parameter))
+    }
+end
 
-let rec schema_to_header_parameters : type a. a Schema.t -> parameter list =
- fun schema ->
-  match schema with
-  | Field { schema = field; name } ->
-    let is_required, param_schema =
-      match field with
-      | Option inner -> false, schema_to_openapi_schema inner
-      | List { default; _ } ->
-        ( (match default with Some _ -> false | None -> true)
-        , schema_to_openapi_schema field )
-      | _ ->
-        let has_default =
-          match field with
-          | Str { default = Some _; _ }
-          | Int { default = Some _; _ }
-          | Int32 { default = Some _; _ }
-          | Int64 { default = Some _; _ }
-          | Bool { default = Some _ }
-          | Float { default = Some _; _ }
-          | Choice { default = Some _; _ } ->
-            true
-          | _ -> false
-        in
-        not has_default, schema_to_openapi_schema field
-    in
-    let style, explode =
-      match field with List _ -> Some "simple", Some false | _ -> None, None
-    in
-    [ { name = String.lowercase_ascii name (* Headers are case-insensitive *)
-      ; in_ = `Header
-      ; description = None
-      ; required = is_required
-      ; schema = param_schema
-      ; style
-      ; explode
-      }
-    ]
-  | App (left, right) ->
-    schema_to_header_parameters left @ schema_to_header_parameters right
-  | Map { tree; _ } -> schema_to_header_parameters tree
-  | _ -> []
+type any_schema = Schema : ('a, Response.t) Router.schema -> any_schema
 
-let rec schema_to_cookie_parameters : type a. a Schema.t -> parameter list =
- fun schema ->
-  match schema with
-  | Field { schema = field; name } ->
-    let is_required, param_schema =
-      match field with
-      | Option inner -> false, schema_to_openapi_schema inner
-      | List { default; _ } ->
-        ( (match default with Some _ -> false | None -> true)
-        , schema_to_openapi_schema field )
-      | _ ->
-        let has_default =
-          match field with
-          | Str { default = Some _; _ }
-          | Int { default = Some _; _ }
-          | Int32 { default = Some _; _ }
-          | Int64 { default = Some _; _ }
-          | Bool { default = Some _ }
-          | Float { default = Some _; _ }
-          | Choice { default = Some _; _ } ->
-            true
-          | _ -> false
-        in
-        not has_default, schema_to_openapi_schema field
-    in
-    [ { name
-      ; in_ = `Cookie
-      ; description = None
-      ; required = is_required
-      ; schema = param_schema
-      ; style = None
-      ; explode = None
-      }
-    ]
-  | App (left, right) ->
-    schema_to_cookie_parameters left @ schema_to_cookie_parameters right
-  | Map { tree; _ } -> schema_to_cookie_parameters tree
-  | _ -> []
-
-let rec extract_query_parameters : type a b.
-  (a, b) Router.schema -> parameter list
+let rec get_method_and_path : type a b.
+  (a, b) Router.schema -> Piaf.Method.t * string * Spec.Parameter.t list
   =
  fun schema ->
   match schema with
-  | Method _ -> []
-  | Query { schema = query_schema; rest } ->
-    schema_to_query_parameters query_schema @ extract_query_parameters rest
-  | Header { rest; _ } -> extract_query_parameters rest
-  | Cookie { rest; _ } -> extract_query_parameters rest
-  | Body { rest; _ } -> extract_query_parameters rest
-  | Extract { rest; _ } -> extract_query_parameters rest
-  | Response_model { rest; _ } -> extract_query_parameters rest
-  | Meta { rest; _ } -> extract_query_parameters rest
+  | Router.Method (meth, path) ->
+    let path_str, path_params = path_to_string path in
+    meth, path_str, path_params
+  | Router.Query { rest; _ } -> get_method_and_path rest
+  | Router.Header { rest; _ } -> get_method_and_path rest
+  | Router.Cookie { rest; _ } -> get_method_and_path rest
+  | Router.Body { rest; _ } -> get_method_and_path rest
+  | Router.Extract { rest; _ } -> get_method_and_path rest
+  | Router.Meta { rest; _ } -> get_method_and_path rest
+  | Router.Response_model { rest; _ } -> get_method_and_path rest
 
-let rec extract_header_parameters : type a b.
-  (a, b) Router.schema -> parameter list
-  =
- fun schema ->
-  match schema with
-  | Method _ -> []
-  | Query { rest; _ } -> extract_header_parameters rest
-  | Header { schema = header_schema; rest } ->
-    schema_to_header_parameters header_schema @ extract_header_parameters rest
-  | Cookie { rest; _ } -> extract_header_parameters rest
-  | Body { rest; _ } -> extract_header_parameters rest
-  | Extract { rest; _ } -> extract_header_parameters rest
-  | Response_model { rest; _ } -> extract_header_parameters rest
-  | Meta { rest; _ } -> extract_header_parameters rest
-
-let rec extract_cookie_parameters : type a b.
-  (a, b) Router.schema -> parameter list
-  =
- fun schema ->
-  match schema with
-  | Method _ -> []
-  | Query { rest; _ } -> extract_cookie_parameters rest
-  | Header { rest; _ } -> extract_cookie_parameters rest
-  | Cookie { schema = cookie_schema; rest } ->
-    schema_to_cookie_parameters cookie_schema @ extract_cookie_parameters rest
-  | Body { rest; _ } -> extract_cookie_parameters rest
-  | Extract { rest; _ } -> extract_cookie_parameters rest
-  | Response_model { rest; _ } -> extract_cookie_parameters rest
-  | Meta { rest; _ } -> extract_cookie_parameters rest
-
-let rec extract_request_body : type a b.
-  (a, b) Router.schema -> request_body option
-  =
- fun schema ->
-  match schema with
-  | Method _ -> None
-  | Query { rest; _ } -> extract_request_body rest
-  | Header { rest; _ } -> extract_request_body rest
-  | Cookie { rest; _ } -> extract_request_body rest
-  | Body { input_type; schema; _ } ->
-    let content_type =
-      match input_type with
-      | Json -> "application/json"
-      | Urlencoded -> "application/x-www-form-urlencoded"
-      | Multipart -> "multipart/form-data"
-    in
-    let body_schema = schema_to_openapi_schema schema in
-    Some
-      { description = None
-      ; required = true
-      ; content = [ content_type, body_schema ]
-      }
-  | Extract { rest; _ } -> extract_request_body rest
-  | Response_model { rest; _ } -> extract_request_body rest
-  | Meta { rest; _ } -> extract_request_body rest
-
-type response_info =
-  { status_code : int
-  ; schema : Yojson.Safe.t
+type operation_parts =
+  { parameters : Spec.Parameter.t list
+  ; body : (Router.media_type * Spec.Json_schema.t) option
+  ; response : (Piaf.Status.t * Spec.Json_schema.t) option
   }
 
-let rec extract_response_info : type a b.
-  (a, b) Router.schema -> response_info option
-  =
+let rec extract_parts : type a b. (a, b) Router.schema -> operation_parts =
  fun schema ->
   match schema with
-  | Method _ -> None
-  | Query { rest; _ } -> extract_response_info rest
-  | Header { rest; _ } -> extract_response_info rest
-  | Cookie { rest; _ } -> extract_response_info rest
-  | Body { rest; _ } -> extract_response_info rest
-  | Extract { rest; _ } -> extract_response_info rest
-  | Response_model { status; schema = resp_schema; _ } ->
-    let status_code = Piaf.Status.to_code status in
-    let openapi_schema = schema_to_openapi_schema resp_schema in
-    Some { status_code; schema = openapi_schema }
-  | Meta { rest; _ } -> extract_response_info rest
+  | Router.Method _ -> { parameters = []; body = None; response = None }
+  | Router.Query { schema; rest } ->
+    let parts = extract_parts rest in
+    let params = To_parameter.convert Spec.Location.Query schema in
+    { parts with parameters = parts.parameters @ params }
+  | Router.Header { schema; rest } ->
+    let parts = extract_parts rest in
+    let params = To_parameter.convert Spec.Location.Header schema in
+    { parts with parameters = parts.parameters @ params }
+  | Router.Cookie { schema; rest } ->
+    let parts = extract_parts rest in
+    let params = To_parameter.convert Spec.Location.Cookie schema in
+    { parts with parameters = parts.parameters @ params }
+  | Router.Body { input_type; schema; rest } ->
+    let parts = extract_parts rest in
+    let json_schema = schema_to_openapi_schema schema in
+    { parts with body = Some (input_type, json_schema) }
+  | Router.Response_model { schema; status; rest } ->
+    let parts = extract_parts rest in
+    let json_schema = schema_to_openapi_schema schema in
+    { parts with response = Some (status, json_schema) }
+  | Router.Extract { rest; _ } -> extract_parts rest
+  | Router.Meta { rest; _ } -> extract_parts rest
 
-let schema_to_operation : type a b. (a, b) Router.schema -> operation =
- fun schema ->
-  let metadata = extract_metadata schema in
-  let rec get_path : type a b. (a, b) Router.schema -> string * parameter list =
-   fun s ->
-    match s with
-    | Method (_, path) -> path_to_string path
-    | Query { rest; _ } -> get_path rest
-    | Header { rest; _ } -> get_path rest
-    | Cookie { rest; _ } -> get_path rest
-    | Body { rest; _ } -> get_path rest
-    | Extract { rest; _ } -> get_path rest
-    | Response_model { rest; _ } -> get_path rest
-    | Meta { rest; _ } -> get_path rest
+let content_type_of_media_type = function
+  | Router.Json -> "application/json"
+  | Router.Urlencoded -> "application/x-www-form-urlencoded"
+  | Router.Multipart -> "multipart/form-data"
+
+let make_media_type json_schema =
+  Spec.Media_type.
+    { schema = Some (wrap_schema json_schema)
+    ; example = None
+    ; examples = []
+    ; encoding = []
+    }
+
+let make_request_body description input_type json_schema =
+  Spec.Request_body.
+    { description
+    ; content =
+        [ content_type_of_media_type input_type, make_media_type json_schema ]
+    ; required = Some true
+    }
+
+let make_responses status json_schema =
+  let status_str = string_of_int (Piaf.Status.to_code status) in
+  let response =
+    Spec.Response.
+      { description = ""
+      ; headers = []
+      ; content = [ "application/json", make_media_type json_schema ]
+      ; links = []
+      }
   in
-  let _, path_parameters = get_path schema in
-  let query_parameters = extract_query_parameters schema in
-  let header_parameters = extract_header_parameters schema in
-  let cookie_parameters = extract_cookie_parameters schema in
-  let all_parameters =
-    path_parameters @ query_parameters @ header_parameters @ cookie_parameters
-  in
+  Spec.Responses.
+    { default = None
+    ; responses = [ status_str, Spec.Json_schema.Or_ref.Value response ]
+    }
+
+let default_responses =
+  Spec.Responses.
+    { default = None
+    ; responses =
+        [ ( "200"
+          , Spec.Json_schema.Or_ref.Value
+              Spec.Response.
+                { description = "OK"; headers = []; content = []; links = [] } )
+        ]
+    }
+
+let build_operation all_param_refs parts metadata =
   let request_body =
-    match extract_request_body schema with
-    | Some body -> Some { body with description = metadata.body_description }
-    | None -> None
+    Option.map
+      (fun (input_type, json_schema) ->
+         Spec.Json_schema.Or_ref.Value
+           (make_request_body
+              metadata.Router.body_description
+              input_type
+              json_schema))
+      parts.body
   in
   let responses =
-    match extract_response_info schema with
-    | Some { status_code; schema = resp_schema } ->
-      `Assoc
-        [ ( string_of_int status_code
-          , `Assoc
-              [ "description", `String "Successful response"
-              ; ( "content"
-                , `Assoc
-                    [ "application/json", `Assoc [ "schema", resp_schema ] ] )
-              ] )
-        ]
-    | None ->
-      `Assoc
-        [ ( "200"
-          , `Assoc
-              [ "description", `String "Successful response"
-              ; ( "content"
-                , `Assoc
-                    [ ( "application/json"
-                      , `Assoc [ "schema", `Assoc [ "type", `String "object" ] ]
-                      )
-                    ] )
-              ] )
-        ]
+    match parts.response with
+    | Some (status, json_schema) -> make_responses status json_schema
+    | None -> default_responses
   in
-  { operation_id = metadata.operation_id
-  ; summary = metadata.summary
-  ; description = metadata.description
-  ; tags = metadata.tags
-  ; parameters = all_parameters
-  ; request_body
-  ; responses
-  }
+  Spec.Operation.
+    { tags = (if metadata.Router.tags = [] then None else Some metadata.tags)
+    ; summary = metadata.summary
+    ; description = metadata.description
+    ; external_docs = None
+    ; operation_id = metadata.operation_id
+    ; parameters = all_param_refs
+    ; request_body
+    ; responses
+    ; callbacks = []
+    ; deprecated = false
+    ; security = None
+    ; servers = []
+    }
 
-let parameter_to_json param =
-  let in_str =
-    match param.in_ with
-    | `Path -> "path"
-    | `Query -> "query"
-    | `Header -> "header"
-    | `Cookie -> "cookie"
-  in
-  let base =
-    [ "name", `String param.name
-    ; "in", `String in_str
-    ; "required", `Bool param.required
-    ; "schema", param.schema
-    ]
-  in
-  let with_description =
-    match param.description with
-    | Some desc -> ("description", `String desc) :: base
-    | None -> base
-  in
-  let with_style =
-    match param.style with
-    | Some style -> ("style", `String style) :: with_description
-    | None -> with_description
-  in
-  let with_explode =
-    match param.explode with
-    | Some explode -> ("explode", `Bool explode) :: with_style
-    | None -> with_style
-  in
-  `Assoc with_explode
+let empty_path_item =
+  Spec.Path_item.
+    { ref = None
+    ; summary = None
+    ; description = None
+    ; get = None
+    ; put = None
+    ; post = None
+    ; delete = None
+    ; options = None
+    ; head = None
+    ; patch = None
+    ; trace = None
+    ; servers = []
+    ; parameters = []
+    }
 
-let request_body_to_json body =
-  let content =
-    `Assoc
-      (List.map
-         (fun (ct, schema) -> ct, `Assoc [ "schema", schema ])
-         body.content)
-  in
-  let base = [ "required", `Bool body.required; "content", content ] in
-  let with_description =
-    match body.description with
-    | Some desc -> ("description", `String desc) :: base
-    | None -> base
-  in
-  `Assoc with_description
+let add_operation meth operation item =
+  let open Spec.Path_item in
+  match meth with
+  | `GET -> { item with get = Some operation }
+  | `POST -> { item with post = Some operation }
+  | `PUT -> { item with put = Some operation }
+  | `DELETE -> { item with delete = Some operation }
+  | `HEAD -> { item with head = Some operation }
+  | `OPTIONS -> { item with options = Some operation }
+  | `TRACE -> { item with trace = Some operation }
+  | `Other "PATCH" -> { item with patch = Some operation }
+  | `Other "*" ->
+    { item with
+      get = Some operation
+    ; post = Some operation
+    ; put = Some operation
+    ; delete = Some operation
+    ; patch = Some operation
+    }
+  | `CONNECT | `Other _ -> item
 
-let operation_to_json op =
-  let base = [ "responses", op.responses ] in
-  let with_operation_id =
-    match op.operation_id with
-    | Some id -> ("operationId", `String id) :: base
-    | None -> base
-  in
-  let with_summary =
-    match op.summary with
-    | Some s -> ("summary", `String s) :: with_operation_id
-    | None -> with_operation_id
-  in
-  let with_description =
-    match op.description with
-    | Some d -> ("description", `String d) :: with_summary
-    | None -> with_summary
-  in
-  let with_tags =
-    if op.tags = []
-    then with_description
-    else
-      ("tags", `List (List.map (fun t -> `String t) op.tags))
-      :: with_description
-  in
-  let with_parameters =
-    if op.parameters = []
-    then with_tags
-    else
-      ("parameters", `List (List.map parameter_to_json op.parameters))
-      :: with_tags
-  in
-  let with_request_body =
-    match op.request_body with
-    | Some body -> ("requestBody", request_body_to_json body) :: with_parameters
-    | None -> with_parameters
-  in
-  `Assoc with_request_body
-
-let path_item_to_json (item : path_item) : Yojson.Safe.t option =
-  let fields = [] in
-  let with_get =
-    match item.get with
-    | Some op -> ("get", operation_to_json op) :: fields
-    | None -> fields
-  in
-  let with_post =
-    match item.post with
-    | Some op -> ("post", operation_to_json op) :: with_get
-    | None -> with_get
-  in
-  let with_put =
-    match item.put with
-    | Some op -> ("put", operation_to_json op) :: with_post
-    | None -> with_post
-  in
-  let with_patch =
-    match item.patch with
-    | Some op -> ("patch", operation_to_json op) :: with_put
-    | None -> with_put
-  in
-  let with_delete =
-    match item.delete with
-    | Some op -> ("delete", operation_to_json op) :: with_patch
-    | None -> with_patch
-  in
-  let with_head =
-    match item.head with
-    | Some op -> ("head", operation_to_json op) :: with_delete
-    | None -> with_delete
-  in
-  if with_head = [] then None else Some (`Assoc with_head)
-
-let rec extract_paths ?(prefix = "") (routes : Router.route list) :
-  (string * path_item) list
-  =
-  let merge_operations path_map path (method_key : Piaf.Method.t) operation =
-    let existing =
-      List.assoc_opt path path_map
-      |> Option.value
-           ~default:
-             { get = None
-             ; post = None
-             ; put = None
-             ; patch = None
-             ; delete = None
-             ; head = None
-             }
-    in
-    let updated =
-      match method_key with
-      | `GET -> { existing with get = Some operation }
-      | `POST -> { existing with post = Some operation }
-      | `PUT -> { existing with put = Some operation }
-      | `DELETE -> { existing with delete = Some operation }
-      | `HEAD -> { existing with head = Some operation }
-      | `Other "PATCH" -> { existing with patch = Some operation }
-      | _ -> existing
-    in
-    (path, updated) :: List.filter (fun (p, _) -> p <> path) path_map
-  in
-  let process_route acc = function
-    | Router.Route { schema; _ } ->
-      let metadata = extract_metadata schema in
-      if not metadata.include_in_schema
-      then acc
-      else
-        let operation = schema_to_operation schema in
-        let rec get_path_and_method : type a b.
-          (a, b) Router.schema -> string * Piaf.Method.t
-          =
-         fun s ->
-          match s with
-          | Method (meth, path) ->
-            let path_str, _ = path_to_string path in
-            prefix ^ path_str, meth
-          | Query { rest; _ } -> get_path_and_method rest
-          | Header { rest; _ } -> get_path_and_method rest
-          | Cookie { rest; _ } -> get_path_and_method rest
-          | Body { rest; _ } -> get_path_and_method rest
-          | Extract { rest; _ } -> get_path_and_method rest
-          | Response_model { rest; _ } -> get_path_and_method rest
-          | Meta { rest; _ } -> get_path_and_method rest
-        in
-        let path, method_ = get_path_and_method schema in
-        merge_operations acc path method_ operation
-    | Router.Scope { prefix = scope_prefix; routes; _ } ->
-      let scope_path_str, _ = path_to_string scope_prefix in
-      let new_prefix = prefix ^ scope_path_str in
-      let nested_paths = extract_paths ~prefix:new_prefix routes in
-      List.fold_left
-        (fun acc (path, item) ->
-           match List.assoc_opt path acc with
-           | None -> (path, item) :: acc
-           | Some existing ->
-             let merged =
-               { get =
-                   (match item.get with
-                   | Some _ as g -> g
-                   | None -> existing.get)
-               ; post =
-                   (match item.post with
-                   | Some _ as p -> p
-                   | None -> existing.post)
-               ; put =
-                   (match item.put with
-                   | Some _ as p -> p
-                   | None -> existing.put)
-               ; patch =
-                   (match item.patch with
-                   | Some _ as p -> p
-                   | None -> existing.patch)
-               ; delete =
-                   (match item.delete with
-                   | Some _ as d -> d
-                   | None -> existing.delete)
-               ; head =
-                   (match item.head with
-                   | Some _ as h -> h
-                   | None -> existing.head)
-               }
-             in
-             (path, merged) :: List.filter (fun (p, _) -> p <> path) acc)
-        acc
-        nested_paths
-  in
-  List.fold_left process_route [] routes
+let rec flatten prefix prefix_params routes =
+  List.concat_map
+    (fun route ->
+       match route with
+       | Router.Route { schema; _ } -> [ prefix, prefix_params, Schema schema ]
+       | Router.Scope { prefix = scope_prefix; routes = children; _ } ->
+         let scope_path, scope_params = path_to_string scope_prefix in
+         flatten (prefix ^ scope_path) (prefix_params @ scope_params) children)
+    routes
 
 let generate
-      ?(title = "API Documentation")
-      ?(version = "1.0.0")
-      ?(description = "")
+      ?(title = "API")
+      ?(version = "0.0.0")
+      ?description
       ?(base_path = "")
-      (routes : Router.route list) : Yojson.Safe.t
+      routes
   =
-  let paths = extract_paths ~prefix:base_path routes in
-  let paths_json =
-    List.filter_map
-      (fun (path, item) ->
-         match path_item_to_json item with
-         | Some json -> Some (path, json)
-         | None -> None)
-      paths
+  let flat = flatten base_path [] routes in
+  let path_map : (string, Spec.Path_item.t) Hashtbl.t = Hashtbl.create 16 in
+  List.iter
+    (fun (prefix, prefix_params, Schema schema) ->
+       let metadata = extract_metadata schema in
+       if metadata.include_in_schema
+       then begin
+         let meth, path_str, path_params = get_method_and_path schema in
+         let parts = extract_parts schema in
+         let full_path = prefix ^ path_str in
+         let all_param_refs =
+           List.map
+             (fun p -> Spec.Json_schema.Or_ref.Value p)
+             (prefix_params @ path_params @ parts.parameters)
+         in
+         let operation = build_operation all_param_refs parts metadata in
+         let item =
+           Option.value
+             ~default:empty_path_item
+             (Hashtbl.find_opt path_map full_path)
+         in
+         Hashtbl.replace path_map full_path (add_operation meth operation item)
+       end)
+    flat;
+  let paths =
+    Hashtbl.fold
+      (fun path item acc -> (path, Spec.Json_schema.Or_ref.Value item) :: acc)
+      path_map
+      []
+    |> List.sort (fun (a, _) (b, _) -> String.compare a b)
   in
-  let info =
-    `Assoc
-      [ "title", `String title
-      ; "version", `String version
-      ; "description", `String description
-      ]
-  in
-  `Assoc
-    [ "openapi", `String "3.1.0"; "info", info; "paths", `Assoc paths_json ]
+  { Spec.openapi = "3.1.0"
+  ; info =
+      Spec.Info.
+        { title
+        ; description
+        ; terms_of_service = None
+        ; contact = None
+        ; license = None
+        ; version
+        }
+  ; servers = []
+  ; paths
+  ; webhooks = []
+  ; components = None
+  ; security = []
+  ; tags = []
+  ; external_docs = None
+  }
+
+let generate_string ?title ?version ?description ?base_path routes =
+  let spec = generate ?title ?version ?description ?base_path routes in
+  Spec.to_string spec |> Result.get_ok

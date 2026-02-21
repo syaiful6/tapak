@@ -4,7 +4,6 @@ module Response = Response
 module Headers = Headers
 module Body = Body
 module Router = Router
-module Schema = Schema
 module Middleware = Middleware
 module Handler = Handler
 module Filter = Filter
@@ -92,7 +91,7 @@ val json :
   -> ?status:Piaf.Status.t
   -> ?headers:Piaf.Headers.t
   -> ?context:Context.t
-  -> Yojson.Safe.t
+  -> string
   -> response
 
 val redirect :
@@ -137,7 +136,7 @@ val openapi :
   -> ?description:string
   -> ?base_path:string
   -> Router.route list
-  -> Yojson.Safe.t
+  -> string
 
 val run_with :
    ?error_handler:Piaf.Server.error_handler

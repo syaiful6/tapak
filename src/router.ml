@@ -8,6 +8,11 @@ exception Extraction_failed of extractor_error
 
 type 'a extractor = Request.t -> ('a, extractor_error) result
 
+type media_type =
+  | Json
+  | Urlencoded
+  | Multipart
+
 type (_, _) path =
   | Nil : ('a, 'a) path
   | Literal : string * ('a, 'b) path -> ('a, 'b) path
@@ -48,30 +53,29 @@ type metadata =
 type (_, _) schema =
   | Method : Piaf.Method.t * ('a, 'b) path -> ('a, 'b) schema
   | Query :
-      { schema : 'query Schema.t
+      { schema : 'query Sch.t
       ; rest : ('a, 'b) schema
       }
       -> ('query -> 'a, 'b) schema
   | Header :
-      { schema : 'header Schema.t
+      { schema : 'header Sch.t
       ; rest : ('a, 'b) schema
       }
       -> ('header -> 'a, 'b) schema
   | Cookie :
-      { schema : 'cookie Schema.t
+      { schema : 'cookie Sch.t
       ; rest : ('a, 'b) schema
       }
       -> ('cookie -> 'a, 'b) schema
   | Response_model :
-      { encoder : 'resp -> Yojson.Safe.t
-      ; schema : 'resp Schema.t
+      { schema : 'resp Sch.t
       ; status : Piaf.Status.t
       ; rest : ('a, 'resp) schema
       }
       -> ('a, Response.t) schema
   | Body :
-      { input_type : 'input Schema.input
-      ; schema : 'validated Schema.t
+      { input_type : media_type
+      ; schema : 'validated Sch.t
       ; rest : ('a, 'b) schema
       }
       -> ('validated -> 'a, 'b) schema
@@ -236,18 +240,18 @@ let delete : ('a, 'b) path -> ('a, 'b) schema =
 let any : ('a, 'b) path -> ('a, 'b) schema =
  fun pattern -> Method (`Other "*", pattern)
 
-let body : type a b c input.
-  input Schema.input -> a Schema.t -> (b, c) schema -> (a -> b, c) schema
+let body : type a b c.
+  media_type -> a Sch.t -> (b, c) schema -> (a -> b, c) schema
   =
  fun input_type schema rest -> Body { input_type; schema; rest }
 
-let query : type a b c. a Schema.t -> (b, c) schema -> (a -> b, c) schema =
+let query : type a b c. a Sch.t -> (b, c) schema -> (a -> b, c) schema =
  fun schema rest -> Query { schema; rest }
 
-let header : type a b c. a Schema.t -> (b, c) schema -> (a -> b, c) schema =
+let header : type a b c. a Sch.t -> (b, c) schema -> (a -> b, c) schema =
  fun schema rest -> Header { schema; rest }
 
-let cookie : type a b c. a Schema.t -> (b, c) schema -> (a -> b, c) schema =
+let cookie : type a b c. a Sch.t -> (b, c) schema -> (a -> b, c) schema =
  fun schema rest -> Cookie { schema; rest }
 
 let extract : type a b g. g extractor -> (a, b) schema -> (g -> a, b) schema =
@@ -255,13 +259,11 @@ let extract : type a b g. g extractor -> (a, b) schema -> (g -> a, b) schema =
 
 let response_model : type a resp.
   status:Piaf.Status.t
-  -> schema:resp Schema.t
-  -> encoder:(resp -> Yojson.Safe.t)
+  -> schema:resp Sch.t
   -> (a, resp) schema
   -> (a, Response.t) schema
   =
- fun ~status ~schema ~encoder rest ->
-  Response_model { encoder; schema; status; rest }
+ fun ~status ~schema rest -> Response_model { schema; status; rest }
 
 let request : type a b. (a, b) schema -> (Request.t -> a, b) schema =
  fun schema -> Extract { extractor = Result.ok; rest = schema }
@@ -280,24 +282,44 @@ let empty_metadata =
 
 let operation_id : type a b. string -> (a, b) schema -> (a, b) schema =
  fun id rest ->
-  Meta { meta = { empty_metadata with operation_id = Some id }; rest }
+  match rest with
+  | Meta { meta; rest } ->
+    Meta { meta = { meta with operation_id = Some id }; rest }
+  | rest -> Meta { meta = { empty_metadata with operation_id = Some id }; rest }
 
 let summary : type a b. string -> (a, b) schema -> (a, b) schema =
- fun s rest -> Meta { meta = { empty_metadata with summary = Some s }; rest }
+ fun s rest ->
+  match rest with
+  | Meta { meta; rest } -> Meta { meta = { meta with summary = Some s }; rest }
+  | rest -> Meta { meta = { empty_metadata with summary = Some s }; rest }
 
 let description : type a b. string -> (a, b) schema -> (a, b) schema =
  fun d rest ->
-  Meta { meta = { empty_metadata with description = Some d }; rest }
+  match rest with
+  | Meta { meta; rest } ->
+    Meta { meta = { meta with description = Some d }; rest }
+  | rest -> Meta { meta = { empty_metadata with description = Some d }; rest }
 
 let tags : type a b. string list -> (a, b) schema -> (a, b) schema =
- fun ts rest -> Meta { meta = { empty_metadata with tags = ts }; rest }
+ fun ts rest ->
+  match rest with
+  | Meta { meta; rest } -> Meta { meta = { meta with tags = ts }; rest }
+  | rest -> Meta { meta = { empty_metadata with tags = ts }; rest }
 
 let tag : type a b. string -> (a, b) schema -> (a, b) schema =
- fun t rest -> Meta { meta = { empty_metadata with tags = [ t ] }; rest }
+ fun t rest ->
+  match rest with
+  | Meta { meta; rest } ->
+    Meta { meta = { meta with tags = meta.tags @ [ t ] }; rest }
+  | rest -> Meta { meta = { empty_metadata with tags = [ t ] }; rest }
 
 let include_in_schema : type a b. bool -> (a, b) schema -> (a, b) schema =
  fun value rest ->
-  Meta { meta = { empty_metadata with include_in_schema = value }; rest }
+  match rest with
+  | Meta { meta; rest } ->
+    Meta { meta = { meta with include_in_schema = value }; rest }
+  | rest ->
+    Meta { meta = { empty_metadata with include_in_schema = value }; rest }
 
 let p : type a b. string -> (a, b) path -> (a, b) path =
  fun name segment -> Annotated { segment; name; description = None }
@@ -374,14 +396,12 @@ module Path_cursor = struct
       | Some (_, rest) -> skip (n - 1) rest
 end
 
-let expected_content_type : type input. input Schema.input -> string = function
-  | Schema.Json -> "application/json"
-  | Schema.Urlencoded -> "application/x-www-form-urlencoded"
-  | Schema.Multipart -> "multipart/form-data"
+let expected_content_type : media_type -> string = function
+  | Json -> "application/json"
+  | Urlencoded -> "application/x-www-form-urlencoded"
+  | Multipart -> "multipart/form-data"
 
-let validate_content_type : type input.
-  input Schema.input -> Request.t -> (unit, string) result
-  =
+let validate_content_type : media_type -> Request.t -> (unit, string) result =
  fun input_type request ->
   let expected = expected_content_type input_type in
   let actual = Piaf.Headers.get (Request.headers request) "content-type" in
@@ -395,10 +415,7 @@ let validate_content_type : type input.
       | media :: _ -> String.trim media
       | [] -> content_type
     in
-    if
-      String.equal
-        (String.lowercase_ascii media_type)
-        (String.lowercase_ascii expected)
+    if Sch_ext.CI.equal media_type expected
     then Ok ()
     else
       Error
@@ -518,46 +535,44 @@ module Cookie_parser = struct
       cookies;
     Hashtbl.fold (fun k v acc -> (k, v) :: acc) tbl []
 
-  let to_yojson request =
+  let to_json request =
     let forms = parse request in
     let fields =
       List.map
         (fun (key, values) ->
            match values with
-           | [] -> key, `Null
-           | [ single ] -> key, `String single
+           | [] -> Jsont.Json.name key, Jsont.Json.null ()
+           | [ single ] -> Jsont.Json.name key, Jsont.Json.string single
            | multiple ->
-             key, `List (List.map (fun v -> `String v) (List.rev multiple)))
+             ( Jsont.Json.name key
+             , Jsont.Json.list (List.map Jsont.Json.string (List.rev multiple))
+             ))
         forms
     in
-    `Assoc fields
+    Jsont.Json.object' fields
 end
 
-let evaluate_body_schema : type a b.
-  a Schema.input
-  -> b Schema.t
-  -> Request.t
-  -> (b, (string * string) list) result
+let evaluate_body_schema : type a.
+  media_type -> a Sch.t -> Request.t -> (a, (string * string) list) result
   =
  fun input schema request ->
   match input with
-  | Schema.Json ->
+  | Json ->
     (match Body.to_string (Request.body request) with
     | Ok body_str ->
-      (match
-         try Ok (Yojson.Safe.from_string body_str) with
-         | _ -> Error "Invalid JSON body"
-       with
-      | Ok json -> Schema.eval Schema.Json schema json
-      | Error e -> Error [ "body", e ])
-    | Error _ -> raise (Bad_request "Failed to read request body"))
-  | Schema.Urlencoded ->
+      Sch.Json.decode_string schema body_str |> Sch.Validation.to_result
+    | Error _ -> raise (Bad_request "Unable to read request body"))
+  | Urlencoded ->
     (match Form.Urlencoded.of_body (Request.body request) with
-    | Ok form -> Schema.eval Schema.Urlencoded schema form
+    | Ok form ->
+      Sch.Json.decode schema (Form.Urlencoded.to_json form)
+      |> Sch.Validation.to_result
     | Error _ -> raise (Bad_request "Invalid URL-encoded body"))
-  | Schema.Multipart ->
+  | Multipart ->
     (match Form.Multipart.parse request with
-    | Ok form -> Schema.eval Schema.Multipart schema form
+    | Ok form ->
+      Sch_ext.Multipart_decoder.decode schema (Form.Multipart.to_tree form)
+      |> Sch.Validation.to_result
     | Error _ -> raise (Bad_request "Invalid multipart body"))
 
 let rec evaluate_schema : type a b.
@@ -568,23 +583,31 @@ let rec evaluate_schema : type a b.
   | Method (_, pattern) -> match_pattern pattern cursor request k
   | Query { schema; rest } ->
     (match
-       Schema.eval Schema.Urlencoded schema (Form.Urlencoded.of_query request)
+       Sch.Json.decode
+         schema
+         (Form.Urlencoded.of_query request |> Form.Urlencoded.to_json)
      with
-    | Ok query_data -> evaluate_schema rest cursor (k query_data) request
-    | Error errors -> raise (Validation_failed errors))
+    | Sch.Validation.Success query_data ->
+      evaluate_schema rest cursor (k query_data) request
+    | Sch.Validation.Error errors ->
+      raise (Validation_failed (List.map Sch.error_to_pair errors)))
   | Header { schema; rest } ->
     (match
-       Schema.evaluate
-         (module Schema.Header_interpreter)
+       Sch.Json.decode
+         ~lookup:Sch.mem_ci
          schema
-         (Schema_headers.to_yojson (Request.headers request))
+         (Sch_ext.Header.to_json (Request.headers request))
      with
-    | Ok header_data -> evaluate_schema rest cursor (k header_data) request
-    | Error errors -> raise (Validation_failed errors))
+    | Sch.Validation.Success header_data ->
+      evaluate_schema rest cursor (k header_data) request
+    | Sch.Validation.Error errors ->
+      raise (Validation_failed (List.map Sch.error_to_pair errors)))
   | Cookie { schema; rest } ->
-    (match Schema.eval Schema.Json schema (Cookie_parser.to_yojson request) with
-    | Ok cookie_data -> evaluate_schema rest cursor (k cookie_data) request
-    | Error errors -> raise (Validation_failed errors))
+    (match Sch.Json.decode schema (Cookie_parser.to_json request) with
+    | Sch.Validation.Success cookie_data ->
+      evaluate_schema rest cursor (k cookie_data) request
+    | Sch.Validation.Error errors ->
+      raise (Validation_failed (List.map Sch.error_to_pair errors)))
   | Body { input_type; schema; rest } ->
     (match validate_content_type input_type request with
     | Error msg -> raise (Bad_request msg)
@@ -593,15 +616,14 @@ let rec evaluate_schema : type a b.
       | Ok validated_data ->
         evaluate_schema rest cursor (k validated_data) request
       | Error errors -> raise (Validation_failed errors)))
-  | Response_model { encoder; status; rest; _ } ->
+  | Response_model { status; rest; schema } ->
     (match evaluate_schema rest cursor k request with
     | Some data ->
-      let json = encoder data in
-      let body = Yojson.Safe.to_string json in
+      let json = Sch.Json.encode_string schema data in
       let headers =
         Piaf.Headers.of_list [ "content-type", "application/json" ]
       in
-      Some (Response.of_string ~headers ~body status)
+      Some (Response.of_string ~headers ~body:json status)
     | None -> None)
   | Extract { extractor; rest } ->
     (match extractor request with
@@ -864,3 +886,6 @@ let routes
   =
   let matcher = router route_list in
   fun req -> try matcher req with Not_found -> not_found req
+
+let validation_error_to_json errors =
+  Jsont.Json.(object' (errors |> List.map (fun (k, v) -> name k, string v)))
