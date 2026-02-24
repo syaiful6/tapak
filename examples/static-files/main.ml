@@ -11,6 +11,14 @@ let trusted_proxies =
     (* Ipaddr.Prefix.of_string_exn "192.168.0.0/16"; *)
   ]
 
+let message_schema =
+  Sch.Object.(
+    define ~kind:"Message"
+    @@
+    let+ message = mem ~enc:Stdlib.fst "message" Sch.string
+    and+ timestamp = mem ~enc:Stdlib.snd "timestamp" Sch.float in
+    message, timestamp)
+
 let () =
   Fmt_tty.setup_std_outputs ();
   Logs.set_level (Some Logs.Info);
@@ -32,16 +40,11 @@ let () =
   in
 
   let api_handler () =
-    let json_body =
-      `Assoc
-        [ "message", `String "Hello from API"
-        ; "timestamp", `Float (Ptime_clock.now () |> Ptime.to_float_s)
-        ]
-    in
+    let json_body = "Hello from API", Ptime_clock.now () |> Ptime.to_float_s in
     let headers =
       Piaf.Headers.of_list [ "Content-Type", "application/json; charset=utf-8" ]
     in
-    Tapak.json ~headers json_body
+    Tapak.json ~headers (Sch.Json.encode_string message_schema json_body)
   in
 
   let handler =

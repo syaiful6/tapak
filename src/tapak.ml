@@ -3,7 +3,6 @@ module Response = Response
 module Headers = Headers
 module Body = Body
 module Router = Router
-module Schema = Schema
 module Context = Context
 module Middleware = Middleware
 module Handler = Handler
@@ -85,7 +84,7 @@ let static ~env ?config ?(follow = false) ?ttl_seconds path () =
   let backend = Static.filesystem ~env ~follow ?ttl_seconds path in
   Static.serve backend ?config ()
 
-let openapi = Openapi.generate
+let openapi = Openapi.generate_string
 
 type systemd = Server.Systemd.t
 

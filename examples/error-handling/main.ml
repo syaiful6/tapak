@@ -1,28 +1,72 @@
-type user_input =
-  { name : string
-  ; email : string
-  ; age : int
-  }
+module User_request = struct
+  type t =
+    { name : string
+    ; email : string
+    ; age : int
+    }
 
-let user_schema =
-  let open Tapak.Schema.Syntax in
-  let+ name = Tapak.Schema.(str ~constraint_:(Constraint.min_length 3) "name")
-  and+ email =
-    Tapak.Schema.(str ~constraint_:(Constraint.format `Email) "email")
-  and+ age =
-    Tapak.Schema.(int ~constraint_:(Constraint.int_range 18 120) "age")
-  in
-  { name; email; age }
+  let schema =
+    Sch.Object.(
+      define ~kind:"User"
+      @@
+      let+ name =
+        mem
+          ~enc:(fun u -> u.name)
+          "name"
+          Sch.(with_ ~constraint_:(Constraint.min_length 3) string)
+      and+ email =
+        mem
+          ~enc:(fun u -> u.email)
+          "email"
+          Sch.(with_ ~constraint_:(Constraint.format `Email) string)
+      and+ age =
+        mem
+          ~enc:(fun u -> u.age)
+          "age"
+          Sch.(with_ ~constraint_:(Constraint.int_range 18 120) int)
+      in
+      { name; email; age })
+end
+
+module User = struct
+  type t =
+    { id : int
+    ; name : string
+    ; email : string
+    ; age : int
+    }
+
+  let of_request ~id (req : User_request.t) =
+    { id; name = req.name; email = req.email; age = req.age }
+
+  let schema =
+    Sch.Object.(
+      define ~kind:"User"
+      @@
+      let+ id = mem ~enc:(fun u -> u.id) "id" Sch.int
+      and+ name =
+        mem
+          ~enc:(fun u -> u.name)
+          "name"
+          Sch.(with_ ~constraint_:(Constraint.min_length 3) string)
+      and+ email =
+        mem
+          ~enc:(fun u -> u.email)
+          "email"
+          Sch.(with_ ~constraint_:(Constraint.format `Email) string)
+      and+ age =
+        mem
+          ~enc:(fun u -> u.age)
+          "age"
+          Sch.(with_ ~constraint_:(Constraint.int_range 18 120) int)
+      in
+      { id; name; email; age })
+end
 
 let create_user_json user =
   Tapak.json
     ~status:`Created
-    (`Assoc
-        [ "id", `Int 123
-        ; "name", `String user.name
-        ; "email", `String user.email
-        ; "age", `Int user.age
-        ])
+    (Sch.Json.encode_string User.schema (User.of_request ~id:123 user))
 
 let create_user_html user =
   let html =
@@ -33,7 +77,7 @@ let create_user_html user =
   <p><strong>Email:</strong> %s</p>
   <p><strong>Age:</strong> %d</p>
 </div>|}
-      user.name
+      user.User_request.name
       user.email
       user.age
   in
@@ -42,20 +86,19 @@ let create_user_html user =
 let json_error_handler _request exn =
   match exn with
   | Tapak.Router.Validation_failed errors ->
-    Some
-      (Tapak.json
+    Option.some
+    @@ Tapak.json
          ~status:`Bad_request
-         (`Assoc
-             [ ( "errors"
-               , `List
-                   (List.map
-                      (fun (field, msg) ->
-                         `Assoc
-                           [ "field", `String field; "message", `String msg ])
-                      errors) )
-             ]))
+         (Jsont_bytesrw.encode_string
+            Jsont.json
+            (Tapak.Router.validation_error_to_json errors)
+         |> Result.get_ok)
   | Tapak.Router.Bad_request msg ->
-    Some (Tapak.json ~status:`Bad_request (`Assoc [ "error", `String msg ]))
+    let body = Jsont.Json.(object' [ name "error", string msg ]) in
+    Option.some
+    @@ Tapak.json
+         ~status:`Bad_request
+         (Jsont_bytesrw.encode_string Jsont.json body |> Result.get_ok)
   | _ -> None
 
 let html_error_handler _request exn =
@@ -97,18 +140,12 @@ let negotiated_error_handler request exn =
       (Tapak.Response.negotiate ~status:`Bad_request request (fun format ->
          match format with
          | `Json ->
-           let json =
-             `Assoc
-               [ ( "errors"
-                 , `List
-                     (List.map
-                        (fun (field, msg) ->
-                           `Assoc
-                             [ "field", `String field; "message", `String msg ])
-                        errors) )
-               ]
-           in
-           Some ("application/json", Yojson.Safe.to_string json)
+           Some
+             ( "application/json"
+             , Jsont_bytesrw.encode_string
+                 Jsont.json
+                 (Tapak.Router.validation_error_to_json errors)
+               |> Result.get_ok )
          | `Html ->
            let error_items =
              errors
@@ -133,7 +170,10 @@ let negotiated_error_handler request exn =
          | `Json ->
            Some
              ( "application/json"
-             , Yojson.Safe.to_string (`Assoc [ "error", `String msg ]) )
+             , Jsont_bytesrw.encode_string
+                 Jsont.json
+                 (Jsont.Json.object' Jsont.Json.[ name "error", string msg ])
+               |> Result.get_ok )
          | `Html ->
            Some
              ( "text/html; charset=utf-8"
@@ -230,10 +270,14 @@ let handle_admin_errors _req exn =
     Some
       (Tapak.json
          ~status:`Bad_request
-         (`Assoc
-             [ "error", `String "Admin validation failed"
-             ; "hint", `String "Check your input data"
-             ]))
+         (Jsont_bytesrw.encode_string
+            Jsont.json
+            Jsont.Json.(
+              object'
+                [ name "error", string "Admin validation failed"
+                ; name "hint", string "Check your input data"
+                ])
+         |> Result.get_ok))
   | _ -> None
 
 let app env =
@@ -244,21 +288,21 @@ let app env =
       routes
         [ get (s "") |> unit |> into home_page
         ; post (s "api" / s "users")
-          |> body Schema.Json user_schema
+          |> body Json User_request.schema
           |> into create_user_json
           |> recover json_error_handler
         ; post (s "signup")
-          |> body Schema.Json user_schema
+          |> body Json User_request.schema
           |> into create_user_html
           |> recover html_error_handler
         ; post (s "register")
-          |> body Schema.Json user_schema
+          |> body Json User_request.schema
           |> into create_user_json
           |> recover negotiated_error_handler
         ; scope
             (s "admin")
             [ post (s "users")
-              |> body Schema.Json user_schema
+              |> body Json User_request.schema
               |> into create_user_json
             ]
           |> recover handle_admin_errors

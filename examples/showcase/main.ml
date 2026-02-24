@@ -192,19 +192,40 @@ let stream_csv_handler req =
     (* Signal end of stream *)
     write None)
 
+type user =
+  { id : int
+  ; name : string
+  }
+
+let user_schema =
+  Sch.Object.(
+    define ~kind:"User"
+    @@
+    let+ id = mem ~enc:(fun u -> u.id) "id" Sch.int
+    and+ name = mem ~enc:(fun u -> u.name) "name" Sch.string in
+    { id; name })
+
 let api_users_handler () =
   Tapak.json
-    (`List
-        [ `Assoc [ "id", `Int 1; "name", `String "Alice" ]
-        ; `Assoc [ "id", `Int 2; "name", `String "Bob" ]
-        ])
+    (Sch.Json.encode_string
+       (Sch.list user_schema)
+       [ { id = 1; name = "Alice" }; { id = 2; name = "Bob" } ])
 
 let api_detail_user_handler id =
   match id with
-  | 1L -> Tapak.json (`Assoc [ "id", `Int 1; "name", `String "Alice" ])
-  | 2L -> Tapak.json (`Assoc [ "id", `Int 2; "name", `String "Bob" ])
-  | _ ->
-    Tapak.json ~status:`Not_found (`Assoc [ "error", `String "User not found" ])
+  | 1L ->
+    Tapak.json (Sch.Json.encode_string user_schema { id = 1; name = "Alice" })
+  | 2L ->
+    Tapak.json (Sch.Json.encode_string user_schema { id = 2; name = "Bob" })
+  | _ -> Tapak.json ~status:`Not_found {|{"error": "User not found"}|}
+
+let update_user_schema =
+  Sch.Object.(
+    define ~kind:"UpdateResponse"
+    @@
+    let+ message = mem ~enc:Stdlib.fst "message" Sch.string
+    and+ data = mem ~enc:Stdlib.snd "data" Sch.string in
+    message, data)
 
 let api_update_user_handler req id =
   let body_content =
@@ -213,13 +234,8 @@ let api_update_user_handler req id =
       ~error:(fun _ -> "")
       Tapak.(Body.to_string (Request.body req))
   in
-  let json =
-    `Assoc
-      [ "message", `String (Printf.sprintf "User %Ld updated" id)
-      ; "data", `String body_content
-      ]
-  in
-  Tapak.json ~status:`OK json
+  let message = Printf.sprintf "User %Ld updated" id, body_content in
+  Tapak.json ~status:`OK (Sch.Json.encode_string update_user_schema message)
 
 let not_found _req =
   Tapak.html

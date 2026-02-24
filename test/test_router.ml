@@ -638,12 +638,13 @@ let test_any_method_with_params () =
 
 let test_response_model () =
   let open Router in
-  let string_schema = Schema.str "message" in
+  let string_schema =
+    Sch.Object.define @@ Sch.Object.mem ~enc:Fun.id "message" Sch.string
+  in
   let route =
     get (s "users" / int64)
     |> request
-    |> response_model ~status:`OK ~schema:string_schema ~encoder:(fun body ->
-      `String body)
+    |> response_model ~status:`OK ~schema:string_schema
     |> into (fun request id ->
       let headers = Request.headers request in
       let ua =
@@ -663,7 +664,7 @@ let test_response_model () =
   match match' [ route ] request with
   | Some response ->
     let body = Response.body response |> Piaf.Body.to_string |> Result.get_ok in
-    let expected = "\"User 100 with ua: alcotest\"" in
+    let expected = {|{"message":"User 100 with ua: alcotest"}|} in
     Alcotest.(check string)
       "response body should be the user id and ua as JSON string"
       expected
@@ -672,8 +673,7 @@ let test_response_model () =
 
 let test_route_with_header () =
   let open Router in
-  let open Schema in
-  let header_schema = str "X-API-Key" in
+  let header_schema = Sch.Object.(define @@ mem "X-API-Key" Sch.string) in
   let route =
     get (s "api" / s "data")
     |> header header_schema
@@ -700,8 +700,9 @@ let test_route_with_header () =
 
 let test_route_header_case_insensitive () =
   let open Router in
-  let open Schema in
-  let header_schema = str "Content-Type" in
+  let header_schema =
+    Sch.Object.define @@ Sch.Object.mem "Content-Type" Sch.string
+  in
   let route =
     post (s "api" / s "upload")
     |> header header_schema
@@ -730,8 +731,9 @@ let test_route_header_case_insensitive () =
 
 let test_route_header_missing () =
   let open Router in
-  let open Schema in
-  let header_schema = str "Authorization" in
+  let header_schema =
+    Sch.Object.define @@ Sch.Object.mem "Authorization" Sch.string
+  in
   let route =
     get (s "api" / s "protected")
     |> header header_schema
@@ -746,12 +748,13 @@ let test_route_header_missing () =
 
 let test_route_multiple_headers () =
   let open Router in
-  let open Schema in
   let header_schema =
-    let open Schema.Syntax in
-    let+ api_key = str "X-API-Key"
-    and+ user_id = str "X-User-ID" in
-    api_key, user_id
+    Sch.Object.(
+      define ~kind:"Header_schema"
+      @@
+      let+ api_key = mem ~enc:Stdlib.fst "X-API-Key" Sch.string
+      and+ user_id = mem ~enc:Stdlib.snd "X-User-ID" Sch.string in
+      api_key, user_id)
   in
   let route =
     get (s "api" / s "user-data")
@@ -783,8 +786,9 @@ let test_route_multiple_headers () =
 
 let test_route_optional_header () =
   let open Router in
-  let open Schema in
-  let header_schema = option "X-Request-ID" (Field.str ()) in
+  let header_schema =
+    Sch.Object.define @@ Sch.Object.mem_opt "X-Request-ID" Sch.string
+  in
   let route =
     get (s "api" / s "endpoint")
     |> header header_schema
@@ -825,9 +829,11 @@ let test_route_optional_header () =
 
 let test_route_header_validation () =
   let open Router in
-  let open Schema in
   let header_schema =
-    str ~constraint_:(Constraint.pattern "^Bearer .+$") "Authorization"
+    Sch.Object.define
+    @@ Sch.Object.mem
+         "Authorization"
+         Sch.(with_ ~constraint_:(Constraint.pattern "^Bearer .+$") string)
   in
   let route =
     get (s "api" / s "secure")
@@ -1022,15 +1028,14 @@ let test_url_no_encoding_needed () =
 
 let test_recover_validation_failed () =
   let open Router in
-  let open Schema in
   let schema =
-    let open Schema.Syntax in
-    let+ age = int ~constraint_:(Constraint.int_range 18 100) "age" in
-    age
+    Sch.Object.(
+      define
+      @@ mem "age" Sch.(with_ ~constraint_:(Constraint.int_range 18 100) int))
   in
   let route =
     post (s "users")
-    |> body Schema.Json schema
+    |> body Json schema
     |> into (fun age -> Response.of_string ~body:(string_of_int age) `Created)
     |> recover (fun _request -> function
       | Validation_failed errors ->
@@ -1061,11 +1066,10 @@ let test_recover_validation_failed () =
 
 let test_recover_bad_request () =
   let open Router in
-  let open Schema in
-  let schema = int "value" in
+  let schema = Sch.Object.define @@ Sch.Object.mem "value" Sch.int in
   let route =
     post (s "data")
-    |> body Schema.Json schema
+    |> body Json schema
     |> into (fun value -> Response.of_string ~body:(string_of_int value) `OK)
     |> recover (fun _request -> function
       | Bad_request msg ->
@@ -1094,11 +1098,15 @@ let test_recover_bad_request () =
 
 let test_recover_reraises_when_none () =
   let open Router in
-  let open Schema in
-  let schema = int ~constraint_:(Constraint.int_range 1 10) "num" in
+  let schema =
+    Sch.Object.define
+    @@ Sch.Object.mem
+         "num"
+         Sch.(with_ ~constraint_:(Constraint.int_range 1 10) int)
+  in
   let route =
     post (s "test")
-    |> body Schema.Json schema
+    |> body Json schema
     |> into (fun num -> Response.of_string ~body:(string_of_int num) `OK)
     |> recover (fun _request -> function
       | Bad_request _ -> Some (Response.of_string ~body:"handled" `Bad_request)
@@ -1121,12 +1129,11 @@ let test_recover_reraises_when_none () =
 
 let test_recover_has_request_access () =
   let open Router in
-  let open Schema in
-  let schema = int "value" in
+  let schema = Sch.Object.define @@ Sch.Object.mem "value" Sch.int in
   let captured_path = ref "" in
   let route =
     post (s "api" / s "data")
-    |> body Schema.Json schema
+    |> body Json schema
     |> into (fun value -> Response.of_string ~body:(string_of_int value) `OK)
     |> recover (fun request -> function
       | Validation_failed _ ->
@@ -1153,13 +1160,17 @@ let test_recover_has_request_access () =
 
 let test_recover_on_scope () =
   let open Router in
-  let open Schema in
-  let schema = int ~constraint_:(Constraint.int_range 1 100) "age" in
+  let schema =
+    Sch.Object.define
+    @@ Sch.Object.mem
+         "age"
+         Sch.(with_ ~constraint_:(Constraint.int_range 1 100) int)
+  in
   let route =
     scope
       (s "api")
       [ post (s "users")
-        |> body Schema.Json schema
+        |> body Json schema
         |> into (fun age ->
           Response.of_string ~body:(string_of_int age) `Created)
       ]
@@ -1188,11 +1199,10 @@ let test_recover_on_scope () =
 
 let test_recover_success_path () =
   let open Router in
-  let open Schema in
-  let schema = int "value" in
+  let schema = Sch.Object.define @@ Sch.Object.mem "value" Sch.int in
   let route =
     post (s "data")
-    |> body Schema.Json schema
+    |> body Json schema
     |> into (fun value -> Response.of_string ~body:(string_of_int value) `OK)
     |> recover (fun _request -> function
       | Validation_failed _ ->
@@ -1341,4 +1351,4 @@ let tests =
   ; "Nested scopes multiple routes", `Quick, test_nested_scopes_multiple_routes
   ]
   |> List.map (fun (name, speed, fn) -> Alcotest.test_case name speed fn)
-  |> fun tests -> "Router", tests
+  |> fun tests -> [ "Router", tests ]

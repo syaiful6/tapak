@@ -1,53 +1,50 @@
-type user =
-  { id : int
-  ; name : string
-  ; email : string
-  }
+module User = struct
+  type t =
+    { id : int
+    ; name : string
+    ; email : string
+    }
 
-let user_to_json { id; name; email } =
-  `Assoc [ "id", `Int id; "name", `String name; "email", `String email ]
-
-let user_schema =
-  let open Tapak.Schema.Syntax in
-  let+ name =
-    Tapak.Schema.(
-      str
+  let schema_name =
+    Sch.(
+      with_
         ~constraint_:
           (Constraint.all_of
              [ Constraint.min_length 1; Constraint.max_length 125 ])
-        "name")
-  and+ email =
-    Tapak.Schema.(str ~constraint_:(Constraint.format `Email) "email")
-  in
-  name, email
+        string)
 
-let user_response_schema =
-  let open Tapak.Schema.Syntax in
-  let+ id = Tapak.Schema.int "id"
-  and+ name =
-    Tapak.Schema.(
-      str
-        ~constraint_:
-          (Constraint.all_of
-             [ Constraint.min_length 1; Constraint.max_length 125 ])
-        "name")
-  and+ email =
-    Tapak.Schema.(str ~constraint_:(Constraint.format `Email) "email")
-  in
-  { id; name; email }
+  let schema_email = Sch.(with_ ~constraint_:(Constraint.format `Email) string)
 
-let user_list_response_schema = Tapak.Schema.(list "users" user_response_schema)
+  let schema_request =
+    Sch.Object.(
+      define ~kind:"UserRequest"
+      @@
+      let+ name = mem ~enc:Stdlib.fst "name" schema_name
+      and+ email = mem ~enc:Stdlib.snd "email" schema_email in
+      name, email)
 
-(* list of user as direct array, not wrapped in an object *)
-let user_list_direct_schema = Tapak.Schema.Field.list user_response_schema
-let user_create_list_direct_schema = Tapak.Schema.Field.list user_schema
+  let schema =
+    Sch.Object.(
+      define ~kind:"User"
+      @@
+      let+ id = mem ~enc:(fun { id; _ } -> id) "id" Sch.int
+      and+ name = mem ~enc:(fun { name; _ } -> name) "name" schema_name
+      and+ email = mem ~enc:(fun { email; _ } -> email) "email" schema_email in
+      { id; name; email })
+
+  let schema_list =
+    Sch.Object.(
+      define ~kind:"UserList" @@ mem ~enc:Fun.id "users" (Sch.list schema))
+end
 
 type delete_response = { message : string }
 
 let delete_response_schema =
-  let open Tapak.Schema.Syntax in
-  let+ message = Tapak.Schema.str "message" in
-  { message }
+  Sch.Object.(
+    define ~kind:"DeleteResponse"
+    @@
+    let+ message = mem ~enc:(fun { message } -> message) "message" Sch.string in
+    { message })
 
 type profile_response =
   { session_id : string
@@ -56,11 +53,16 @@ type profile_response =
   }
 
 let profile_response_schema =
-  let open Tapak.Schema.Syntax in
-  let+ session_id = Tapak.Schema.str "session_id"
-  and+ theme = Tapak.Schema.str "theme"
-  and+ message = Tapak.Schema.str "message" in
-  { session_id; theme; message }
+  Sch.Object.(
+    define ~kind:"ProfileResponse"
+    @@
+    let+ session_id =
+      mem ~enc:(fun { session_id; _ } -> session_id) "session_id" Sch.string
+    and+ theme = mem ~enc:(fun { theme; _ } -> theme) "theme" Sch.string
+    and+ message =
+      mem ~enc:(fun { message; _ } -> message) "message" Sch.string
+    in
+    { session_id; theme; message })
 
 type search =
   { q : string option
@@ -69,27 +71,41 @@ type search =
   }
 
 let search_schema =
-  let open Tapak.Schema in
-  let open Syntax in
-  let+ q = option "q" (Field.str ())
-  and+ limit =
-    int
-      ~default:10
-      ~constraint_:
-        (Constraint.all_of
-           [ Constraint.int_range 5 100; Constraint.int_multiple_of 5 ])
-      "limit"
-  and+ offset =
-    int ~default:0 ~constraint_:(Constraint.int_range 0 1000) "offset"
-  in
-  { q; limit; offset }
+  Sch.Object.(
+    define ~kind:"SearchQuery"
+    @@
+    let+ q = mem_opt ~enc:(fun s -> s.q) "q" Sch.string
+    and+ limit =
+      mem
+        ~default:10
+        ~enc:(fun s -> s.limit)
+        "limit"
+        Sch.(
+          with_
+            ~constraint_:
+              (Constraint.all_of
+                 [ Constraint.int_range 5 100; Constraint.int_multiple_of 5 ])
+            int)
+    and+ offset =
+      mem
+        ~default:0
+        ~enc:(fun s -> s.offset)
+        "offset"
+        Sch.(with_ ~constraint_:(Constraint.int_range 0 1000) int)
+    in
+    { q; limit; offset })
 
 let session_cookies_schema =
-  let open Tapak.Schema.Syntax in
-  let+ session_id =
-    Tapak.Schema.(str ~constraint_:(Constraint.min_length 16) "session_id")
-  and+ user_pref = Tapak.Schema.(option "theme" (Field.str ())) in
-  session_id, user_pref
+  Sch.Object.(
+    define ~kind:"SessionCookies"
+    @@
+    let+ session_id =
+      mem
+        ~enc:Stdlib.fst
+        "session_id"
+        Sch.(with_ ~constraint_:(Constraint.min_length 16) string)
+    and+ user_pref = mem_opt ~enc:Stdlib.snd "theme" Sch.string in
+    session_id, user_pref)
 
 let list_take n l =
   let[@tail_mod_cons] rec aux n l =
@@ -106,7 +122,7 @@ let list_drop n l =
 
 let list_users search =
   let users =
-    [ { id = 1; name = "Alice"; email = "alice@example.com" }
+    [ { User.id = 1; name = "Alice"; email = "alice@example.com" }
     ; { id = 2; name = "Bob"; email = "bob@example.com" }
     ]
   in
@@ -122,16 +138,16 @@ let list_users search =
     | Some query ->
       (* the search use starting with for simplicity *)
       List.filter (fun user ->
-        String.starts_with ~prefix:query user.name
-        || String.starts_with ~prefix:query user.email)
+        String.starts_with ~prefix:query user.User.name
+        || String.starts_with ~prefix:query user.User.email)
 
-let get_user id = { id; name = "Alice"; email = "alice@example.com" }
-let create_user (name, email) = { id = 2; name; email }
+let get_user id = { User.id; name = "Alice"; email = "alice@example.com" }
+let create_user (name, email) = { User.id = 2; name; email }
 
 let bulk_create_users users =
-  List.mapi (fun i (name, email) -> { id = i + 100; name; email }) users
+  List.mapi (fun i (name, email) -> { User.id = i + 100; name; email }) users
 
-let update_user (name, email) id = { id; name; email }
+let update_user (name, email) id = { User.id; name; email }
 let delete_user id = { message = Format.sprintf "User %d deleted" id }
 
 let get_user_profile (session_id, theme) =
@@ -148,62 +164,43 @@ let v1_api_routes =
       |> summary "List all users"
       |> operation_id "listUsers"
       |> tags [ "Users" ]
-      |> response_model
-           ~status:`OK
-           ~schema:user_list_response_schema
-           ~encoder:(fun users ->
-             `Assoc [ "users", `List (List.map user_to_json users) ])
+      |> response_model ~status:`OK ~schema:User.schema_list
       |> into list_users
     ; get (s "users" / p "userId" int)
       |> summary "Get a user by ID"
       |> operation_id "getUser"
       |> tags [ "Users" ]
-      |> response_model
-           ~status:`OK
-           ~schema:user_response_schema
-           ~encoder:user_to_json
+      |> response_model ~status:`OK ~schema:User.schema
       |> into get_user
     ; post (s "users")
-      |> body Tapak.Schema.Json user_schema
+      |> body Json User.schema_request
       |> summary "Create a new user"
       |> description "Requires authentication via X-API-Key header"
       |> operation_id "createUser"
       |> tags [ "Users" ]
-      |> response_model
-           ~status:`Created
-           ~schema:user_response_schema
-           ~encoder:user_to_json
+      |> response_model ~status:`Created ~schema:User.schema
       |> into create_user
     ; post (s "users" / s "bulk")
-      |> body Tapak.Schema.Json user_create_list_direct_schema
+      |> body Json (Sch.list User.schema_request)
       |> summary "Bulk create users"
       |> operation_id "bulkCreateUsers"
       |> tags [ "Users" ]
-      |> response_model
-           ~status:`Created
-           ~schema:user_list_direct_schema
-           ~encoder:(fun users -> `List (List.map user_to_json users))
+      |> response_model ~status:`Created ~schema:User.schema_list
       |> into bulk_create_users
     ; put (s "users" / p "userId" int)
-      |> body Tapak.Schema.Json user_schema
+      |> body Json User.schema_request
       |> summary "Update a user"
       |> description "Requires authentication via X-API-Key header"
       |> operation_id "updateUser"
       |> tags [ "Users" ]
-      |> response_model
-           ~status:`OK
-           ~schema:user_response_schema
-           ~encoder:user_to_json
+      |> response_model ~status:`OK ~schema:User.schema
       |> into update_user
     ; delete (s "users" / p "userId" int)
       |> summary "Delete a user"
       |> description "Requires authentication via X-API-Key header"
       |> operation_id "deleteUser"
       |> tags [ "Users" ]
-      |> response_model
-           ~status:`No_content
-           ~schema:delete_response_schema
-           ~encoder:(fun { message } -> `Assoc [ "message", `String message ])
+      |> response_model ~status:`No_content ~schema:delete_response_schema
       |> into delete_user
     ; get (s "profile")
       |> cookie session_cookies_schema
@@ -211,15 +208,7 @@ let v1_api_routes =
       |> description "Returns user profile information from session cookies"
       |> operation_id "getUserProfile"
       |> tags [ "Users" ]
-      |> response_model
-           ~status:`OK
-           ~schema:profile_response_schema
-           ~encoder:(fun { session_id; theme; message } ->
-             `Assoc
-               [ "session_id", `String session_id
-               ; "theme", `String theme
-               ; "message", `String message
-               ])
+      |> response_model ~status:`OK ~schema:profile_response_schema
       |> into get_user_profile
     ]
 
@@ -279,20 +268,17 @@ let swagger_ui_handler () =
 let error_handler next request =
   try next request with
   | Tapak.Router.Validation_failed errors ->
-    let body =
-      `Assoc
-        [ ( "errors"
-          , `List
-              (List.map
-                 (fun (field, msg) ->
-                    `Assoc [ "field", `String field; "message", `String msg ])
-                 errors) )
-        ]
-    in
-    Tapak.json ~status:`Bad_request body
+    Tapak.json
+      ~status:`Bad_request
+      (Jsont_bytesrw.encode_string
+         Jsont.json
+         (Tapak.Router.validation_error_to_json errors)
+      |> Result.get_ok)
   | Tapak.Router.Bad_request msg ->
-    let body = `Assoc [ "error", `String msg ] in
-    Tapak.json ~status:`Bad_request body
+    let body = Jsont.Json.(object' [ name "error", string msg ]) in
+    Tapak.json
+      ~status:`Bad_request
+      (Jsont_bytesrw.encode_string Jsont.json body |> Result.get_ok)
 
 let app env =
   let clock = Eio.Stdenv.clock env in

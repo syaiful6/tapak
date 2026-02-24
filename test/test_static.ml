@@ -468,195 +468,180 @@ let make_request ?(headers = []) ?(meth = `GET) segments =
     path
 
 let test_serve_simple_file () =
-  Eio_main.run (fun _env ->
-    MockFile.reset ();
-    let path = Option.get (Static.Piece.of_list [ "test.txt" ]) in
-    MockFile.add_file
-      ~path
-      ~name:"test.txt"
-      ~content:"Hello, World!"
-      ~modified_time:date1
-      ();
-    let request = make_request [ "test.txt" ] in
-    let response = Static.serve (module MockFile) () request [ "test.txt" ] in
-    Alcotest.(check int)
-      "status 200"
-      200
-      (Response.status response |> Piaf.Status.to_code);
-    match Response.body response |> Piaf.Body.to_string with
-    | Ok body_str -> Alcotest.(check string) "body" "Hello, World!" body_str
-    | Error _ -> Alcotest.fail "Failed to read body")
+  MockFile.reset ();
+  let path = Option.get (Static.Piece.of_list [ "test.txt" ]) in
+  MockFile.add_file
+    ~path
+    ~name:"test.txt"
+    ~content:"Hello, World!"
+    ~modified_time:date1
+    ();
+  let request = make_request [ "test.txt" ] in
+  let response = Static.serve (module MockFile) () request [ "test.txt" ] in
+  Alcotest.(check int)
+    "status 200"
+    200
+    (Response.status response |> Piaf.Status.to_code);
+  match Response.body response |> Piaf.Body.to_string with
+  | Ok body_str -> Alcotest.(check string) "body" "Hello, World!" body_str
+  | Error _ -> Alcotest.fail "Failed to read body"
 
 let test_serve_not_found () =
-  Eio_main.run (fun _env ->
-    MockFile.reset ();
-    let request = make_request [ "missing.txt" ] in
-    let response =
-      Static.serve (module MockFile) () request [ "missing.txt" ]
-    in
-    Alcotest.(check int)
-      "status 404"
-      404
-      (Response.status response |> Piaf.Status.to_code))
+  MockFile.reset ();
+  let request = make_request [ "missing.txt" ] in
+  let response = Static.serve (module MockFile) () request [ "missing.txt" ] in
+  Alcotest.(check int)
+    "status 404"
+    404
+    (Response.status response |> Piaf.Status.to_code)
 
 let test_serve_with_encoding () =
-  Eio_main.run (fun _env ->
-    MockFile.reset ();
-    let path = Option.get (Static.Piece.of_list [ "style.css.gz" ]) in
-    MockFile.add_file
-      ~path
-      ~name:"style.css.gz"
-      ~content:"compressed-content"
-      ~modified_time:date1
-      ~encoding:`Gzip
-      ~mime_type:"text/css"
-      ();
-    let request = make_request [ "style.css.gz" ] in
-    let response =
-      Static.serve (module MockFile) () request [ "style.css.gz" ]
-    in
-    Alcotest.(check int)
-      "status 200"
-      200
-      (Response.status response |> Piaf.Status.to_code);
-    let headers = Response.headers response in
-    Alcotest.(check (option string))
-      "Content-Encoding"
-      (Some "gzip")
-      (Headers.get headers "content-encoding");
-    Alcotest.(check (option string))
-      "Content-Type"
-      (Some "text/css")
-      (Headers.get headers "content-type"))
+  MockFile.reset ();
+  let path = Option.get (Static.Piece.of_list [ "style.css.gz" ]) in
+  MockFile.add_file
+    ~path
+    ~name:"style.css.gz"
+    ~content:"compressed-content"
+    ~modified_time:date1
+    ~encoding:`Gzip
+    ~mime_type:"text/css"
+    ();
+  let request = make_request [ "style.css.gz" ] in
+  let response = Static.serve (module MockFile) () request [ "style.css.gz" ] in
+  Alcotest.(check int)
+    "status 200"
+    200
+    (Response.status response |> Piaf.Status.to_code);
+  let headers = Response.headers response in
+  Alcotest.(check (option string))
+    "Content-Encoding"
+    (Some "gzip")
+    (Headers.get headers "content-encoding");
+  Alcotest.(check (option string))
+    "Content-Type"
+    (Some "text/css")
+    (Headers.get headers "content-type")
 
 let test_serve_with_etag () =
-  Eio_main.run (fun _env ->
-    MockFile.reset ();
-    let path = Option.get (Static.Piece.of_list [ "file.txt" ]) in
-    MockFile.add_file
-      ~path
-      ~name:"file.txt"
-      ~content:"content"
-      ~modified_time:date1
-      ~hash:"abc123"
-      ();
-    let request = make_request [ "file.txt" ] in
-    let response = Static.serve (module MockFile) () request [ "file.txt" ] in
-    let headers = Response.headers response in
-    Alcotest.(check (option string))
-      "ETag present"
-      (Some "\"abc123\"")
-      (Headers.get headers "etag"))
+  MockFile.reset ();
+  let path = Option.get (Static.Piece.of_list [ "file.txt" ]) in
+  MockFile.add_file
+    ~path
+    ~name:"file.txt"
+    ~content:"content"
+    ~modified_time:date1
+    ~hash:"abc123"
+    ();
+  let request = make_request [ "file.txt" ] in
+  let response = Static.serve (module MockFile) () request [ "file.txt" ] in
+  let headers = Response.headers response in
+  Alcotest.(check (option string))
+    "ETag present"
+    (Some "\"abc123\"")
+    (Headers.get headers "etag")
 
 let test_serve_if_none_match () =
-  Eio_main.run (fun _env ->
-    MockFile.reset ();
-    let path = Option.get (Static.Piece.of_list [ "file.txt" ]) in
-    MockFile.add_file
-      ~path
-      ~name:"file.txt"
-      ~content:"content"
-      ~modified_time:date1
-      ~hash:"abc123"
-      ();
-    let request =
-      make_request ~headers:[ "If-None-Match", "\"abc123\"" ] [ "file.txt" ]
-    in
-    let response = Static.serve (module MockFile) () request [ "file.txt" ] in
-    Alcotest.(check int)
-      "status 304"
-      304
-      (Response.status response |> Piaf.Status.to_code))
+  MockFile.reset ();
+  let path = Option.get (Static.Piece.of_list [ "file.txt" ]) in
+  MockFile.add_file
+    ~path
+    ~name:"file.txt"
+    ~content:"content"
+    ~modified_time:date1
+    ~hash:"abc123"
+    ();
+  let request =
+    make_request ~headers:[ "If-None-Match", "\"abc123\"" ] [ "file.txt" ]
+  in
+  let response = Static.serve (module MockFile) () request [ "file.txt" ] in
+  Alcotest.(check int)
+    "status 304"
+    304
+    (Response.status response |> Piaf.Status.to_code)
 
 let test_serve_range_request () =
-  Eio_main.run (fun _env ->
-    MockFile.reset ();
-    let path = Option.get (Static.Piece.of_list [ "file.txt" ]) in
-    MockFile.add_file
-      ~path
-      ~name:"file.txt"
-      ~content:"0123456789"
-      ~modified_time:date1
-      ();
-    let request =
-      make_request ~headers:[ "Range", "bytes=2-5" ] [ "file.txt" ]
-    in
-    let response = Static.serve (module MockFile) () request [ "file.txt" ] in
-    Alcotest.(check int)
-      "status 206"
-      206
-      (Response.status response |> Piaf.Status.to_code);
-    match Response.body response |> Piaf.Body.to_string with
-    | Ok body_str -> Alcotest.(check string) "partial body" "2345" body_str
-    | Error _ -> Alcotest.fail "Failed to read body")
+  MockFile.reset ();
+  let path = Option.get (Static.Piece.of_list [ "file.txt" ]) in
+  MockFile.add_file
+    ~path
+    ~name:"file.txt"
+    ~content:"0123456789"
+    ~modified_time:date1
+    ();
+  let request = make_request ~headers:[ "Range", "bytes=2-5" ] [ "file.txt" ] in
+  let response = Static.serve (module MockFile) () request [ "file.txt" ] in
+  Alcotest.(check int)
+    "status 206"
+    206
+    (Response.status response |> Piaf.Status.to_code);
+  match Response.body response |> Piaf.Body.to_string with
+  | Ok body_str -> Alcotest.(check string) "partial body" "2345" body_str
+  | Error _ -> Alcotest.fail "Failed to read body"
 
 let test_serve_nested_path () =
-  Eio_main.run (fun _env ->
-    MockFile.reset ();
-    let path = Option.get (Static.Piece.of_list [ "css"; "style.css" ]) in
-    MockFile.add_file
-      ~path
-      ~name:"style.css"
-      ~content:"body { }"
-      ~modified_time:date1
-      ~mime_type:"text/css"
-      ();
-    let request = make_request [ "css"; "style.css" ] in
-    let response =
-      Static.serve (module MockFile) () request [ "css"; "style.css" ]
-    in
-    Alcotest.(check int)
-      "status 200"
-      200
-      (Response.status response |> Piaf.Status.to_code);
-    let headers = Response.headers response in
-    Alcotest.(check (option string))
-      "Content-Type"
-      (Some "text/css")
-      (Headers.get headers "content-type"))
+  MockFile.reset ();
+  let path = Option.get (Static.Piece.of_list [ "css"; "style.css" ]) in
+  MockFile.add_file
+    ~path
+    ~name:"style.css"
+    ~content:"body { }"
+    ~modified_time:date1
+    ~mime_type:"text/css"
+    ();
+  let request = make_request [ "css"; "style.css" ] in
+  let response =
+    Static.serve (module MockFile) () request [ "css"; "style.css" ]
+  in
+  Alcotest.(check int)
+    "status 200"
+    200
+    (Response.status response |> Piaf.Status.to_code);
+  let headers = Response.headers response in
+  Alcotest.(check (option string))
+    "Content-Type"
+    (Some "text/css")
+    (Headers.get headers "content-type")
 
 let test_serve_empty_segments () =
-  Eio_main.run (fun _env ->
-    MockFile.reset ();
-    let path = Option.get (Static.Piece.of_list []) in
-    MockFile.add_file
-      ~path
-      ~name:"index.html"
-      ~content:"<html></html>"
-      ~modified_time:date1
-      ~mime_type:"text/html"
-      ();
-    let request = make_request [] in
-    let response = Static.serve (module MockFile) () request [] in
-    (* With empty path, it serves the file at root *)
-    Alcotest.(check int)
-      "status"
-      200
-      (Response.status response |> Piaf.Status.to_code);
-    match Response.body response |> Piaf.Body.to_string with
-    | Ok body_str -> Alcotest.(check string) "body" "<html></html>" body_str
-    | Error _ -> Alcotest.fail "Failed to read body")
+  MockFile.reset ();
+  let path = Option.get (Static.Piece.of_list []) in
+  MockFile.add_file
+    ~path
+    ~name:"index.html"
+    ~content:"<html></html>"
+    ~modified_time:date1
+    ~mime_type:"text/html"
+    ();
+  let request = make_request [] in
+  let response = Static.serve (module MockFile) () request [] in
+  (* With empty path, it serves the file at root *)
+  Alcotest.(check int)
+    "status"
+    200
+    (Response.status response |> Piaf.Status.to_code);
+  match Response.body response |> Piaf.Body.to_string with
+  | Ok body_str -> Alcotest.(check string) "body" "<html></html>" body_str
+  | Error _ -> Alcotest.fail "Failed to read body"
 
 let test_serve_cache_control () =
-  Eio_main.run (fun _env ->
-    MockFile.reset ();
-    let path = Option.get (Static.Piece.of_list [ "file.txt" ]) in
-    MockFile.add_file
-      ~path
-      ~name:"file.txt"
-      ~content:"content"
-      ~modified_time:date1
-      ();
-    let request = make_request [ "file.txt" ] in
-    let config = { Static.default_config with max_age = `Seconds 3600 } in
-    let response =
-      Static.serve (module MockFile) ~config () request [ "file.txt" ]
-    in
-    let headers = Response.headers response in
-    Alcotest.(check (option string))
-      "Cache-Control"
-      (Some "public, max-age=3600")
-      (Headers.get headers "cache-control"))
+  MockFile.reset ();
+  let path = Option.get (Static.Piece.of_list [ "file.txt" ]) in
+  MockFile.add_file
+    ~path
+    ~name:"file.txt"
+    ~content:"content"
+    ~modified_time:date1
+    ();
+  let request = make_request [ "file.txt" ] in
+  let config = { Static.default_config with max_age = `Seconds 3600 } in
+  let response =
+    Static.serve (module MockFile) ~config () request [ "file.txt" ]
+  in
+  let headers = Response.headers response in
+  Alcotest.(check (option string))
+    "Cache-Control"
+    (Some "public, max-age=3600")
+    (Headers.get headers "cache-control")
 
 let response_finfo_tests =
   ( "Static.Response_finfo"

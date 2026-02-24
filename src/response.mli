@@ -159,7 +159,7 @@ val of_json :
   -> ?status:Piaf.Status.t
   -> ?headers:Headers.t
   -> ?context:Context.t
-  -> Yojson.Safe.t
+  -> string
   -> t
 (** [of_json ?version ?status ?headers ?context json] creates a JSON response
     with Content-Type "application/json; charset=utf-8". *)

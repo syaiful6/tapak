@@ -1,29 +1,72 @@
-type user_input =
-  { name : string
-  ; email : string
-  ; age : int option
-  }
+module User_request = struct
+  type t =
+    { name : string
+    ; email : string
+    ; age : int option
+    }
 
-let user_schema =
-  let open Tapak.Schema.Syntax in
-  let+ name = Tapak.Schema.(str ~constraint_:(Constraint.min_length 3) "name")
-  and+ email =
-    Tapak.Schema.(str ~constraint_:(Constraint.format `Email) "email")
-  and+ age =
-    Tapak.Schema.(
-      option "age" (Field.int ~constraint_:(Constraint.int_min 18) ()))
-  in
-  { name; email; age }
+  let schema =
+    Sch.Object.(
+      define ~kind:"UserRequest"
+      @@
+      let+ name =
+        mem
+          ~enc:(fun u -> u.name)
+          "email"
+          Sch.(with_ ~constraint_:(Constraint.min_length 3) string)
+      and+ email =
+        mem
+          ~enc:(fun u -> u.email)
+          "email"
+          Sch.(with_ ~constraint_:(Constraint.format `Email) string)
+      and+ age =
+        mem_opt
+          ~enc:(fun u -> u.age)
+          "age"
+          Sch.(with_ ~constraint_:(Constraint.int_min 18) int)
+      in
+      { name; email; age })
+end
+
+module User = struct
+  type t =
+    { id : int
+    ; name : string
+    ; email : string
+    ; age : int option
+    }
+
+  let of_request id (req : User_request.t) =
+    { id; name = req.name; email = req.email; age = req.age }
+
+  let schema =
+    Sch.Object.(
+      define ~kind:"User"
+      @@
+      let+ id = mem ~enc:(fun u -> u.id) "id" Sch.int
+      and+ name =
+        mem
+          ~enc:(fun u -> u.name)
+          "email"
+          Sch.(with_ ~constraint_:(Constraint.min_length 3) string)
+      and+ email =
+        mem
+          ~enc:(fun u -> u.email)
+          "email"
+          Sch.(with_ ~constraint_:(Constraint.format `Email) string)
+      and+ age =
+        mem_opt
+          ~enc:(fun u -> u.age)
+          "age"
+          Sch.(with_ ~constraint_:(Constraint.int_min 18) int)
+      in
+      { id; name; email; age })
+end
 
 let create_user user =
-  let user_data =
-    [ "name", `String user.name; "email", `String user.email ]
-    @ match user.age with Some age -> [ "age", `Int age ] | None -> []
-  in
-  let response_json =
-    `Assoc [ "status", `String "created"; "user", `Assoc user_data ]
-  in
-  Tapak.json ~status:`Created response_json
+  Tapak.json
+    ~status:`Created
+    (Sch.Json.encode_string User.schema (User.of_request 12 user))
 
 type user_update =
   { name : string option
@@ -31,31 +74,45 @@ type user_update =
   }
 
 let update_schema =
-  let open Tapak.Schema.Syntax in
-  let+ name = Tapak.Schema.(option "name" (Field.str ()))
-  and+ email = Tapak.Schema.(option "email" (Field.str ())) in
-  { name; email }
+  Sch.Object.(
+    define ~kind:"UserUpdate"
+    @@
+    let+ name =
+      mem_opt
+        ~enc:(fun u -> u.name)
+        "name"
+        Sch.(with_ ~constraint_:(Constraint.min_length 3) string)
+    and+ email =
+      mem_opt
+        ~enc:(fun u -> u.email)
+        "email"
+        Sch.(with_ ~constraint_:(Constraint.format `Email) string)
+    in
+    { name; email })
 
 let update_user update id =
   let updates = [] in
   let updates =
     match update.name with
-    | Some n -> ("name", `String n) :: updates
+    | Some n -> (Jsont.Json.name "name", Jsont.Json.string n) :: updates
     | None -> updates
   in
   let updates =
     match update.email with
-    | Some e -> ("email", `String e) :: updates
+    | Some e -> (Jsont.Json.name "email", Jsont.Json.string e) :: updates
     | None -> updates
   in
   let response_json =
-    `Assoc
-      [ "status", `String "updated"
-      ; "id", `Int (Int64.to_int id)
-      ; "updates", `Assoc updates
-      ]
+    Jsont.Json.(
+      object'
+        [ name "status", string "updated"
+        ; name "id", string (Int64.to_string id)
+        ; name "updates", object' updates
+        ])
   in
-  Tapak.json ~status:`OK response_json
+  Tapak.json
+    ~status:`OK
+    (Jsont_bytesrw.encode_string Jsont.json response_json |> Result.get_ok)
 
 type login_input =
   { username : string
@@ -63,30 +120,39 @@ type login_input =
   }
 
 let login_schema =
-  let open Tapak.Schema.Syntax in
-  let+ username =
-    Tapak.Schema.(str ~constraint_:(Constraint.min_length 3) "username")
-  and+ password =
-    Tapak.Schema.(
-      str
-        ~constraint_:
-          (Constraint.all_of
-             [ Constraint.min_length 8; Constraint.max_length 32 ])
-        "password")
-  in
-  { username; password }
+  Sch.Object.(
+    define ~kind:"LoginInput"
+    @@
+    let+ username =
+      mem
+        ~enc:(fun l -> l.username)
+        "username"
+        Sch.(with_ ~constraint_:(Constraint.min_length 3) string)
+    and+ password =
+      mem
+        ~enc:(fun l -> l.password)
+        "password"
+        Sch.(
+          with_
+            ~constraint_:Constraint.(all_of [ min_length 8; max_length 32 ])
+            string)
+    in
+    { username; password })
 
 let login_form login =
   (* verify login.username and login.password against your user database *)
   let _password_to_verify = login.password in
   let response_json =
-    `Assoc
-      [ "status", `String "authenticated"
-      ; "username", `String login.username
-      ; "message", `String "Login successful"
-      ]
+    Jsont.Json.(
+      object'
+        [ name "status", string "authenticated"
+        ; name "username", string login.username
+        ; name "message", string "Login successful"
+        ])
   in
-  Tapak.json ~status:`OK response_json
+  Tapak.json
+    ~status:`OK
+    (Jsont_bytesrw.encode_string Jsont.json response_json |> Result.get_ok)
 
 type contact_input =
   { name : string
@@ -96,61 +162,90 @@ type contact_input =
   }
 
 let contact_schema =
-  let open Tapak.Schema.Syntax in
-  let+ name = Tapak.Schema.(str ~constraint_:(Constraint.min_length 1) "name")
-  and+ email =
-    Tapak.Schema.(str ~constraint_:(Constraint.format `Email) "email")
-  and+ message =
-    Tapak.Schema.(str ~constraint_:(Constraint.min_length 1) "message")
-  and+ subscribe = Tapak.Schema.bool ~default:false "subscribe" in
-  { name; email; message; subscribe }
+  Sch.Object.(
+    define ~kind:"ContactInput"
+    @@
+    let+ name =
+      mem
+        ~enc:(fun c -> c.name)
+        "name"
+        Sch.(with_ ~constraint_:(Constraint.min_length 1) string)
+    and+ email =
+      mem
+        ~enc:(fun c -> c.email)
+        "email"
+        Sch.(with_ ~constraint_:(Constraint.format `Email) string)
+    and+ message =
+      mem
+        ~enc:(fun c -> c.message)
+        "message"
+        Sch.(with_ ~constraint_:(Constraint.min_length 1) string)
+    and+ subscribe =
+      mem ~default:false ~enc:(fun c -> c.subscribe) "subscribe" Sch.bool
+    in
+    { name; email; message; subscribe })
 
 let contact_form contact =
   let response_json =
-    `Assoc
-      [ "status", `String "received"
-      ; ( "data"
-        , `Assoc
-            [ "name", `String contact.name
-            ; "email", `String contact.email
-            ; "message", `String contact.message
-            ; "subscribed", `Bool contact.subscribe
-            ] )
-      ]
+    Jsont.Json.(
+      object'
+        [ name "status", string "received"
+        ; ( name "data"
+          , object'
+              [ name "name", string contact.name
+              ; name "email", string contact.email
+              ; name "message", string contact.message
+              ; name "subscribed", bool contact.subscribe
+              ] )
+        ])
   in
-  Tapak.json response_json
+  Tapak.json
+    (Jsont_bytesrw.encode_string Jsont.json response_json |> Result.get_ok)
 
 type upload_input =
-  { file : Tapak.Form.Multipart.part
+  { file : Sch.File.t
   ; description : string
   }
 
-let upload_schema =
-  let open Tapak.Schema.Syntax in
-  let+ file = Tapak.Schema.file "file"
-  and+ description = Tapak.Schema.str ~default:"No description" "description" in
-  { file; description }
+let upload_input_schema =
+  Sch.Object.(
+    define ~kind:"UploadInput"
+    @@
+    let+ file = mem ~enc:(fun u -> u.file) "file" Sch.file
+    and+ description =
+      mem
+        ~default:"No description"
+        ~enc:(fun u -> u.description)
+        "description"
+        Sch.string
+    in
+    { file; description })
 
 let upload_file upload =
   (* save the upload.file somewhere *)
   let _file_part = upload.file in
   let response_json =
-    `Assoc
-      [ "status", `String "received"
-      ; "message", `String "File uploaded successfully"
-      ; "description", `String upload.description
-      ]
+    Jsont.Json.(
+      object'
+        [ name "status", string "received"
+        ; name "message", string "File uploaded successfully"
+        ; name "description", string upload.description
+        ])
   in
-  Tapak.json response_json
+  Tapak.json
+    (Jsont_bytesrw.encode_string Jsont.json response_json |> Result.get_ok)
 
 let list_users _req =
   let users =
-    `List
-      [ `Assoc [ "id", `Int 1; "name", `String "Alice" ]
-      ; `Assoc [ "id", `Int 2; "name", `String "Bob" ]
-      ]
+    [ { User.id = 1
+      ; name = "Alice"
+      ; email = "alice@example.com"
+      ; age = Some 18
+      }
+    ; { id = 2; name = "Bob"; email = "bob@example.com"; age = None }
+    ]
   in
-  Tapak.json users
+  Tapak.json (Sch.Json.encode_string (Sch.list User.schema) users)
 
 let html_page title body =
   Printf.sprintf
@@ -258,20 +353,17 @@ let index_page _req =
 let error_handler next request =
   try next request with
   | Tapak.Router.Validation_failed errors ->
-    let body =
-      `Assoc
-        [ ( "errors"
-          , `List
-              (List.map
-                 (fun (field, msg) ->
-                    `Assoc [ "field", `String field; "message", `String msg ])
-                 errors) )
-        ]
-    in
-    Tapak.json ~status:`Bad_request body
+    Tapak.json
+      ~status:`Bad_request
+      (Jsont_bytesrw.encode_string
+         Jsont.json
+         (Tapak.Router.validation_error_to_json errors)
+      |> Result.get_ok)
   | Tapak.Router.Bad_request msg ->
-    let body = `Assoc [ "error", `String msg ] in
-    Tapak.json ~status:`Bad_request body
+    let body = Jsont.Json.(object' [ name "error", string msg ]) in
+    Tapak.json
+      ~status:`Bad_request
+      (Jsont_bytesrw.encode_string Jsont.json body |> Result.get_ok)
 
 let app env =
   let clock = Eio.Stdenv.clock env in
@@ -284,20 +376,18 @@ let app env =
             (s "api")
             [ get (s "users") |> unit |> into list_users
             ; post (s "users")
-              |> body Schema.Json user_schema
+              |> body Json User_request.schema
               |> into create_user
             ; put (s "users" / p "userId" int64)
-              |> body Schema.Json update_schema
+              |> body Json update_schema
               |> into update_user
             ]
-        ; post (s "login")
-          |> body Schema.Urlencoded login_schema
-          |> into login_form
+        ; post (s "login") |> body Urlencoded login_schema |> into login_form
         ; post (s "contact")
-          |> body Schema.Urlencoded contact_schema
+          |> body Urlencoded contact_schema
           |> into contact_form
         ; post (s "upload")
-          |> body Schema.Multipart upload_schema
+          |> body Multipart upload_input_schema
           |> into upload_file
         ])
     |> pipe

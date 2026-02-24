@@ -4,4 +4,4 @@
  (public_name tapak-error-handling-example)
  (enabled_if
   (= %{profile} dev))
- (libraries tapak eio_main yojson logs logs.fmt fmt.tty logs.threaded))
+ (libraries tapak eio_main logs logs.fmt fmt.tty logs.threaded))

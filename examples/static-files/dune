@@ -4,4 +4,4 @@
  (package tapak)
  (enabled_if
   (= %{profile} dev))
- (libraries tapak eio_main ptime ptime.clock.os fmt.tty logs.fmt))
+ (libraries tapak eio_main ptime sch ptime.clock.os fmt.tty logs.fmt))

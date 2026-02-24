@@ -2,11 +2,11 @@ module Json_schema = Sch.Json_schema
 
 (* schema tests *)
 let decode_str_result schema str =
-  Sch.Json_decoder.decode_string schema str |> Sch.Validation.to_result
+  Sch.Json.decode_string schema str |> Sch.Validation.to_result
 
 let encode_roundtrip codec value =
-  Sch.Json_encoder.encode codec value
-  |> Sch.Json_decoder.decode codec
+  Sch.Json.encode codec value
+  |> Sch.Json.decode codec
   |> Sch.Validation.to_result
 
 let test_decoder_schema_single_field () =
@@ -185,9 +185,7 @@ let test_union_decode_unknown_tag () =
   | _ -> Alcotest.fail "Expected unknown tag error"
 
 let test_union_encode () =
-  let result =
-    Sch.Json_encoder.encode_string shape_union_schema (Rectangle (2., 4.))
-  in
+  let result = Sch.Json.encode_string shape_union_schema (Rectangle (2., 4.)) in
   Alcotest.(check string)
     "encode union"
     {|{"type":"rectangle","width":2,"height":4}|}
@@ -197,7 +195,7 @@ let test_union_roundtrip () =
   let shapes = [ Circle 3.5; Rectangle (10., 20.) ] in
   List.iter
     (fun shape ->
-       let json = Sch.Json_encoder.encode_string shape_union_schema shape in
+       let json = Sch.Json.encode_string shape_union_schema shape in
        match decode_str_result shape_union_schema json with
        | Ok (Circle r) ->
          (match shape with
@@ -233,7 +231,7 @@ let email_schema =
     define
     @@ let+ to_ = mem ~enc:(fun (t, _, _) -> t) "to" Sch.string
        and+ subject = mem ~enc:(fun (_, s, _) -> s) "subject" Sch.string
-       and+ body = mem_opt ~enc:(fun (_, _, b) -> b) Sch.string "body" in
+       and+ body = mem_opt ~enc:(fun (_, _, b) -> b) "body" Sch.string in
        to_, subject, body)
 
 let sms_schema =
@@ -312,7 +310,7 @@ let payload_schema =
       ])
 
 let test_union_scalar_case_encode () =
-  let result = Sch.Json_encoder.encode_string payload_schema (Text "hello") in
+  let result = Sch.Json.encode_string payload_schema (Text "hello") in
   Alcotest.(check string)
     "encode scalar case"
     {|{"type":"text","value":"hello"}|}
@@ -430,19 +428,19 @@ let test_jsonschema_parsing () =
 (** {1 Encoder tests} *)
 
 let test_encode_string () =
-  let result = Sch.Json_encoder.encode_string Sch.string "hello" in
+  let result = Sch.Json.encode_string Sch.string "hello" in
   Alcotest.(check string) "encode string" {|"hello"|} result
 
 let test_encode_int () =
-  let result = Sch.Json_encoder.encode_string Sch.int 42 in
+  let result = Sch.Json.encode_string Sch.int 42 in
   Alcotest.(check string) "encode int" "42" result
 
 let test_encode_bool () =
-  let result = Sch.Json_encoder.encode_string Sch.bool true in
+  let result = Sch.Json.encode_string Sch.bool true in
   Alcotest.(check string) "encode bool" "true" result
 
 let test_encode_list () =
-  let result = Sch.Json_encoder.encode_string (Sch.list Sch.int) [ 1; 2; 3 ] in
+  let result = Sch.Json.encode_string (Sch.list Sch.int) [ 1; 2; 3 ] in
   Alcotest.(check string) "encode list" "[1,2,3]" result
 
 let test_encode_object_minified () =
@@ -453,7 +451,7 @@ let test_encode_object_minified () =
          and+ age = mem "age" ~enc:Stdlib.snd Sch.int in
          name, age)
   in
-  let result = Sch.Json_encoder.encode_string schema ("Alice", 30) in
+  let result = Sch.Json.encode_string schema ("Alice", 30) in
   Alcotest.(check string)
     "encode object minified"
     {|{"name":"Alice","age":30}|}
@@ -467,9 +465,7 @@ let test_encode_object_indented () =
          and+ age = mem "age" ~enc:Stdlib.snd Sch.int in
          name, age)
   in
-  let result =
-    Sch.Json_encoder.encode_string ~format:(Indent 2) schema ("Alice", 30)
-  in
+  let result = Sch.Json.encode_string ~format:(Indent 2) schema ("Alice", 30) in
   let expected = "{\n  \"name\": \"Alice\",\n  \"age\": 30\n}" in
   Alcotest.(check string) "encode object indented" expected result
 
@@ -489,7 +485,7 @@ let test_encode_nested_indented () =
          name, pos)
   in
   let result =
-    Sch.Json_encoder.encode_string ~format:(Indent 2) outer ("thing", (1, 2))
+    Sch.Json.encode_string ~format:(Indent 2) outer ("thing", (1, 2))
   in
   let expected =
     "{\n\
@@ -504,16 +500,13 @@ let test_encode_nested_indented () =
 
 let test_encode_empty_list () =
   let result =
-    Sch.Json_encoder.encode_string ~format:(Indent 2) (Sch.list Sch.int) []
+    Sch.Json.encode_string ~format:(Indent 2) (Sch.list Sch.int) []
   in
   Alcotest.(check string) "encode empty list" "[]" result
 
 let test_encode_list_indented () =
   let result =
-    Sch.Json_encoder.encode_string
-      ~format:(Indent 2)
-      (Sch.list Sch.int)
-      [ 1; 2; 3 ]
+    Sch.Json.encode_string ~format:(Indent 2) (Sch.list Sch.int) [ 1; 2; 3 ]
   in
   let expected = "[1, 2, 3]" in
   Alcotest.(check string) "encode list indented" expected result
@@ -527,10 +520,7 @@ let test_encode_list_of_objects_indented () =
          x, y)
   in
   let result =
-    Sch.Json_encoder.encode_string
-      ~format:(Indent 2)
-      (Sch.list item)
-      [ 1, 2; 3, 4 ]
+    Sch.Json.encode_string ~format:(Indent 2) (Sch.list item) [ 1, 2; 3, 4 ]
   in
   let expected =
     "[\n\
@@ -549,22 +539,22 @@ let test_encode_list_of_objects_indented () =
 (** Float / Double precision *)
 
 let test_encode_float () =
-  let result = Sch.Json_encoder.encode_string Sch.float 42.5 in
+  let result = Sch.Json.encode_string Sch.float 42.5 in
   Alcotest.(check string) "encode float" "42.5" result
 
 let test_encode_double () =
-  let result = Sch.Json_encoder.encode_string Sch.double 42.5 in
+  let result = Sch.Json.encode_string Sch.double 42.5 in
   Alcotest.(check string) "encode double" "42.5" result
 
 let test_encode_float_precision () =
-  let result = Sch.Json_encoder.encode_string Sch.float Float.pi in
+  let result = Sch.Json.encode_string Sch.float Float.pi in
   Alcotest.(check string)
     "float uses %.7g (7 significant digits)"
     "3.141593"
     result
 
 let test_encode_double_precision () =
-  let result = Sch.Json_encoder.encode_string Sch.double Float.pi in
+  let result = Sch.Json.encode_string Sch.double Float.pi in
   Alcotest.(check string)
     "double uses %.15g (15 significant digits)"
     "3.14159265358979"
@@ -572,7 +562,7 @@ let test_encode_double_precision () =
 
 let test_encode_float_nonfinite () =
   let check_null label v =
-    let result = Sch.Json_encoder.encode_string Sch.float v in
+    let result = Sch.Json.encode_string Sch.float v in
     Alcotest.(check string) label "null" result
   in
   check_null "float infinity" infinity;
@@ -581,7 +571,7 @@ let test_encode_float_nonfinite () =
 
 let test_encode_double_nonfinite () =
   let check_null label v =
-    let result = Sch.Json_encoder.encode_string Sch.double v in
+    let result = Sch.Json.encode_string Sch.double v in
     Alcotest.(check string) label "null" result
   in
   check_null "double infinity" infinity;
@@ -591,15 +581,15 @@ let test_encode_double_nonfinite () =
 (** Int32 / Int64 *)
 
 let test_encode_int32 () =
-  let result = Sch.Json_encoder.encode_string Sch.int32 42l in
+  let result = Sch.Json.encode_string Sch.int32 42l in
   Alcotest.(check string) "encode int32" "42" result
 
 let test_encode_int64 () =
-  let result = Sch.Json_encoder.encode_string Sch.int64 42L in
+  let result = Sch.Json.encode_string Sch.int64 42L in
   Alcotest.(check string) "int64 encodes as JSON string" {|"42"|} result
 
 let test_encode_int64_large () =
-  let result = Sch.Json_encoder.encode_string Sch.int64 9223372036854775807L in
+  let result = Sch.Json.encode_string Sch.int64 9223372036854775807L in
   Alcotest.(check string)
     "large int64 safe as JSON string"
     {|"9223372036854775807"|}
@@ -608,17 +598,17 @@ let test_encode_int64_large () =
 (** Option *)
 
 let test_encode_option_none () =
-  let result = Sch.Json_encoder.encode_string (Sch.option Sch.int) None in
+  let result = Sch.Json.encode_string (Sch.option Sch.int) None in
   Alcotest.(check string) "none encodes as null" "null" result
 
 let test_encode_option_some () =
-  let result = Sch.Json_encoder.encode_string (Sch.option Sch.int) (Some 42) in
+  let result = Sch.Json.encode_string (Sch.option Sch.int) (Some 42) in
   Alcotest.(check string) "some encodes inner value" "42" result
 
 (** Password *)
 
 let test_encode_password () =
-  let result = Sch.Json_encoder.encode_string Sch.password "secret" in
+  let result = Sch.Json.encode_string Sch.password "secret" in
   Alcotest.(check string) "encode password" {|"secret"|} result
 
 (** Iso (custom codec) *)
@@ -634,8 +624,8 @@ let test_encode_iso () =
         | _ -> Error [ "invalid" ])
       Sch.string
   in
-  let result_t = Sch.Json_encoder.encode_string bool_str true in
-  let result_f = Sch.Json_encoder.encode_string bool_str false in
+  let result_t = Sch.Json.encode_string bool_str true in
+  let result_f = Sch.Json.encode_string bool_str false in
   Alcotest.(check string) "iso true -> yes" {|"yes"|} result_t;
   Alcotest.(check string) "iso false -> no" {|"no"|} result_f
 
@@ -644,14 +634,14 @@ let test_encode_iso () =
 let test_encode_rec () =
   (* TODO: use a more complex recursive schema *)
   let codec = Sch.rec' (lazy Sch.int) in
-  let result = Sch.Json_encoder.encode_string codec 42 in
+  let result = Sch.Json.encode_string codec 42 in
   Alcotest.(check string) "rec forces and encodes" "42" result
 
 (** String escaping *)
 
 let test_encode_string_escaping () =
   let check label input expected =
-    let result = Sch.Json_encoder.encode_string Sch.string input in
+    let result = Sch.Json.encode_string Sch.string input in
     Alcotest.(check string) label expected result
   in
   check "newline" "hello\nworld" {|"hello\nworld"|};
@@ -675,13 +665,11 @@ let omit_schema =
        name, tag)
 
 let test_encode_omit_skips () =
-  let result = Sch.Json_encoder.encode_string omit_schema ("Alice", None) in
+  let result = Sch.Json.encode_string omit_schema ("Alice", None) in
   Alcotest.(check string) "omitted field absent" {|{"name":"Alice"}|} result
 
 let test_encode_omit_present () =
-  let result =
-    Sch.Json_encoder.encode_string omit_schema ("Alice", Some "admin")
-  in
+  let result = Sch.Json.encode_string omit_schema ("Alice", Some "admin") in
   Alcotest.(check string)
     "non-omitted field present"
     {|{"name":"Alice","tag":"admin"}|}
@@ -739,7 +727,7 @@ let test_to_json_schema_optional_field () =
     Sch.Object.(
       define
       @@ let+ name = mem "name" Sch.string
-         and+ tag = mem_opt Sch.string "tag" in
+         and+ tag = mem_opt "tag" Sch.string in
          name, tag)
   in
   let schema = Sch.to_json_schema codec in
@@ -788,7 +776,7 @@ let test_to_json_schema_roundtrip () =
       define ~kind:"person" ~doc:"A person"
       @@ let+ name = mem "name" ~doc:"The name" Sch.string
          and+ age = mem "age" Sch.int
-         and+ email = mem_opt Sch.string "email" in
+         and+ email = mem_opt "email" Sch.string in
          name, age, email)
   in
   let schema = Sch.to_json_schema codec in
@@ -985,7 +973,7 @@ let test_encode_to_json_omit () =
     Sch.Object.(
       define
       @@ let+ name = mem "name" ~enc:Stdlib.fst Sch.string
-         and+ tag = mem_opt ~enc:Stdlib.snd Sch.string "tag" in
+         and+ tag = mem_opt ~enc:Stdlib.snd "tag" Sch.string in
          name, tag)
   in
   Alcotest.(check (result (pair string (option string)) errs_t))

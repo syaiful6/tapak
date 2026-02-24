@@ -94,7 +94,6 @@ let persistent_connection { response; _ } =
 
 let pp_hum fmt t = Piaf.Response.pp_hum fmt t.response
 
-(* Extended functions from src *)
 let redirect
       ?version
       ?(status : Piaf.Status.redirection = `Found)
@@ -174,7 +173,7 @@ let of_json
     ~content_type:"application/json; charset=utf-8"
     ~headers
     ~context
-    (body |> Yojson.Safe.to_string)
+    body
 
 let negotiate
       ?version

@@ -2,6 +2,7 @@ module Json_schema = Json_schema
 module Constraint = Json_schema.Constraint
 module Free = Free
 module Sig = Sig
+module File = File
 
 type unknown_handling =
   | Skip
@@ -93,6 +94,7 @@ val with_ :
   -> 'a t
   -> 'a t
 
+val is_object_codec : 'a t -> bool
 val string : string t
 val password : string t
 val bool : bool t
@@ -131,8 +133,8 @@ module Object : sig
   val mem_opt :
      ?doc:string
     -> ?enc:('a -> 'b option)
-    -> 'b t
     -> string
+    -> 'b t
     -> ('a fieldk, 'b option) Free.t
 
   val define :
@@ -166,6 +168,7 @@ module Validation : sig
   val map : ('a -> 'b) -> 'a t -> 'b t
   val apply : ('a -> 'b) t -> 'a t -> 'b t
   val to_result : 'a t -> ('a, (string * string) list) result
+  val traverse : ('a -> 'b t) -> 'a list -> 'b list t
 end
 
 type mem_lookup = string -> Jsont.object' -> Jsont.json option
@@ -175,7 +178,7 @@ val mem_ci : mem_lookup
 val mem_is_known_exact : (string, 'a) Hashtbl.t -> Jsont.name -> bool
 val mem_is_known_ci : (string, 'a) Hashtbl.t -> Jsont.name -> bool
 
-module Json_decoder : sig
+module Json : sig
   val coerce_string : 'a t -> string -> 'a Validation.t
   val decode : ?lookup:mem_lookup -> 'a t -> Jsont.json -> 'a Validation.t
   val decode_string : ?lookup:mem_lookup -> 'a t -> string -> 'a Validation.t
@@ -185,9 +188,7 @@ module Json_decoder : sig
     -> 'a t
     -> Bytesrw.Bytes.Reader.t
     -> 'a Validation.t
-end
 
-module Json_encoder : sig
   type format =
     | Minify
     | Indent of int

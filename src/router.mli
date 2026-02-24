@@ -8,6 +8,11 @@ exception Extraction_failed of extractor_error
 
 type 'a extractor = Request.t -> ('a, extractor_error) result
 
+type media_type =
+  | Json
+  | Urlencoded
+  | Multipart
+
 type metadata =
   { operation_id : string option
   ; summary : string option
@@ -48,30 +53,29 @@ type (_, _) path =
 type (_, _) schema =
   | Method : Piaf.Method.t * ('a, 'b) path -> ('a, 'b) schema
   | Query :
-      { schema : 'query Schema.t
+      { schema : 'query Sch.t
       ; rest : ('a, 'b) schema
       }
       -> ('query -> 'a, 'b) schema
   | Header :
-      { schema : 'header Schema.t
+      { schema : 'header Sch.t
       ; rest : ('a, 'b) schema
       }
       -> ('header -> 'a, 'b) schema
   | Cookie :
-      { schema : 'cookie Schema.t
+      { schema : 'cookie Sch.t
       ; rest : ('a, 'b) schema
       }
       -> ('cookie -> 'a, 'b) schema
   | Response_model :
-      { encoder : 'resp -> Yojson.Safe.t
-      ; schema : 'resp Schema.t
+      { schema : 'resp Sch.t
       ; status : Piaf.Status.t
       ; rest : ('a, 'resp) schema
       }
       -> ('a, Response.t) schema
   | Body :
-      { input_type : 'input Schema.input
-      ; schema : 'validated Schema.t
+      { input_type : media_type
+      ; schema : 'validated Sch.t
       ; rest : ('a, 'b) schema
       }
       -> ('validated -> 'a, 'b) schema
@@ -134,24 +138,17 @@ val patch : ('a, 'b) path -> ('a, 'b) schema
 val delete : ('a, 'b) path -> ('a, 'b) schema
 val head : ('a, 'b) path -> ('a, 'b) schema
 val any : ('a, 'b) path -> ('a, 'b) schema
-
-val body :
-   'input Schema.input
-  -> 'validated Schema.t
-  -> ('a, 'b) schema
-  -> ('validated -> 'a, 'b) schema
-
-val query : 'query Schema.t -> ('a, 'b) schema -> ('query -> 'a, 'b) schema
-val header : 'a Schema.t -> ('b, 'c) schema -> ('a -> 'b, 'c) schema
-val cookie : 'a Schema.t -> ('b, 'c) schema -> ('a -> 'b, 'c) schema
+val body : media_type -> 'a Sch.t -> ('b, 'c) schema -> ('a -> 'b, 'c) schema
+val query : 'query Sch.t -> ('a, 'b) schema -> ('query -> 'a, 'b) schema
+val header : 'a Sch.t -> ('b, 'c) schema -> ('a -> 'b, 'c) schema
+val cookie : 'a Sch.t -> ('b, 'c) schema -> ('a -> 'b, 'c) schema
 val extract : 'g extractor -> ('a, 'b) schema -> ('g -> 'a, 'b) schema
 val request : ('a, 'b) schema -> (Request.t -> 'a, 'b) schema
 val unit : ('a, 'b) schema -> (unit -> 'a, 'b) schema
 
 val response_model :
    status:Piaf.Status.t
-  -> schema:'resp Schema.t
-  -> encoder:('resp -> Yojson.Safe.t)
+  -> schema:'resp Sch.t
   -> ('a, 'resp) schema
   -> ('a, Response.t) schema
 
@@ -195,7 +192,7 @@ val resource :
   -> (module Resource)
   -> route
 
-(** {1 Extended functions} *)
+val validation_error_to_json : (string * string) list -> Jsont.json
 
 val routes : ?not_found:Handler.t -> route list -> Handler.t
 (** [routes ~not_found routes] creates a handler that dispatches to the given

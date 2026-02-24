@@ -20,6 +20,15 @@ type user =
   ; role : string
   }
 
+let user_schema =
+  Sch.Object.(
+    define ~kind:"User"
+    @@
+    let+ id = mem ~enc:(fun u -> u.id) "id" Sch.int
+    and+ name = mem ~enc:(fun u -> u.name) "name" Sch.string
+    and+ role = mem ~enc:(fun u -> u.role) "role" Sch.string in
+    { id; name; role })
+
 type admin = user
 
 type Tapak.Router.extractor_error +=
@@ -57,33 +66,39 @@ let api_key : string Tapak.Router.extractor =
   | Some key when String.length key > 0 -> Ok key
   | _ -> Error Invalid_api_key
 
+let json_to_string json =
+  Jsont_bytesrw.encode_string Jsont.json json |> Result.get_ok
+
 let api_info_handler key =
   Tapak.json
-    (`Assoc [ "message", `String "API access granted"; "key", `String key ])
+    (json_to_string
+       Jsont.Json.(
+         object'
+           [ name "message", string "API access granted"
+           ; name "key", string key
+           ]))
 
-let profile_handler user =
-  Tapak.json
-    (`Assoc
-        [ "id", `Int user.id
-        ; "name", `String user.name
-        ; "role", `String user.role
-        ])
+let profile_handler user = Tapak.json (Sch.Json.encode_string user_schema user)
 
 (** Handler receives extracted Admin directly - guaranteed to be admin *)
 let admin_dashboard_handler admin =
   Tapak.json
-    (`Assoc
-        [ "meessage", `String "Welcome to admin dashboard"
-        ; "admin", `String admin.name
-        ])
+    (json_to_string
+       Jsont.Json.(
+         object'
+           [ name "message", string "Welcome to admin dashboard"
+           ; name "admin", string admin.name
+           ]))
 
 let get_user_handler user user_id =
   Tapak.json
-    (`Assoc
-        [ "requested_user_id", `String (Int64.to_string user_id)
-        ; ( "authenticated_as"
-          , `String (Printf.sprintf "%s (id=%d)" user.name user.id) )
-        ])
+    (json_to_string
+       Jsont.Json.(
+         object'
+           [ name "requested_user_id", string (Int64.to_string user_id)
+           ; ( name "authenticated_as"
+             , string (Printf.sprintf "%s (id=%d)" user.name user.id) )
+           ]))
 
 let home_handler _req =
   Tapak.html
@@ -151,8 +166,13 @@ try next req with
 </pre>
 |}
 
+let error_schema =
+  Sch.Object.(define ~kind:"Error" @@ mem ~enc:Fun.id "error" Sch.string)
+
 let not_found _req =
-  Tapak.json ~status:`Not_found (`Assoc [ "error", `String "Not found" ])
+  Tapak.json
+    ~status:`Not_found
+    (Sch.Json.encode_string error_schema "Not found")
 
 let extractor_error_middleware : Tapak.middleware =
  fun next req ->
@@ -160,27 +180,27 @@ let extractor_error_middleware : Tapak.middleware =
   | Tapak.Router.Extraction_failed Missing_auth_header ->
     Tapak.json
       ~status:`Unauthorized
-      (`Assoc [ "error", `String "Missing Authorization header" ])
+      (Sch.Json.encode_string error_schema "Missing Authorization header")
   | Tapak.Router.Extraction_failed Invalid_bearer_token ->
     Tapak.json
       ~status:`Unauthorized
-      (`Assoc [ "error", `String "Invalid Bearer token format" ])
+      (Sch.Json.encode_string error_schema "Invalid Bearer token format")
   | Tapak.Router.Extraction_failed Invalid_token ->
     Tapak.json
       ~status:`Unauthorized
-      (`Assoc [ "error", `String "Invalid token" ])
+      (Sch.Json.encode_string error_schema "Invalid token")
   | Tapak.Router.Extraction_failed Forbidden_not_admin ->
     Tapak.json
       ~status:`Forbidden
-      (`Assoc [ "error", `String "Admin access required" ])
+      (Sch.Json.encode_string error_schema "Admin access required")
   | Tapak.Router.Extraction_failed Invalid_api_key ->
     Tapak.json
       ~status:`Unauthorized
-      (`Assoc [ "error", `String "Invalid or missing API key" ])
+      (Sch.Json.encode_string error_schema "Invalid or missing API key")
   | Tapak.Router.Extraction_failed _ ->
     Tapak.json
       ~status:`Bad_request
-      (`Assoc [ "error", `String "Extractor failed" ])
+      (Sch.Json.encode_string error_schema "Extractor failed")
 
 let setup_app () =
   Tapak.Router.(

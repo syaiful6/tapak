@@ -80,117 +80,32 @@ module Multipart = struct
 
   type node =
     | Object of (string, node) Hashtbl.t
-    | Array of node list ref
-    | Value of part
+    | Array of node list
+    | Part of part
 
   let to_tree (parts : t) : node =
-    let parse_key key =
-      match String.split_on_char '[' key with
-      | [] -> []
-      | base :: rest ->
-        let sanitize_part part =
-          if String.ends_with ~suffix:"]" part
-          then String.sub part 0 (String.length part - 1)
-          else part
-        in
-        base :: List.map sanitize_part rest
-    in
-    let is_numeric s =
-      try
-        let _ = int_of_string s in
-        true
-      with
-      | Failure _ -> false
-    in
-    let root = Object (Hashtbl.create 16) in
-    let rec insert node path part =
-      match node, path with
-      | _, [] -> ()
-      | Object h, [ key ] ->
-        (* Terminal key - store the raw part *)
-        Hashtbl.replace h key (Value part)
-      | Object h, key :: rest ->
-        let next_node =
-          match Hashtbl.find_opt h key with
-          | Some n -> n
-          | None ->
-            let new_node =
-              match rest with
-              | "" :: _ -> Array (ref [])
-              | x :: _ when is_numeric x -> Array (ref [])
-              | _ -> Object (Hashtbl.create 4)
-            in
-            Hashtbl.add h key new_node;
-            new_node
-        in
-        insert next_node rest part
-      | Array l, "" :: rest ->
-        (match rest with
-        | [] ->
-          (* Simple array: tags[]=foo&tags[]=bar *)
-          l := !l @ [ Value part ]
-        | _ ->
-          (* Array of objects: items[][id]=1&items[][name]=foo *)
-          let new_obj = Object (Hashtbl.create 4) in
-          l := !l @ [ new_obj ];
-          insert new_obj rest part)
-      | Array l, key :: rest ->
-        (* Indexed array: items[0][id]=1 or items[0]=foo *)
-        let idx = int_of_string key in
-        let rec get_or_create_at_idx i current_list =
-          match current_list with
-          | [] when i = 0 ->
-            let new_node =
-              match rest with
-              | [] -> Value part
-              | "" :: _ -> Array (ref [])
-              | _ -> Object (Hashtbl.create 4)
-            in
-            l := !l @ [ new_node ];
-            new_node
-          | x :: _ when i = 0 -> x
-          | _ :: xs -> get_or_create_at_idx (i - 1) xs
-          | [] ->
-            (* Sparse array padding - use a dummy empty part for padding *)
-            let rec pad_and_create n =
-              if n < 0
-              then failwith "Invalid array index"
-              else if n = 0
-              then (
-                let new_node =
-                  match rest with
-                  | [] -> Value part
-                  | _ -> Object (Hashtbl.create 4)
-                in
-                let dummy_part =
-                  { name = ""
-                  ; filename = None
-                  ; content_type = "text/plain"
-                  ; body = Body.of_string ""
-                  }
-                in
-                l := !l @ [ Value dummy_part (* padding *); new_node ];
-                new_node)
-              else
-                let dummy_part =
-                  { name = ""
-                  ; filename = None
-                  ; content_type = "text/plain"
-                  ; body = Body.of_string ""
-                  }
-                in
-                l := !l @ [ Value dummy_part ];
-                pad_and_create (n - 1)
-            in
-            pad_and_create (idx - List.length !l)
-        in
-        let node_at_idx = get_or_create_at_idx idx !l in
-        insert node_at_idx rest part
-      | Value _, _ :: _ -> ()
-      (* Conflict - ignore *)
-    in
-    List.iter (fun (key, part) -> insert root (parse_key key) part) parts;
-    root
+    (* Group parts by name; multiple parts with the same name form an array. Per
+       OpenAPI multipart spec, nested objects/arrays are encoded as a single
+       part with Content-Type: application/json rather than bracket notation. *)
+    let by_name = Hashtbl.create 16 in
+    List.iter
+      (fun (name, part) ->
+         match Hashtbl.find_opt by_name name with
+         | None -> Hashtbl.add by_name name [ part ]
+         | Some existing -> Hashtbl.replace by_name name (part :: existing))
+      parts;
+    let root_tbl = Hashtbl.create (Hashtbl.length by_name) in
+    Hashtbl.iter
+      (fun name part_list ->
+         let ordered = List.rev part_list in
+         let node =
+           match ordered with
+           | [ single ] -> Part single
+           | multiple -> Array (List.map (fun p -> Part p) multiple)
+         in
+         Hashtbl.add root_tbl name node)
+      by_name;
+    Object root_tbl
 end
 
 module Urlencoded = struct
@@ -238,7 +153,7 @@ module Urlencoded = struct
     | Array of node list ref
     | Value of string list
 
-  let to_yojson params =
+  let to_json params =
     let params = normalize params in
     let parse_key key =
       match String.split_on_char '[' key with
@@ -342,16 +257,16 @@ module Urlencoded = struct
         ()
     in
     List.iter (fun (key, values) -> insert root (parse_key key) values) params;
-    let rec to_yojson = function
+    let rec as_json = function
       | Object h ->
-        `Assoc
+        Jsont.Json.object'
           (Hashtbl.to_seq h
           |> List.of_seq
-          |> List.map (fun (k, v) -> k, to_yojson v))
-      | Array l -> `List (List.map to_yojson !l)
-      | Value [] -> `Null
-      | Value [ v ] -> `String v
-      | Value vs -> `List (List.map (fun s -> `String s) vs)
+          |> List.map (fun (k, v) -> Jsont.Json.name k, as_json v))
+      | Array l -> Jsont.Json.list (List.map as_json !l)
+      | Value [] -> Jsont.Json.null ()
+      | Value [ v ] -> Jsont.Json.string v
+      | Value vs -> Jsont.Json.list (List.map Jsont.Json.string vs)
     in
-    to_yojson root
+    as_json root
 end
