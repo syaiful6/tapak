@@ -63,11 +63,11 @@ let build_log_info ~args ~duration_seconds request response =
   let user_agent = Request.header "User-Agent" request in
   let request_id = Request.header "X-Request-ID" request in
   { client_ip
-  ; request_method = Piaf.Method.to_string (Request.meth request)
-  ; request_uri = Piaf.Request.target (Request.to_piaf request)
+  ; request_method = Http.Method.to_string (Request.meth request)
+  ; request_uri = Request.target request
   ; request_protocol =
-      Format.asprintf "%a" Piaf.Versions.HTTP.pp (Request.version request)
-  ; status = Response.status response |> Piaf.Status.to_code
+      Format.asprintf "%a" Http.Version.pp (Request.version request)
+  ; status = Response.status response |> Http.Status.to_int
   ; response_bytes
   ; referer
   ; user_agent

@@ -6,7 +6,6 @@ module Body = Body
 module Router = Router
 module Middleware = Middleware
 module Handler = Handler
-module Filter = Filter
 module Service = Service
 module Form = Form
 module Cookies = Cookies
@@ -71,64 +70,57 @@ val use : (module MIDDLEWARE with type t = 'a) -> 'a -> middleware
 val pipe : through:middleware list -> middleware
 
 val response :
-   ?version:Piaf.Versions.HTTP.t
-  -> ?status:Piaf.Status.t
-  -> ?headers:Piaf.Headers.t
-  -> ?context:Context.t
-  -> string
-  -> response
+   ?version:Http.Version.t
+  -> ?status:Http.Status.t
+  -> ?headers:Headers.t
+  -> Body.t
+  -> Response.t
 
 val html :
-   ?version:Piaf.Versions.HTTP.t
-  -> ?status:Piaf.Status.t
-  -> ?headers:Piaf.Headers.t
-  -> ?context:Context.t
+   ?version:Http.Version.t
+  -> ?headers:Headers.t
+  -> ?status:Http.Status.t
   -> string
-  -> response
+  -> Response.t
 
 val json :
-   ?version:Piaf.Versions.HTTP.t
-  -> ?status:Piaf.Status.t
-  -> ?headers:Piaf.Headers.t
-  -> ?context:Context.t
+   ?version:Http.Version.t
+  -> ?headers:Headers.t
+  -> ?status:Http.Status.t
   -> string
-  -> response
+  -> Response.t
 
 val redirect :
-   ?version:Piaf.Versions.HTTP.t
-  -> ?status:Piaf.Status.redirection
-  -> ?headers:Piaf.Headers.t
-  -> ?context:Context.t
+   ?version:Http.Version.t
+  -> ?headers:Headers.t
+  -> ?status:Http.Status.redirection
   -> string
-  -> response
+  -> Response.t
 
 val stream :
-   sw:Eio.Switch.t
-  -> ?status:Piaf.Status.t
+   ?version:Http.Version.t
   -> ?headers:Headers.t
-  -> ?context:Context.t
-  -> ((string option -> unit) -> unit)
-  -> response
+  -> ?status:Http.Status.t
+  -> ?length:int64
+  -> ((string -> unit) -> (unit -> unit) -> unit)
+  -> Response.t
 
 val sse :
-   sw:Eio.Switch.t
-  -> clock:_ Eio.Time.clock
-  -> ?interval:float
+   ?version:Http.Version.t
   -> ?headers:Headers.t
-  -> ?context:Context.t
-  -> ((Sse.Event.t option -> unit) -> unit)
-  -> response
+  -> ((Sse.Event.t -> unit) -> (unit -> unit) -> unit)
+  -> Response.t
 
 val static :
    env:Static.fs_env
   -> ?config:Static.config
   -> ?follow:bool
   -> ?ttl_seconds:float
-  -> _ Eio.Path.t
+  -> [> Eio.Fs.dir_ty ] Eio.Path.t
   -> unit
-  -> request
+  -> Request.t
   -> string list
-  -> response
+  -> Response.t
 
 val openapi :
    ?title:string
@@ -138,25 +130,11 @@ val openapi :
   -> Router.route list
   -> string
 
-val run_with :
-   ?error_handler:Piaf.Server.error_handler
-  -> config:Piaf.Server.Config.t
-  -> env:Eio_unix.Stdenv.base
+val run :
+   ?max_connections:int
+  -> ?additional_domains:_ Eio__Domain_manager.t * int
+  -> ?stop:'a Eio.Promise.t
+  -> on_error:(exn -> unit)
+  -> _ Eio.Net.listening_socket
   -> Handler.t
-  -> Piaf.Server.Command.t
-
-type systemd
-
-type server =
-  [ `Piaf of Piaf.Server.Command.t
-  | `Systemd of systemd
-  ]
-
-val run_with_systemd_socket :
-   ?error_handler:Piaf.Server.error_handler
-  -> config:Piaf.Server.Config.t
-  -> env:Eio_unix.Stdenv.base
-  -> Handler.t
-  -> server
-
-val shutdown : server -> unit
+  -> 'a

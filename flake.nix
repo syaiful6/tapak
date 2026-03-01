@@ -3,6 +3,11 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs?ref=nixos-25.11";
+    cows = {
+      url = "github:syaiful6/cows";
+      flake = false;
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     treefmt-nix.url = "github:numtide/treefmt-nix";
     treefmt-nix.flake = false;
   };
@@ -11,6 +16,7 @@
     {
       self,
       nixpkgs,
+      cows,
       treefmt-nix,
     }:
     let
@@ -30,6 +36,7 @@
                 (_final: _prev: {
                   treefmt-nix = import treefmt-nix;
                 })
+                (import "${cows}/nix/overlays/default.nix")
                 (import ./nix/overlays/development.nix)
               ];
             };

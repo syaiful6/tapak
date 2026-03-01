@@ -9,12 +9,10 @@ let make_request ?cookie () =
         (fst cookie_header)
         (snd cookie_header)
   in
-  Tapak.Request.create
-    ~scheme:`HTTP
-    ~version:Piaf.Versions.HTTP.HTTP_1_1
+  Tapak.Request.make
+    ~version:`HTTP_1_1
     ~headers
-    ~meth:`GET
-    ~body:Tapak.Body.empty
+    ~body:(Cohttp_eio.Body.of_string "")
     "/test"
 
 let make_response () = Tapak.html "<h1>Test</h1>"
@@ -243,7 +241,7 @@ let test_with_cookie_default_settings () =
   in
   Alcotest.(check bool)
     "Set-Cookie has path=/"
-    (string_contains ~substring:"path=/" header_value)
+    (string_contains ~substring:"Path=/" header_value)
     true;
   Alcotest.(check bool)
     "Set-Cookie has SameSite=Lax"
@@ -277,19 +275,19 @@ let test_with_cookie_custom_settings () =
     true;
   Alcotest.(check bool)
     "Set-Cookie has custom path"
-    (string_contains ~substring:"path=/api" header_value)
+    (string_contains ~substring:"Path=/api" header_value)
     true;
   Alcotest.(check bool)
     "Set-Cookie has custom domain"
-    (string_contains ~substring:"domain=example.com" header_value)
+    (string_contains ~substring:"Domain=example.com" header_value)
     true;
   Alcotest.(check bool)
     "Set-Cookie has secure flag"
-    (string_contains ~substring:"secure" header_value)
+    (string_contains ~substring:"Secure" header_value)
     true;
   Alcotest.(check bool)
     "Set-Cookie has httponly flag"
-    (string_contains ~substring:"httponly" header_value)
+    (string_contains ~substring:"HttpOnly" header_value)
     true;
   Alcotest.(check bool)
     "Set-Cookie has SameSite=Strict"

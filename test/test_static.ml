@@ -268,7 +268,7 @@ let test_range_invalid () =
   let request_headers = Headers.of_list [ "Range", "bytes=invalid" ] in
   let response_headers = Headers.empty in
   match R.conditional_request ~request_headers ~response_headers finfo1 with
-  | `Without_body `Range_not_satisfiable -> ()
+  | `Without_body `Requested_range_not_satisfiable -> ()
   | _ -> Alcotest.fail "Should return 416 for invalid range"
 
 let test_precedence_if_match_overrides_if_modified () =
@@ -431,14 +431,11 @@ module MockFile = struct
 
   let hash = function File data -> data.hash | Folder _ -> None
 
-  let content ~sw = function
-    | File data ->
-      ignore sw;
-      Ok (Piaf.Body.of_string data.content)
+  let content = function
+    | File data -> Ok (Body.of_string data.content)
     | Folder _ -> Error `Not_found
 
-  let partial_content ~sw t ~start ~end_ =
-    ignore sw;
+  let partial_content t ~start ~end_ =
     match t with
     | File data ->
       let len = String.length data.content in
@@ -452,20 +449,16 @@ module MockFile = struct
       else
         let slice_len = end_pos - start_pos + 1 in
         let slice = String.sub data.content start_pos slice_len in
-        Ok (Piaf.Body.of_string slice)
+        Ok (Body.of_string slice)
     | Folder _ -> Error `Not_found
 end
+
+let body_empty = Cohttp_eio.Body.of_string ""
 
 let make_request ?(headers = []) ?(meth = `GET) segments =
   let path = "/" ^ String.concat "/" segments in
   let headers = Headers.of_list headers in
-  Request.create
-    ~scheme:`HTTP
-    ~version:Piaf.Versions.HTTP.HTTP_1_1
-    ~headers
-    ~meth
-    ~body:Piaf.Body.empty
-    path
+  Request.make ~headers ~meth ~body:body_empty path
 
 let test_serve_simple_file () =
   MockFile.reset ();
@@ -481,10 +474,9 @@ let test_serve_simple_file () =
   Alcotest.(check int)
     "status 200"
     200
-    (Response.status response |> Piaf.Status.to_code);
-  match Response.body response |> Piaf.Body.to_string with
-  | Ok body_str -> Alcotest.(check string) "body" "Hello, World!" body_str
-  | Error _ -> Alcotest.fail "Failed to read body"
+    (Response.status response |> Http.Status.to_int);
+  let body_str = Response.body response |> Body.to_string in
+  Alcotest.(check string) "body" "Hello, World!" body_str
 
 let test_serve_not_found () =
   MockFile.reset ();
@@ -493,7 +485,7 @@ let test_serve_not_found () =
   Alcotest.(check int)
     "status 404"
     404
-    (Response.status response |> Piaf.Status.to_code)
+    (Response.status response |> Http.Status.to_int)
 
 let test_serve_with_encoding () =
   MockFile.reset ();
@@ -511,7 +503,7 @@ let test_serve_with_encoding () =
   Alcotest.(check int)
     "status 200"
     200
-    (Response.status response |> Piaf.Status.to_code);
+    (Response.status response |> Http.Status.to_int);
   let headers = Response.headers response in
   Alcotest.(check (option string))
     "Content-Encoding"
@@ -557,7 +549,7 @@ let test_serve_if_none_match () =
   Alcotest.(check int)
     "status 304"
     304
-    (Response.status response |> Piaf.Status.to_code)
+    (Response.status response |> Http.Status.to_int)
 
 let test_serve_range_request () =
   MockFile.reset ();
@@ -573,10 +565,9 @@ let test_serve_range_request () =
   Alcotest.(check int)
     "status 206"
     206
-    (Response.status response |> Piaf.Status.to_code);
-  match Response.body response |> Piaf.Body.to_string with
-  | Ok body_str -> Alcotest.(check string) "partial body" "2345" body_str
-  | Error _ -> Alcotest.fail "Failed to read body"
+    (Response.status response |> Http.Status.to_int);
+  let body_str = Response.body response |> Body.to_string in
+  Alcotest.(check string) "partial body" "2345" body_str
 
 let test_serve_nested_path () =
   MockFile.reset ();
@@ -595,7 +586,7 @@ let test_serve_nested_path () =
   Alcotest.(check int)
     "status 200"
     200
-    (Response.status response |> Piaf.Status.to_code);
+    (Response.status response |> Http.Status.to_int);
   let headers = Response.headers response in
   Alcotest.(check (option string))
     "Content-Type"
@@ -618,10 +609,9 @@ let test_serve_empty_segments () =
   Alcotest.(check int)
     "status"
     200
-    (Response.status response |> Piaf.Status.to_code);
-  match Response.body response |> Piaf.Body.to_string with
-  | Ok body_str -> Alcotest.(check string) "body" "<html></html>" body_str
-  | Error _ -> Alcotest.fail "Failed to read body"
+    (Response.status response |> Http.Status.to_int);
+  let body_str = Response.body response |> Body.to_string in
+  Alcotest.(check string) "body" "<html></html>" body_str
 
 let test_serve_cache_control () =
   MockFile.reset ();

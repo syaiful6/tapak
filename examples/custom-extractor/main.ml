@@ -228,9 +228,15 @@ let () =
   Log.info (fun m -> m "Server running at http://localhost:8080");
 
   Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
   let port = 8080 in
   let address = `Tcp (Eio.Net.Ipaddr.V4.any, port) in
-  let config = Piaf.Server.Config.create ~domains:1 address in
-
   let app = setup_app () in
-  ignore (Tapak.run_with ~config ~env app)
+  let socket =
+    Eio.Net.listen ~reuse_addr:true ~backlog:1024 ~sw env#net address
+  in
+  Tapak.run
+    ~on_error:(fun exn ->
+      Logs.warn (fun f -> f "Uncaught exception %s" (Printexc.to_string exn)))
+    socket
+    app

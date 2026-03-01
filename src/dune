@@ -2,7 +2,9 @@
  (name tapak)
  (public_name tapak)
  (libraries
-  piaf
+  http
+  cohttp-eio
+  cows
   magic-mime
   ptime
   eio
@@ -13,6 +15,7 @@
   jsont.bytesrw
   str
   logs
+  multipart_form
   mirage-crypto
   mirage-crypto-rng
   mirage-crypto-rng.unix
@@ -21,7 +24,6 @@
   re
   sch
   saturn
-  httpun-ws
   bigstringaf
   angstrom))
 

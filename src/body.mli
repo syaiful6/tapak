@@ -1,97 +1,45 @@
-type t = Piaf.Body.t
-
-type length =
-  [ `Chunked
-  | `Close_delimited
-  | `Error of [ `Bad_gateway | `Bad_request | `Internal_server_error ]
-  | `Fixed of Int64.t
-  | `Unknown
+type content =
+  [ `Empty
+  | `Raw of Eio.Buf_read.t -> Eio.Buf_write.t -> unit
+  | `Stream of Bytesrw.Bytes.Writer.t -> (unit -> unit) -> unit
+  | `String of string
   ]
 
-val length : t -> length
+type t =
+  { length : Int64.t option
+  ; content : content
+  }
+
 val empty : t
-val of_stream : ?length:length -> Bigstringaf.t Piaf.IOVec.t Piaf.Stream.t -> t
-val of_string_stream : ?length:length -> string Piaf.Stream.t -> t
+(** [empty] the empty response body *)
+
 val of_string : string -> t
-val of_bigstring : ?off:int -> ?len:int -> Bigstringaf.t -> t
-val sendfile : ?length:length -> string -> (t, [> Piaf.Error.common ]) result
-val to_string : t -> (string, [> Piaf.Error.t ]) result
-val drain : t -> (unit, [> Piaf.Error.t ]) result
-val is_closed : t -> bool
-val closed : t -> (unit, [> Piaf.Error.t ]) result
-val when_closed : f:((unit, [> Piaf.Error.t ]) result -> unit) -> t -> unit
-val is_errored : t -> bool
-val to_list : t -> Bigstringaf.t Piaf.IOVec.t list
-val to_string_list : t -> string list
+(* [of_string s] create response body from string [s]. The length of the body is
+   set to the length of the string *)
 
-val fold :
-   f:('a -> Bigstringaf.t Piaf.IOVec.t -> 'a)
-  -> init:'a
+val stream :
+   ?length:Int64.t
+  -> ((string -> unit) -> (unit -> unit) -> unit)
   -> t
-  -> ('a, [> Piaf.Error.t ]) result
+(** [stream ?length f] create response body with streaming function. It's a function
+  of two parameters; the first parameter provides a means of sending another chunk of
+  data, and the second parameter provides a means of flushing the data to the client.
 
-val fold_string :
-   f:('a -> string -> 'a)
-  -> init:'a
+  If you passed length, then you must exactly send that length of data, if you don't know
+  then left it as None *)
+
+val writer :
+   ?length:Int64.t
+  -> (Bytesrw.Bytes.Writer.t -> (unit -> unit) -> unit)
   -> t
-  -> ('a, [> Piaf.Error.t ]) result
+(** [writer ?length f] like {!stream} but take Bytesrw.Bytes.Writer.t instead of function
+    to send chunk of chunk data. *)
 
-val iter :
-   f:(Bigstringaf.t Piaf.IOVec.t -> unit)
-  -> t
-  -> (unit, [> Piaf.Error.t ]) result
+val raw : (Eio.Buf_read.t -> Eio.Buf_write.t -> unit) -> t
+(** [raw f] create response body with IO function that is expected
+    to write the response body. The IO function has access to the
+    underlying input and output channel, which allows writing a response body
+    more efficiently, or switch protocols entirely *)
 
-val iter_p :
-   sw:Eio.Switch.t
-  -> f:(Bigstringaf.t Piaf.IOVec.t -> unit)
-  -> t
-  -> (unit, [> Piaf.Error.t ]) result
-
-val iter_string : f:(string -> unit) -> t -> (unit, [> Piaf.Error.t ]) result
-
-val iter_string_p :
-   sw:Eio.Switch.t
-  -> f:(string -> unit)
-  -> t
-  -> (unit, [> Piaf.Error.t ]) result
-
-val to_stream : t -> Bigstringaf.t Piaf.IOVec.t Piaf.Stream.t
-val to_string_stream : t -> string Piaf.Stream.t
-
-(** {1 Body Size Limiting}
-
-    Functions for limiting body size during reading. *)
-
-val limit :
-   sw:Eio.Switch.t
-  -> max_bytes:int64
-  -> t
-  -> (t, [> `Msg of string ]) result
-(** [limit ~sw ~max_bytes body] creates a new body that will fail if more than
-    [max_bytes] are read from it.
-
-    This function checks both:
-    1. The declared length (from Content-Length or chunk encoding)
-    2. The actual bytes read (for defense against lying clients)
-
-    If the declared length exceeds [max_bytes], returns [Error] immediately
-    without reading any data.
-
-    If the declared length is unknown or within limits, returns a wrapped body
-    that tracks bytes read and fails if the limit is exceeded. The [sw] parameter
-    is used to manage the lifecycle of the background fiber that performs the
-    limiting.
-
-    {b Example:}
-    {[
-      let body = Request.body request in
-      let request_info = Request.info request in
-      match request_info.sw with
-      | Some sw ->
-        (match Body.limit ~sw ~max_bytes:(10 * 1024 * 1024) body with
-        | Error (`Msg err) -> (* Declared size too large *)
-        | Ok limited_body ->
-            (* Read from limited_body, will fail if actual size exceeds limit *)
-            Body.to_string limited_body)
-      | None -> (* Handle missing switch *)
-    ]} *)
+val to_string : t -> string
+(** [to_string body] convert response body to string. If the body is a stream or raw, it will be consumed and converted to string. *)

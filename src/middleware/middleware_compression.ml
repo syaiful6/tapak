@@ -21,7 +21,8 @@ let encoding_to_string = function
 let args ~encoder ~predicate ~preferred_encodings =
   { encoder; predicate; preferred_encodings }
 
-let call { encoder; predicate; preferred_encodings } next request =
+(** TODO: handle actual compression *)
+let call { encoder = _; predicate; preferred_encodings } next request =
   let response = next request in
 
   if not (predicate request response)
@@ -35,26 +36,4 @@ let call { encoder; predicate; preferred_encodings } next request =
     with
     | None -> response
     | Some `Identity -> response
-    | Some encoding ->
-      (match encoder encoding with
-      | None -> response
-      | Some filter ->
-        let compressed_stream =
-          Response.body response
-          |> Body.to_stream
-          |> Bytesrw_util.reader_of_stream
-          |> filter
-          |> Bytesrw_util.stream_of_reader
-        in
-
-        let encoding_name = encoding_to_string encoding in
-        let headers =
-          Headers.add_to_list_header
-            (Response.headers response)
-            "Vary"
-            "Accept-Encoding"
-        in
-        response
-        |> Response.with_ ~body:(Body.of_stream compressed_stream) ~headers
-        |> Response.remove_header "Content-Length"
-        |> Response.add_header_or_replace ("Content-Encoding", encoding_name))
+    | Some _encoding -> response (* TODO: actually compress the response body *)

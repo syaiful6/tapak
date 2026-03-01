@@ -1,59 +1,19 @@
-val run_with :
-   ?error_handler:Piaf.Server.error_handler
-  -> config:Piaf.Server.Config.t
-  -> env:Eio_unix.Stdenv.base
+val get_systemd_listen_fd : unit -> Unix.file_descr option
+(** get_systemd_listen_fd () returns Some fd if the process was started by systemd with a socket activated service,
+    and None otherwise.
+
+    You can use this to by importing this file descriptor with Eio_unix.Net.import_socket_listening *)
+
+val make :
+   ?conn_closed:(Cohttp_eio.Server.conn -> unit)
   -> Handler.t
-  -> Piaf.Server.Command.t
+  -> Cohttp_eio.Server.t
 
-module Systemd : sig
-  type shutdown_resolver = unit -> unit
-
-  type t =
-    { sockets :
-        Eio_unix.Net.listening_socket_ty Eio_unix.Net.listening_socket list
-    ; shutdown_resolvers : shutdown_resolver array
-    ; client_sockets :
-        ( int
-          , Eio_unix.Net.stream_socket_ty Eio_unix.Net.stream_socket )
-          Hashtbl.t
-          array
-    ; clock : float Eio.Time.clock_ty Eio.Resource.t
-    ; shutdown_timeout : float
-    }
-
-  val shutdown : t -> unit
-
-  val accept_loop :
-     sw:Eio.Std.Switch.t
-    -> listening_socket:
-         [> ([> `Generic ] as 'a) Eio.Net.listening_socket_ty ] Eio.Std.r
-    -> client_sockets:
-         (int, 'a Eio.Net.stream_socket_ty Eio.Net.stream_socket) Hashtbl.t
-    -> (sw:Eio.Std.Switch.t
-        -> 'a Eio.Net.stream_socket_ty Eio.Net.stream_socket
-        -> Eio.Net.Sockaddr.stream
-        -> unit)
-    -> unit
-    -> unit
-
-  val listen_with_socket :
-     sw:Eio.Std.Switch.t
-    -> listening_socket:Eio_unix.Net.listening_socket_ty Eio.Std.r
-    -> domains:int
-    -> shutdown_timeout:float
-    -> < clock : float Eio.Time.clock_ty Eio.Time.clock
-       ; domain_mgr : [> Eio.Domain_manager.ty ] Eio.Domain_manager.t
-       ; .. >
-    -> (sw:Eio.Switch.t
-        -> Eio_unix.Net.stream_socket_ty Eio.Net.stream_socket
-        -> Eio.Net.Sockaddr.stream
-        -> unit)
-    -> t
-end
-
-val run_with_systemd_socket :
-   ?error_handler:Piaf.Server.error_handler
-  -> config:Piaf.Server.Config.t
-  -> env:Eio_unix.Stdenv.base
+val run :
+   ?max_connections:int
+  -> ?additional_domains:_ Eio__Domain_manager.t * int
+  -> ?stop:'a Eio.Promise.t
+  -> on_error:(exn -> unit)
+  -> _ Eio.Net.listening_socket
   -> Handler.t
-  -> [> `Piaf of Piaf.Server.Command.t | `Systemd of Systemd.t ]
+  -> 'a

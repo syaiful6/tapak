@@ -1,11 +1,10 @@
 open Tapak
 
 let make_request ?(meth = `GET) target =
-  Request.create
-    ~scheme:`HTTP
-    ~version:Piaf.Versions.HTTP.HTTP_1_1
+  Request.make
+    ~version:`HTTP_1_1
     ~meth
-    ~body:Piaf.Body.empty
+    ~body:(Cohttp_eio.Body.of_string "")
     target
 
 let is_hex_color ~off ~len s =
@@ -27,8 +26,8 @@ let test_simple_route () =
       Alcotest.(check string)
         "method should be GET"
         "GET"
-        (Piaf.Method.to_string (Request.meth request));
-      Response.of_string ~body:"users list" `OK)
+        (Http.Method.to_string (Request.meth request));
+      Response.of_string "users list")
   in
   let request = make_request "/users" in
   match match' [ route ] request with
@@ -45,7 +44,7 @@ let test_int64_param () =
     get (s "users" / int64)
     |> into (fun id ->
       Alcotest.(check int64) "id should be 42" 42L id;
-      Response.of_string ~body:(Printf.sprintf "User %Ld" id) `OK)
+      Response.of_string (Printf.sprintf "User %Ld" id))
   in
   let request = make_request "/users/42" in
   match match' [ route ] request with
@@ -63,9 +62,7 @@ let test_multiple_params () =
     |> into (fun user_id slug ->
       Alcotest.(check int64) "user_id should be 42" 42L user_id;
       Alcotest.(check string) "slug should be 'hello'" "hello" slug;
-      Response.of_string
-        ~body:(Printf.sprintf "User %Ld post %s" user_id slug)
-        `OK)
+      Response.of_string (Printf.sprintf "User %Ld post %s" user_id slug))
   in
   let request = make_request "/users/42/posts/hello" in
   match match' [ route ] request with
@@ -79,8 +76,7 @@ let test_multiple_params () =
 let test_no_match () =
   let open Router in
   let route =
-    get (s "users" / int64)
-    |> into (fun _id -> Response.of_string ~body:"user" `OK)
+    get (s "users" / int64) |> into (fun _id -> Response.of_string "user")
   in
   let request = make_request "/posts/42" in
   match match' [ route ] request with
@@ -92,7 +88,7 @@ let test_post_method () =
   let route =
     post (s "users")
     |> unit
-    |> into (fun () -> Response.of_string ~body:"user created" `Created)
+    |> into (fun () -> Response.of_string ~status:`Created "user created")
   in
   let request = make_request ~meth:`POST "/users" in
   match match' [ route ] request with
@@ -108,7 +104,7 @@ let test_method_mismatch () =
   let route =
     post (s "users")
     |> unit
-    |> into (fun () -> Response.of_string ~body:"user created" `Created)
+    |> into (fun () -> Response.of_string ~status:`Created "user created")
   in
   let request = make_request ~meth:`GET "/users" in
   match match' [ route ] request with
@@ -142,7 +138,7 @@ let test_int_param () =
     get (s "page" / int)
     |> into (fun page_num ->
       Alcotest.(check int) "page should be 5" 5 page_num;
-      Response.of_string ~body:(Printf.sprintf "Page %d" page_num) `OK)
+      Response.of_string (Printf.sprintf "Page %d" page_num))
   in
   let request = make_request "/page/5" in
   match match' [ route ] request with
@@ -156,8 +152,7 @@ let test_int_param () =
 let test_invalid_int () =
   let open Router in
   let route =
-    get (s "page" / int)
-    |> into (fun _page -> Response.of_string ~body:"page" `OK)
+    get (s "page" / int) |> into (fun _page -> Response.of_string "page")
   in
   let request = make_request "/page/not-a-number" in
   match match' [ route ] request with
@@ -170,7 +165,7 @@ let test_bool_param () =
     get (s "published" / bool)
     |> into (fun is_published ->
       Alcotest.(check bool) "should be true" true is_published;
-      Response.of_string ~body:(string_of_bool is_published) `OK)
+      Response.of_string (string_of_bool is_published))
   in
   let request = make_request "/published/true" in
   match match' [ route ] request with
@@ -182,10 +177,7 @@ let test_scope () =
   let route =
     scope
       (s "api" / s "v1")
-      [ get (s "users")
-        |> unit
-        |> into (fun () -> Response.of_string ~body:"users" `OK)
-      ]
+      [ get (s "users") |> unit |> into (fun () -> Response.of_string "users") ]
   in
   let request = make_request "/api/v1/users" in
   match match' [ route ] request with
@@ -214,7 +206,7 @@ let test_scope_with_middlewares () =
     let call () next req =
       let resp = next req in
       Response.with_
-        ~headers:(Piaf.Headers.add (Response.headers resp) "X-Test" "true")
+        ~headers:(Tapak.Headers.add (Response.headers resp) "X-Test" "true")
         resp
   end
   in
@@ -223,15 +215,12 @@ let test_scope_with_middlewares () =
     scope
       ~middlewares:[ test_middleware ]
       (s "api")
-      [ get (s "test")
-        |> unit
-        |> into (fun () -> Response.of_string ~body:"ok" `OK)
-      ]
+      [ get (s "test") |> unit |> into (fun () -> Response.of_string "ok") ]
   in
   let request = make_request "/api/test" in
   match match' [ route ] request with
   | Some response ->
-    (match Piaf.Headers.get (Response.headers response) "x-test" with
+    (match Response.header "x-test" response with
     | Some value -> Alcotest.(check string) "middleware should run" "true" value
     | None -> Alcotest.fail "middleware header not found")
   | None -> Alcotest.fail "scoped route should have matched"
@@ -242,7 +231,7 @@ let test_splat () =
     get (s "files" / splat)
     |> into (fun segments ->
       let path = String.concat "/" segments in
-      Response.of_string ~body:(Printf.sprintf "Files: %s" path) `OK)
+      Response.of_string (Printf.sprintf "Files: %s" path))
   in
   let request = make_request "/files/docs/readme.txt" in
   match match' [ route ] request with
@@ -260,7 +249,7 @@ let test_splat_segments () =
     get (s "static" / splat)
     |> into (fun segments ->
       captured_segments := segments;
-      Response.of_string ~body:"ok" `OK)
+      Response.of_string "ok")
   in
   let request = make_request "/static/js/app/bundle.js" in
   match match' [ route ] request with
@@ -278,7 +267,7 @@ let test_splat_empty () =
     get (s "spa" / splat)
     |> into (fun segments ->
       captured_segments := segments;
-      Response.of_string ~body:"ok" `OK)
+      Response.of_string "ok")
   in
   let request = make_request "/spa" in
   match match' [ route ] request with
@@ -310,7 +299,7 @@ let test_splat_with_prefix () =
     get (s "api" / s "v1" / splat)
     |> into (fun segments ->
       let path = String.concat "/" segments in
-      Response.of_string ~body:(Printf.sprintf "API: %s" path) `OK)
+      Response.of_string (Printf.sprintf "API: %s" path))
   in
   let request = make_request "/api/v1/users/42/posts" in
   match match' [ route ] request with
@@ -326,7 +315,7 @@ let test_slug () =
   let route =
     get (s "posts" / slug)
     |> into (fun slug_str ->
-      Response.of_string ~body:(Printf.sprintf "Post: %s" slug_str) `OK)
+      Response.of_string (Printf.sprintf "Post: %s" slug_str))
   in
   let request = make_request "/posts/my-awesome-post-123" in
   match match' [ route ] request with
@@ -340,8 +329,7 @@ let test_slug () =
 let test_slug_invalid () =
   let open Router in
   let route =
-    get (s "posts" / slug)
-    |> into (fun _slug -> Response.of_string ~body:"ok" `OK)
+    get (s "posts" / slug) |> into (fun _slug -> Response.of_string "ok")
   in
   let request = make_request "/posts/My_Post" in
   match match' [ route ] request with
@@ -355,7 +343,7 @@ let test_slug_valid () =
     get (s "posts" / slug)
     |> into (fun slug_str ->
       captured_slug := slug_str;
-      Response.of_string ~body:"ok" `OK)
+      Response.of_string "ok")
   in
   let request = make_request "/posts/hello-world-123" in
   match match' [ route ] request with
@@ -378,7 +366,7 @@ let test_custom () =
   let route =
     get (s "color" / hex_color ())
     |> into (fun color ->
-      Response.of_string ~body:(Printf.sprintf "Color: #%s" color) `OK)
+      Response.of_string (Printf.sprintf "Color: #%s" color))
   in
   let request = make_request "/color/ff5733" in
   match match' [ route ] request with
@@ -400,7 +388,7 @@ let test_custom_invalid () =
   in
   let route =
     get (s "color" / hex_color ())
-    |> into (fun _color -> Response.of_string ~body:"ok" `OK)
+    |> into (fun _color -> Response.of_string "ok")
   in
   let request = make_request "/color/gggggg" in
   match match' [ route ] request with
@@ -431,9 +419,7 @@ let test_sprintf_custom () =
 let test_root_route () =
   let open Router in
   let route =
-    get (s "")
-    |> unit
-    |> into (fun () -> Response.of_string ~body:"home page" `OK)
+    get (s "") |> unit |> into (fun () -> Response.of_string "home page")
   in
   let request = make_request "/" in
   match match' [ route ] request with
@@ -455,7 +441,7 @@ let test_root_with_method () =
   let route =
     post (s "")
     |> unit
-    |> into (fun () -> Response.of_string ~body:"posted to root" `Created)
+    |> into (fun () -> Response.of_string ~status:`Created "posted to root")
   in
   let request = make_request ~meth:`POST "/" in
   match match' [ route ] request with
@@ -469,7 +455,7 @@ let test_root_with_method () =
 let test_root_doesnt_match_subpaths () =
   let open Router in
   let route =
-    get (s "") |> unit |> into (fun () -> Response.of_string ~body:"root" `OK)
+    get (s "") |> unit |> into (fun () -> Response.of_string "root")
   in
   let request = make_request "/users" in
   match match' [ route ] request with
@@ -481,10 +467,7 @@ let test_scoped_empty_literal () =
   let route =
     scope
       (s "users")
-      [ get (s "")
-        |> unit
-        |> into (fun () -> Response.of_string ~body:"user list" `OK)
-      ]
+      [ get (s "") |> unit |> into (fun () -> Response.of_string "user list") ]
   in
   let request = make_request "/users" in
   match match' [ route ] request with
@@ -500,10 +483,7 @@ let test_scoped_empty_literal_no_trailing_slash () =
   let route =
     scope
       (s "api" / s "v1")
-      [ get (s "")
-        |> unit
-        |> into (fun () -> Response.of_string ~body:"api index" `OK)
-      ]
+      [ get (s "") |> unit |> into (fun () -> Response.of_string "api index") ]
   in
   let request = make_request "/api/v1" in
   match match' [ route ] request with
@@ -520,12 +500,8 @@ let test_scoped_with_trailing_route () =
   let route =
     scope
       (s "users")
-      [ get (s "")
-        |> unit
-        |> into (fun () -> Response.of_string ~body:"user list" `OK)
-      ; get (s "new")
-        |> unit
-        |> into (fun () -> Response.of_string ~body:"new user" `OK)
+      [ get (s "") |> unit |> into (fun () -> Response.of_string "user list")
+      ; get (s "new") |> unit |> into (fun () -> Response.of_string "new user")
       ]
   in
   let request1 = make_request "/users" in
@@ -541,8 +517,7 @@ let test_exact_path_matching () =
   let open Router in
   let route =
     get (s "users" / int64)
-    |> into (fun id ->
-      Response.of_string ~body:(Printf.sprintf "User %Ld" id) `OK)
+    |> into (fun id -> Response.of_string (Printf.sprintf "User %Ld" id))
   in
   let request1 = make_request "/users/123" in
   (match match' [ route ] request1 with
@@ -573,7 +548,7 @@ let test_any_method () =
   let route =
     any (s "api" / s "webhook")
     |> unit
-    |> into (fun () -> Response.of_string ~body:"webhook received" `OK)
+    |> into (fun () -> Response.of_string "webhook received")
   in
   let request1 = make_request ~meth:`GET "/api/webhook" in
   (match match' [ route ] request1 with
@@ -615,8 +590,7 @@ let test_any_method_with_params () =
   let open Router in
   let route =
     any (s "resources" / int64)
-    |> into (fun id ->
-      Response.of_string ~body:(Printf.sprintf "Resource %Ld" id) `OK)
+    |> into (fun id -> Response.of_string (Printf.sprintf "Resource %Ld" id))
   in
   let request1 = make_request ~meth:`GET "/resources/42" in
   (match match' [ route ] request1 with
@@ -646,24 +620,21 @@ let test_response_model () =
     |> request
     |> response_model ~status:`OK ~schema:string_schema
     |> into (fun request id ->
-      let headers = Request.headers request in
       let ua =
-        Piaf.Headers.get headers "user-agent" |> Option.value ~default:"unknown"
+        Request.header "user-agent" request |> Option.value ~default:"unknown"
       in
       Printf.sprintf "User %Ld with ua: %s" id ua)
   in
   let request =
-    Request.create
-      ~headers:(Piaf.Headers.of_list [ "user-agent", "alcotest" ])
-      ~scheme:`HTTP
-      ~version:Piaf.Versions.HTTP.HTTP_1_1
+    Request.make
+      ~headers:(Headers.of_list [ "user-agent", "alcotest" ])
       ~meth:`GET
-      ~body:Piaf.Body.empty
+      ~body:(Cohttp_eio.Body.of_string "")
       "/users/100"
   in
   match match' [ route ] request with
   | Some response ->
-    let body = Response.body response |> Piaf.Body.to_string |> Result.get_ok in
+    let body = Response.body response |> Body.to_string in
     let expected = {|{"message":"User 100 with ua: alcotest"}|} in
     Alcotest.(check string)
       "response body should be the user id and ua as JSON string"
@@ -679,15 +650,13 @@ let test_route_with_header () =
     |> header header_schema
     |> into (fun api_key ->
       Alcotest.(check string) "api key should be secret123" "secret123" api_key;
-      Response.of_string ~body:"authenticated" `OK)
+      Response.of_string "authenticated")
   in
   let request =
-    Request.create
-      ~headers:(Piaf.Headers.of_list [ "x-api-key", "secret123" ])
-      ~scheme:`HTTP
-      ~version:Piaf.Versions.HTTP.HTTP_1_1
+    Request.make
+      ~headers:(Headers.of_list [ "x-api-key", "secret123" ])
       ~meth:`GET
-      ~body:Piaf.Body.empty
+      ~body:(Cohttp_eio.Body.of_string "")
       "/api/data"
   in
   match match' [ route ] request with
@@ -707,22 +676,18 @@ let test_route_header_case_insensitive () =
     post (s "api" / s "upload")
     |> header header_schema
     |> into (fun content_type ->
-      Response.of_string
-        ~body:(Printf.sprintf "Content-Type: %s" content_type)
-        `OK)
+      Response.of_string (Printf.sprintf "Content-Type: %s" content_type))
   in
   let request =
-    Request.create
-      ~headers:(Piaf.Headers.of_list [ "CONTENT-TYPE", "application/json" ])
-      ~scheme:`HTTP
-      ~version:Piaf.Versions.HTTP.HTTP_1_1
+    Request.make
+      ~headers:(Headers.of_list [ "CONTENT-TYPE", "application/json" ])
       ~meth:`POST
-      ~body:Piaf.Body.empty
+      ~body:(Cohttp_eio.Body.of_string "")
       "/api/upload"
   in
   match match' [ route ] request with
   | Some response ->
-    let body = Response.body response |> Piaf.Body.to_string |> Result.get_ok in
+    let body = Response.body response |> Body.to_string in
     Alcotest.(check string)
       "should match header case-insensitively"
       "Content-Type: application/json"
@@ -737,7 +702,7 @@ let test_route_header_missing () =
   let route =
     get (s "api" / s "protected")
     |> header header_schema
-    |> into (fun _auth -> Response.of_string ~body:"ok" `OK)
+    |> into (fun _auth -> Response.of_string "ok")
   in
   let request = make_request "/api/protected" in
   try
@@ -760,24 +725,19 @@ let test_route_multiple_headers () =
     get (s "api" / s "user-data")
     |> header header_schema
     |> into (fun (api_key, user_id) ->
-      Response.of_string
-        ~body:(Printf.sprintf "Key: %s, User: %s" api_key user_id)
-        `OK)
+      Response.of_string (Printf.sprintf "Key: %s, User: %s" api_key user_id))
   in
   let request =
-    Request.create
+    Request.make
       ~headers:
-        (Piaf.Headers.of_list
-           [ "x-api-key", "secret123"; "x-user-id", "user42" ])
-      ~scheme:`HTTP
-      ~version:Piaf.Versions.HTTP.HTTP_1_1
+        (Headers.of_list [ "x-api-key", "secret123"; "x-user-id", "user42" ])
       ~meth:`GET
-      ~body:Piaf.Body.empty
+      ~body:(Cohttp_eio.Body.of_string "")
       "/api/user-data"
   in
   match match' [ route ] request with
   | Some response ->
-    let body = Response.body response |> Piaf.Body.to_string |> Result.get_ok in
+    let body = Response.body response |> Body.to_string in
     Alcotest.(check string)
       "should extract multiple headers"
       "Key: secret123, User: user42"
@@ -798,21 +758,19 @@ let test_route_optional_header () =
         | Some id -> Printf.sprintf "Request ID: %s" id
         | None -> "No request ID"
       in
-      Response.of_string ~body:msg `OK)
+      Response.of_string msg)
   in
   let request_with =
-    Request.create
-      ~headers:(Piaf.Headers.of_list [ "x-request-id", "req-123" ])
-      ~scheme:`HTTP
-      ~version:Piaf.Versions.HTTP.HTTP_1_1
+    Request.make
+      ~headers:(Headers.of_list [ "x-request-id", "req-123" ])
       ~meth:`GET
-      ~body:Piaf.Body.empty
+      ~body:(Cohttp_eio.Body.of_string "")
       "/api/endpoint"
   in
   let request_without = make_request "/api/endpoint" in
   (match match' [ route ] request_with with
   | Some response ->
-    let body = Response.body response |> Piaf.Body.to_string |> Result.get_ok in
+    let body = Response.body response |> Body.to_string in
     Alcotest.(check string)
       "should use header when present"
       "Request ID: req-123"
@@ -820,7 +778,7 @@ let test_route_optional_header () =
   | None -> Alcotest.fail "route should match with optional header present");
   match match' [ route ] request_without with
   | Some response ->
-    let body = Response.body response |> Piaf.Body.to_string |> Result.get_ok in
+    let body = Response.body response |> Body.to_string in
     Alcotest.(check string)
       "should work without optional header"
       "No request ID"
@@ -838,24 +796,20 @@ let test_route_header_validation () =
   let route =
     get (s "api" / s "secure")
     |> header header_schema
-    |> into (fun _auth -> Response.of_string ~body:"authorized" `OK)
+    |> into (fun _auth -> Response.of_string "authorized")
   in
   let valid_request =
-    Request.create
-      ~headers:(Piaf.Headers.of_list [ "authorization", "Bearer token123" ])
-      ~scheme:`HTTP
-      ~version:Piaf.Versions.HTTP.HTTP_1_1
+    Request.make
+      ~headers:(Headers.of_list [ "authorization", "Bearer token123" ])
       ~meth:`GET
-      ~body:Piaf.Body.empty
+      ~body:(Cohttp_eio.Body.of_string "")
       "/api/secure"
   in
   let invalid_request =
-    Request.create
-      ~headers:(Piaf.Headers.of_list [ "authorization", "Basic token123" ])
-      ~scheme:`HTTP
-      ~version:Piaf.Versions.HTTP.HTTP_1_1
+    Request.make
+      ~headers:(Headers.of_list [ "authorization", "Basic token123" ])
       ~meth:`GET
-      ~body:Piaf.Body.empty
+      ~body:(Cohttp_eio.Body.of_string "")
       "/api/secure"
   in
   (match match' [ route ] valid_request with
@@ -874,7 +828,7 @@ let test_url_encoded_path_space () =
     get (s "files" / str)
     |> into (fun filename ->
       captured := filename;
-      Response.of_string ~body:filename `OK)
+      Response.of_string filename)
   in
   let request = make_request "/files/hello%20world.txt" in
   match match' [ route ] request with
@@ -892,7 +846,7 @@ let test_url_encoded_path_unicode () =
     get (s "posts" / str)
     |> into (fun slug ->
       captured := slug;
-      Response.of_string ~body:slug `OK)
+      Response.of_string slug)
   in
   let request = make_request "/posts/caf%C3%A9" in
   match match' [ route ] request with
@@ -910,7 +864,7 @@ let test_url_encoded_path_special_chars () =
     get (s "api" / str)
     |> into (fun value ->
       captured := value;
-      Response.of_string ~body:value `OK)
+      Response.of_string value)
   in
   let request = make_request "/api/hello%2Fworld" in
   match match' [ route ] request with
@@ -930,7 +884,7 @@ let test_url_encoded_multiple_params () =
     |> into (fun username filename ->
       captured1 := username;
       captured2 := filename;
-      Response.of_string ~body:"ok" `OK)
+      Response.of_string "ok")
   in
   let request = make_request "/users/john%20doe/files/my%20document.pdf" in
   match match' [ route ] request with
@@ -950,7 +904,7 @@ let test_url_encoded_literal_match () =
   let route =
     get (s "api" / s "test route")
     |> unit
-    |> into (fun () -> Response.of_string ~body:"ok" `OK)
+    |> into (fun () -> Response.of_string "ok")
   in
   let request = make_request "/api/test%20route" in
   match match' [ route ] request with
@@ -964,7 +918,7 @@ let test_url_encoded_international_chars () =
     get (s "search" / str)
     |> into (fun query ->
       captured := query;
-      Response.of_string ~body:query `OK)
+      Response.of_string query)
   in
   let request = make_request "/search/%E6%97%A5%E6%9C%AC%E8%AA%9E" in
   match match' [ route ] request with
@@ -982,7 +936,7 @@ let test_url_encoded_mixed_encoded_unencoded () =
     get (s "items" / str)
     |> into (fun item ->
       captured := item;
-      Response.of_string ~body:item `OK)
+      Response.of_string item)
   in
   let request = make_request "/items/hello%20world-123_test" in
   match match' [ route ] request with
@@ -1000,7 +954,7 @@ let test_url_encoded_plus_sign () =
     get (s "data" / str)
     |> into (fun value ->
       captured := value;
-      Response.of_string ~body:value `OK)
+      Response.of_string value)
   in
   let request = make_request "/data/a%2Bb" in
   match match' [ route ] request with
@@ -1015,7 +969,7 @@ let test_url_no_encoding_needed () =
     get (s "files" / str)
     |> into (fun filename ->
       captured := filename;
-      Response.of_string ~body:filename `OK)
+      Response.of_string filename)
   in
   let request = make_request "/files/normal-file_name.txt" in
   match match' [ route ] request with
@@ -1036,7 +990,7 @@ let test_recover_validation_failed () =
   let route =
     post (s "users")
     |> body Json schema
-    |> into (fun age -> Response.of_string ~body:(string_of_int age) `Created)
+    |> into (fun age -> Response.of_string ~status:`Created (string_of_int age))
     |> recover (fun _request -> function
       | Validation_failed errors ->
         let error_msg =
@@ -1044,16 +998,14 @@ let test_recover_validation_failed () =
           |> List.map (fun (field, msg) -> Printf.sprintf "%s: %s" field msg)
           |> String.concat ", "
         in
-        Some (Response.of_string ~body:error_msg `Bad_request)
+        Some (Response.of_string ~status:`Bad_request error_msg)
       | _ -> None)
   in
   let request =
-    Request.create
-      ~headers:(Piaf.Headers.of_list [ "content-type", "application/json" ])
-      ~scheme:`HTTP
-      ~version:Piaf.Versions.HTTP.HTTP_1_1
+    Request.make
+      ~headers:(Headers.of_list [ "content-type", "application/json" ])
       ~meth:`POST
-      ~body:(Piaf.Body.of_string {|{"age": 15}|})
+      ~body:(Cohttp_eio.Body.of_string {|{"age": 15}|})
       "/users"
   in
   match match' [ route ] request with
@@ -1070,22 +1022,20 @@ let test_recover_bad_request () =
   let route =
     post (s "data")
     |> body Json schema
-    |> into (fun value -> Response.of_string ~body:(string_of_int value) `OK)
+    |> into (fun value -> Response.of_string (string_of_int value))
     |> recover (fun _request -> function
       | Bad_request msg ->
         Some
           (Response.of_string
-             ~body:(Printf.sprintf "Error: %s" msg)
-             `Bad_request)
+             ~status:`Bad_request
+             (Printf.sprintf "Error: %s" msg))
       | _ -> None)
   in
   let request =
-    Request.create
-      ~headers:(Piaf.Headers.of_list [ "content-type", "text/plain" ])
-      ~scheme:`HTTP
-      ~version:Piaf.Versions.HTTP.HTTP_1_1
+    Request.make
+      ~headers:(Headers.of_list [ "content-type", "text/plain" ])
       ~meth:`POST
-      ~body:(Piaf.Body.of_string "invalid")
+      ~body:(Cohttp_eio.Body.of_string "invalid")
       "/data"
   in
   match match' [ route ] request with
@@ -1107,18 +1057,17 @@ let test_recover_reraises_when_none () =
   let route =
     post (s "test")
     |> body Json schema
-    |> into (fun num -> Response.of_string ~body:(string_of_int num) `OK)
+    |> into (fun num -> Response.of_string (string_of_int num))
     |> recover (fun _request -> function
-      | Bad_request _ -> Some (Response.of_string ~body:"handled" `Bad_request)
+      | Bad_request _ ->
+        Some (Response.of_string ~status:`Bad_request "handled")
       | _ -> None (* Don't handle Validation_failed *))
   in
   let request =
-    Request.create
-      ~headers:(Piaf.Headers.of_list [ "content-type", "application/json" ])
-      ~scheme:`HTTP
-      ~version:Piaf.Versions.HTTP.HTTP_1_1
+    Request.make
+      ~headers:(Headers.of_list [ "content-type", "application/json" ])
       ~meth:`POST
-      ~body:(Piaf.Body.of_string {|{"num": 99}|})
+      ~body:(Cohttp_eio.Body.of_string {|{"num": 99}|})
       "/test"
   in
   try
@@ -1134,20 +1083,18 @@ let test_recover_has_request_access () =
   let route =
     post (s "api" / s "data")
     |> body Json schema
-    |> into (fun value -> Response.of_string ~body:(string_of_int value) `OK)
+    |> into (fun value -> Response.of_string (string_of_int value))
     |> recover (fun request -> function
       | Validation_failed _ ->
         captured_path := Request.target request;
-        Some (Response.of_string ~body:"error" `Bad_request)
+        Some (Response.of_string ~status:`Bad_request "error")
       | _ -> None)
   in
   let request =
-    Request.create
-      ~headers:(Piaf.Headers.of_list [ "content-type", "application/json" ])
-      ~scheme:`HTTP
-      ~version:Piaf.Versions.HTTP.HTTP_1_1
+    Request.make
+      ~headers:(Headers.of_list [ "content-type", "application/json" ])
       ~meth:`POST
-      ~body:(Piaf.Body.of_string {|{"value": "invalid"}|})
+      ~body:(Cohttp_eio.Body.of_string {|{"value": "invalid"}|})
       "/api/data"
   in
   (match match' [ route ] request with
@@ -1172,25 +1119,23 @@ let test_recover_on_scope () =
       [ post (s "users")
         |> body Json schema
         |> into (fun age ->
-          Response.of_string ~body:(string_of_int age) `Created)
+          Response.of_string ~status:`Created (string_of_int age))
       ]
     |> recover (fun _request -> function
       | Validation_failed _ ->
-        Some (Response.of_string ~body:"scope error handler" `Bad_request)
+        Some (Response.of_string ~status:`Bad_request "scope error handler")
       | _ -> None)
   in
   let request =
-    Request.create
-      ~headers:(Piaf.Headers.of_list [ "content-type", "application/json" ])
-      ~scheme:`HTTP
-      ~version:Piaf.Versions.HTTP.HTTP_1_1
+    Request.make
+      ~headers:(Headers.of_list [ "content-type", "application/json" ])
       ~meth:`POST
-      ~body:(Piaf.Body.of_string {|{"age": 150}|})
+      ~body:(Cohttp_eio.Body.of_string {|{"age": 150}|})
       "/api/users"
   in
   match match' [ route ] request with
   | Some response ->
-    let body = Response.body response |> Piaf.Body.to_string |> Result.get_ok in
+    let body = Response.body response |> Body.to_string in
     Alcotest.(check string)
       "scope-level recover should catch errors"
       "scope error handler"
@@ -1203,24 +1148,22 @@ let test_recover_success_path () =
   let route =
     post (s "data")
     |> body Json schema
-    |> into (fun value -> Response.of_string ~body:(string_of_int value) `OK)
+    |> into (fun value -> Response.of_string (string_of_int value))
     |> recover (fun _request -> function
       | Validation_failed _ ->
-        Some (Response.of_string ~body:"error" `Bad_request)
+        Some (Response.of_string ~status:`Bad_request "error")
       | _ -> None)
   in
   let request =
-    Request.create
-      ~headers:(Piaf.Headers.of_list [ "content-type", "application/json" ])
-      ~scheme:`HTTP
-      ~version:Piaf.Versions.HTTP.HTTP_1_1
+    Request.make
+      ~headers:(Headers.of_list [ "content-type", "application/json" ])
       ~meth:`POST
-      ~body:(Piaf.Body.of_string {|{"value": 42}|})
+      ~body:(Cohttp_eio.Body.of_string {|{"value": 42}|})
       "/data"
   in
   match match' [ route ] request with
   | Some response ->
-    let body = Response.body response |> Piaf.Body.to_string |> Result.get_ok in
+    let body = Response.body response |> Body.to_string in
     Alcotest.(check string)
       "recover should not interfere with successful requests"
       "42"
@@ -1232,12 +1175,10 @@ let test_multiple_routes_in_nested_scope () =
   let routes =
     [ scope
         (s "api" / s "v1")
-        [ get (s "users")
-          |> unit
-          |> into (fun () -> Response.of_string ~body:"users" `OK)
+        [ get (s "users") |> unit |> into (fun () -> Response.of_string "users")
         ; get (s "profile")
           |> unit
-          |> into (fun () -> Response.of_string ~body:"profile" `OK)
+          |> into (fun () -> Response.of_string "profile")
         ]
     ]
   in
@@ -1259,10 +1200,10 @@ let test_nested_scopes_multiple_routes () =
             (s "v1")
             [ get (s "users")
               |> unit
-              |> into (fun () -> Response.of_string ~body:"users" `OK)
+              |> into (fun () -> Response.of_string "users")
             ; get (s "profile")
               |> unit
-              |> into (fun () -> Response.of_string ~body:"profile" `OK)
+              |> into (fun () -> Response.of_string "profile")
             ]
         ]
     ]

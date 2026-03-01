@@ -1,42 +1,150 @@
-module Multipart = struct
-  module PM = Piaf.Form.Multipart
+open Imports
 
+module Multipart = struct
   type part =
     { name : string
     ; filename : string option
     ; content_type : string
-    ; body : Body.t
+    ; body : string option Eio.Stream.t
     }
 
   type t = (string * part) list
 
-  let to_msg_error = function
-    | `Msg msg -> `Msg msg
-    | `Bad_gateway -> `Msg "Bad gateway"
-    | `Bad_request -> `Msg "Bad request"
-    | `Connect_error msg -> `Msg ("Connect error: " ^ msg)
-    | `Exn exn -> `Msg ("Exception: " ^ Printexc.to_string exn)
-    | `Internal_server_error -> `Msg "Internal server error"
-    | `Invalid_response_body_length _ -> `Msg "Invalid response body length"
-    | `Malformed_response msg -> `Msg ("Malformed response: " ^ msg)
-    | `Protocol_error (_, msg) -> `Msg ("Protocol error: " ^ msg)
-    | `TLS_error _ -> `Msg "TLS error"
-    | `Upgrade_not_supported -> `Msg "Upgrade not supported"
+  let content_type h = Multipart_form.Header.content_type h
+  let content_disposition h = Multipart_form.Header.content_disposition h
 
-  let parse ?(max_chunk_size = 0x100000 (* 1 MB *)) request =
-    let { Request.request = piaf_request; _ } = request in
-    match PM.assoc ~max_chunk_size piaf_request with
-    | Error e -> Error (to_msg_error e)
-    | Ok piaf_fields ->
-      let fields =
-        List.map
-          (fun (_key, piaf_part) ->
-             let { PM.name; filename; content_type; body } = piaf_part in
-             name, { name; filename; content_type; body })
-          piaf_fields
+  let name_of_header h =
+    content_disposition h
+    |> Fun.flip Option.bind Multipart_form.Content_disposition.name
+
+  let stream
+        ~sw
+        ?(bounds = 10)
+        ?(buffer_size = 8192)
+        ~identify
+        flow
+        content_type
+    =
+    let output = Eio.Stream.create max_int in
+    let q = Queue.create () in
+    let buf = Cstruct.create buffer_size in
+    let fresh_id =
+      let r = ref 0 in
+      fun () ->
+        incr r;
+        !r
+    in
+    let emitters header =
+      let id = fresh_id () in
+      Queue.push (`Id (header, id)) q;
+      let push = function
+        | None -> Queue.push (`End_of_part id) q
+        | Some data -> Queue.push (`Data (id, data)) q
       in
-      Ok fields
+      push, id
+    in
+    let parser = Multipart_form.parse ~emitters content_type in
+    let tbl = Hashtbl.create 0x10 in
+    let rec go () =
+      match Queue.pop q with
+      | `Id (header, id) ->
+        let client_id = identify header in
+        let stream = Eio.Stream.create bounds in
+        Hashtbl.add tbl id (client_id, stream);
+        Eio.Stream.add output (Some (client_id, header, stream));
+        go ()
+      | `Data (id, data) ->
+        let _, stream = Hashtbl.find tbl id in
+        Eio.Stream.add stream (Some data);
+        go ()
+      | `End_of_part id ->
+        let _, stream = Hashtbl.find tbl id in
+        Eio.Stream.add stream None;
+        go ()
+      | exception Queue.Empty ->
+        let data =
+          try
+            let n = Eio.Flow.single_read flow buf in
+            `String (Cstruct.to_string (Cstruct.sub buf 0 n))
+          with
+          | End_of_file -> `Eof
+        in
+        (match parser data with
+        | `Continue -> go ()
+        | `Done t ->
+          let client_id_of_id id =
+            let client_id, _ = Hashtbl.find tbl id in
+            client_id
+          in
+          Eio.Stream.add output None;
+          Result.Ok (Multipart_form.map client_id_of_id t)
+        | `Fail _ -> Result.Error (`Msg "Invalid multipart/form"))
+    in
+    Eio.Fiber.fork_promise ~sw go, output
 
+  let ( <.> ) f g x = f (g x)
+  let add_new_line s = s ^ "\r\n"
+
+  let parse request =
+    let ctype =
+      let default =
+        Multipart_form.(
+          Content_type.make
+            `Text
+            (`Iana_token "plain")
+            Content_type.Parameters.empty)
+      in
+      Request.header "content-type" request
+      |> Fun.flip
+           Option.bind
+           (Result.to_option
+           <.> (Multipart_form.Content_type.of_string <.> add_new_line))
+      |> Option.value ~default
+    in
+    Eio.Switch.run @@ fun sw ->
+    let p, st =
+      stream ~sw ~identify:name_of_header (Request.body request) ctype
+    in
+    let consumed =
+      Eio.Fiber.fork_promise ~sw (fun () ->
+        let parts = Hashtbl.create 0x10 in
+        let rec go () =
+          match Eio.Stream.take st with
+          | Some (name, header, body) ->
+            let key = Option.value name ~default:"" in
+            Hashtbl.replace
+              parts
+              key
+              { name = key
+              ; filename =
+                  content_disposition header
+                  |> Fun.flip
+                       Option.bind
+                       Multipart_form.Content_disposition.filename
+              ; content_type =
+                  content_type header |> Multipart_form.Content_type.to_string
+              ; body
+              };
+            go ()
+          | None -> parts
+        in
+        go ())
+    in
+    ignore @@ Eio.Promise.await_exn p;
+    Eio.Promise.await_exn consumed |> Hashtbl.to_seq |> List.of_seq
+
+  let body_to_string body =
+    let buffer = Buffer.create 1024 in
+    let rec go () =
+      match Eio.Stream.take body with
+      | Some chunk ->
+        Buffer.add_string buffer chunk;
+        go ()
+      | None -> Buffer.contents buffer
+    in
+    go ()
+
+  let part_to_string part = body_to_string part.body
   let get_part key fields = List.assoc_opt key fields
 
   let get_all_parts key fields =
@@ -47,36 +155,15 @@ module Multipart = struct
   let get_field key fields =
     match get_part key fields with
     | None -> None
-    | Some { body; _ } ->
-      (match Body.to_string body with
-      | Ok value -> Some (Ok value)
-      | Error e -> Some (Error (to_msg_error e)))
+    | Some { body; _ } -> Some (body_to_string body)
 
   let get_all_fields key fields =
     let parts = get_all_parts key fields in
     let rec read_all acc = function
-      | [] -> Ok (List.rev acc)
-      | { body; _ } :: rest ->
-        (match Body.to_string body with
-        | Ok value -> read_all (value :: acc) rest
-        | Error e -> Error (to_msg_error e))
+      | [] -> List.rev acc
+      | { body; _ } :: rest -> read_all (body_to_string body :: acc) rest
     in
     read_all [] parts
-
-  let drain fields =
-    let rec drain_all errors = function
-      | [] ->
-        (match errors with
-        | [] -> Ok ()
-        | errs -> Error (`Msg (String.concat "; " (List.rev errs))))
-      | (_, { body; _ }) :: rest ->
-        (match Body.drain body with
-        | Ok () -> drain_all errors rest
-        | Error e ->
-          let err_msg = match to_msg_error e with `Msg m -> m in
-          drain_all (err_msg :: errors) rest)
-    in
-    drain_all [] fields
 
   type node =
     | Object of (string, node) Hashtbl.t
@@ -112,15 +199,15 @@ module Urlencoded = struct
   type t = (string * string list) list
 
   let of_string s = if s = "" then [] else s |> Uri.query_of_encoded
-
-  let of_body body =
-    Body.to_string body
-    |> Result.map_error (fun _ -> `Bad_request)
-    |> Result.map of_string
+  let of_body body = Eio.Flow.read_all body |> of_string
 
   let of_query request =
-    let uri = Request.uri request in
-    match Uri.query uri with [] -> [] | query -> query
+    let target = Request.target request in
+    match String.index_opt target '?' with
+    | Some i ->
+      of_string
+        (String.sub target ~pos:(i + 1) ~len:(String.length target - i - 1))
+    | None -> []
 
   (* Normalize by grouping duplicate keys into a single entry with all values *)
   let normalize params =
@@ -156,12 +243,12 @@ module Urlencoded = struct
   let to_json params =
     let params = normalize params in
     let parse_key key =
-      match String.split_on_char '[' key with
+      match String.split_on_char ~sep:'[' key with
       | [] -> []
       | base :: rest ->
         let sanitize_part part =
           if String.ends_with ~suffix:"]" part
-          then String.sub part 0 (String.length part - 1)
+          then String.sub part ~pos:0 ~len:(String.length part - 1)
           else part (* This would be a malformed key like `user[name` *)
         in
         base :: List.map sanitize_part rest

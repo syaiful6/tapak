@@ -24,26 +24,10 @@ module Event : sig
   val comment : string -> t
 end
 
-val keep_alive :
-   sw:Eio.Switch.t
-  -> clock:[> float Eio.Time.clock_ty ] Eio.Time.clock
-  -> ?interval:float
-  -> ?comment:string
-  -> Event.t Piaf.Stream.t
-  -> Event.t Piaf.Stream.t
-(** Keeps event source connection alive when no events sent over a some time.
-
-    Some proxy servers may drop HTTP connection after a some timeout of inactivity.
-    This function wrap original stream, so it send comment events every interval
-    of inactivity. *)
-
 val stream :
-   ?version:Piaf.Versions.HTTP.t
+   ?version:Http.Version.t
   -> ?headers:Headers.t
-  -> ?context:Context.t
-  -> Event.t Piaf.Stream.t
+  -> ((Event.t -> unit) -> (unit -> unit) -> unit)
   -> Response.t
-(** Convert an event stream into an SSE response.
-
-    This is the main function for Server-Sent Events. It takes a stream of {!Event.t}
-    and returns a {!Response.t} with appropriate SSE headers. *)
+(** [stream ?version ?headers f]Stream a sequence of events. The first argument is a function that takes two
+    arguments: a function to send an event, and a function to flush it to client *)

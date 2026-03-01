@@ -9,27 +9,26 @@ let trusted_proxies =
     (* Ipaddr.Prefix.of_string_exn "192.168.0.0/16"; *)
   ]
 
-let about () =
-  Tapak.Response.of_string' "About Tapak - A composable web framework"
+let about () = Tapak.Response.plain "About Tapak - A composable web framework"
 [@@route GET, "/about"]
 
-let get_user ~id = Tapak.Response.of_string' (Printf.sprintf "User ID: %d" id)
+let get_user ~id = Tapak.Response.plain (Printf.sprintf "User ID: %d" id)
 [@@route GET, "/users/:id"]
 
-let create_user () = Tapak.Response.of_string' "User created"
+let create_user () = Tapak.Response.plain "User created"
 [@@route POST, "/users"]
 
 let blog_post ~slug req =
-  Tapak.Response.of_string'
+  Tapak.Response.plain
     (Printf.sprintf
        "Blog Post %s Slug: %s"
-       (Tapak.Request.meth req |> Piaf.Method.to_string)
+       (Tapak.Request.meth req |> Http.Method.to_string)
        slug)
 [@@route GET, "/blog/<slug:slug>"]
 
 let home () =
   Tapak.(
-    Response.of_html
+    Response.html
       ~status:`OK
       (Format.asprintf
          {|<h1>Tapak Showcases</h1>
@@ -44,7 +43,7 @@ let home () =
 [@@route GET, "/"]
 
 let not_found _req =
-  Tapak.Response.of_string'
+  Tapak.Response.plain
     ~status:`Not_found
     "<h1>404 Not Found</h1><p>The page you requested could not be found.</p>"
 
@@ -58,6 +57,7 @@ let setup_log ?(threaded = false) ?style_renderer level =
 let () =
   setup_log ~threaded:false (Some Logs.Debug);
   Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
   let now () = Eio.Time.now (Eio.Stdenv.clock env) in
   let app =
     Tapak.(
@@ -73,6 +73,13 @@ let () =
            (module Middleware.Request_logger)
            (Middleware.Request_logger.args ~now ~trusted_proxies ()))
   in
-  let address = `Tcp (Eio.Net.Ipaddr.V4.any, 8080) in
-  let config = Piaf.Server.Config.create address in
-  ignore (Tapak.run_with ~config ~env app)
+  let port = 8080 in
+  let address = `Tcp (Eio.Net.Ipaddr.V4.any, port) in
+  let socket =
+    Eio.Net.listen ~reuse_addr:true ~backlog:1024 ~sw env#net address
+  in
+  Tapak.run
+    ~on_error:(fun exn ->
+      Logs.warn (fun f -> f "Uncaught exception %s" (Printexc.to_string exn)))
+    socket
+    app

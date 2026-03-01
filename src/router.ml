@@ -51,7 +51,7 @@ type metadata =
   }
 
 type (_, _) schema =
-  | Method : Piaf.Method.t * ('a, 'b) path -> ('a, 'b) schema
+  | Method : Http.Method.t * ('a, 'b) path -> ('a, 'b) schema
   | Query :
       { schema : 'query Sch.t
       ; rest : ('a, 'b) schema
@@ -69,7 +69,7 @@ type (_, _) schema =
       -> ('cookie -> 'a, 'b) schema
   | Response_model :
       { schema : 'resp Sch.t
-      ; status : Piaf.Status.t
+      ; status : Http.Status.t
       ; rest : ('a, 'resp) schema
       }
       -> ('a, Response.t) schema
@@ -232,7 +232,7 @@ let put : ('a, 'b) path -> ('a, 'b) schema =
  fun pattern -> Method (`PUT, pattern)
 
 let patch : ('a, 'b) path -> ('a, 'b) schema =
- fun pattern -> Method (`Other "PATCH", pattern)
+ fun pattern -> Method (`PATCH, pattern)
 
 let delete : ('a, 'b) path -> ('a, 'b) schema =
  fun pattern -> Method (`DELETE, pattern)
@@ -258,7 +258,7 @@ let extract : type a b g. g extractor -> (a, b) schema -> (g -> a, b) schema =
  fun extractor schema -> Extract { extractor; rest = schema }
 
 let response_model : type a resp.
-  status:Piaf.Status.t
+  status:Http.Status.t
   -> schema:resp Sch.t
   -> (a, resp) schema
   -> (a, Response.t) schema
@@ -404,7 +404,7 @@ let expected_content_type : media_type -> string = function
 let validate_content_type : media_type -> Request.t -> (unit, string) result =
  fun input_type request ->
   let expected = expected_content_type input_type in
-  let actual = Piaf.Headers.get (Request.headers request) "content-type" in
+  let actual = Request.header "content-type" request in
   match actual with
   | None ->
     Error (Printf.sprintf "Missing Content-Type header, expected: %s" expected)
@@ -479,7 +479,7 @@ let rec match_pattern : type a b.
     | None -> None)
   | Annotated { segment; _ } -> match_pattern segment cursor request k
 
-let rec get_method : type a b. (a, b) schema -> Piaf.Method.t = function
+let rec get_method : type a b. (a, b) schema -> Http.Method.t = function
   | Method (m, _) -> m
   | Query { rest; _ } -> get_method rest
   | Header { rest; _ } -> get_method rest
@@ -517,7 +517,7 @@ let recover : (Request.t -> exn -> Response.t option) -> route -> route =
 module Cookie_parser = struct
   let parse request =
     let header = Request.headers request in
-    let cookies = Piaf.Cookies.Cookie.parse header in
+    let cookies = Cookies.Cookie.parse header in
     let tbl = Hashtbl.create 16 in
     List.iter
       (fun (key, value) ->
@@ -558,22 +558,20 @@ let evaluate_body_schema : type a.
  fun input schema request ->
   match input with
   | Json ->
-    (match Body.to_string (Request.body request) with
-    | Ok body_str ->
-      Sch.Json.decode_string schema body_str |> Sch.Validation.to_result
-    | Error _ -> raise (Bad_request "Unable to read request body"))
+    Sch.Json.decode_string schema (Eio.Flow.read_all (Request.body request))
+    |> Sch.Validation.to_result
   | Urlencoded ->
-    (match Form.Urlencoded.of_body (Request.body request) with
-    | Ok form ->
-      Sch.Json.decode schema (Form.Urlencoded.to_json form)
-      |> Sch.Validation.to_result
-    | Error _ -> raise (Bad_request "Invalid URL-encoded body"))
+    Sch.Json.decode
+      schema
+      (Request.body request
+      |> Form.Urlencoded.of_body
+      |> Form.Urlencoded.to_json)
+    |> Sch.Validation.to_result
   | Multipart ->
-    (match Form.Multipart.parse request with
-    | Ok form ->
-      Sch_ext.Multipart_decoder.decode schema (Form.Multipart.to_tree form)
-      |> Sch.Validation.to_result
-    | Error _ -> raise (Bad_request "Invalid multipart body"))
+    Sch_ext.Multipart_decoder.decode
+      schema
+      (request |> Form.Multipart.parse |> Form.Multipart.to_tree)
+    |> Sch.Validation.to_result
 
 let rec evaluate_schema : type a b.
   (a, b) schema -> Path_cursor.t -> a -> Request.t -> b option
@@ -620,10 +618,7 @@ let rec evaluate_schema : type a b.
     (match evaluate_schema rest cursor k request with
     | Some data ->
       let json = Sch.Json.encode_string schema data in
-      let headers =
-        Piaf.Headers.of_list [ "content-type", "application/json" ]
-      in
-      Some (Response.of_string ~headers ~body:json status)
+      Some (Response.json ~status json)
     | None -> None)
   | Extract { extractor; rest } ->
     (match extractor request with
@@ -641,7 +636,7 @@ module Trie = struct
     | Flat_route :
         { schema : ('a, Response.t) schema
         ; handler : 'a
-        ; method_ : Piaf.Method.t
+        ; method_ : Http.Method.t
         ; segments : segment list
         ; middlewares : Middleware.t list
         ; prefix_len : int
@@ -654,18 +649,19 @@ module Trie = struct
   module String_map = Map.Make (String)
 
   module Method_map = Map.Make (struct
-      type t = Piaf.Method.t
+      type t = Http.Method.t
 
       let method_to_int = function
         | `GET -> 0
-        | `HEAD -> 1
-        | `POST -> 2
-        | `PUT -> 3
-        | `DELETE -> 4
-        | `CONNECT -> 5
+        | `POST -> 1
+        | `HEAD -> 2
+        | `DELETE -> 3
+        | `PATCH -> 4
+        | `PUT -> 5
         | `OPTIONS -> 6
         | `TRACE -> 7
-        | `Other _ -> 8
+        | `CONNECT -> 8
+        | `Other _ -> 9
 
       let compare a b =
         match a, b with
@@ -699,7 +695,7 @@ module Trie = struct
     | Annotated { segment; _ } -> extract_path_segments segment
 
   let rec extract_path_segments_and_method : type a b.
-    (a, b) schema -> Piaf.Method.t * segment list
+    (a, b) schema -> Http.Method.t * segment list
     = function
     | Method (m, pattern) -> m, extract_path_segments pattern
     | Query { rest; _ } -> extract_path_segments_and_method rest
@@ -814,7 +810,7 @@ module Trie = struct
     | Some (Flat_route { schema; handler; middlewares; prefix_len; _ }) ->
       let cursor = Path_cursor.create path |> Path_cursor.skip prefix_len in
       let service =
-        Filter.apply_all
+        Middleware.apply_all
           middlewares
           (route_filter (evaluate_schema schema cursor handler))
       in
@@ -879,11 +875,7 @@ let resource ?(middlewares = []) prefix_builder (module R : Resource) =
 
 (** [routes ~not_found routes] creates a handler that dispatches to the given routes.
     If no route matches, the [not_found] handler is called instead of raising an exception. *)
-let routes
-      ?(not_found =
-        fun _req -> Response.of_string' ~status:`Not_found "Not Found")
-      route_list
-  =
+let routes ?(not_found = Handler.not_found) route_list =
   let matcher = router route_list in
   fun req -> try matcher req with Not_found -> not_found req
 

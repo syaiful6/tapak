@@ -51,7 +51,7 @@ type (_, _) path =
   | Splat : ('a, 'b) path -> (string list -> 'a, 'b) path
 
 type (_, _) schema =
-  | Method : Piaf.Method.t * ('a, 'b) path -> ('a, 'b) schema
+  | Method : Http.Method.t * ('a, 'b) path -> ('a, 'b) schema
   | Query :
       { schema : 'query Sch.t
       ; rest : ('a, 'b) schema
@@ -69,7 +69,7 @@ type (_, _) schema =
       -> ('cookie -> 'a, 'b) schema
   | Response_model :
       { schema : 'resp Sch.t
-      ; status : Piaf.Status.t
+      ; status : Http.Status.t
       ; rest : ('a, 'resp) schema
       }
       -> ('a, Response.t) schema
@@ -147,7 +147,7 @@ val request : ('a, 'b) schema -> (Request.t -> 'a, 'b) schema
 val unit : ('a, 'b) schema -> (unit -> 'a, 'b) schema
 
 val response_model :
-   status:Piaf.Status.t
+   status:Http.Status.t
   -> schema:'resp Sch.t
   -> ('a, 'resp) schema
   -> ('a, Response.t) schema
@@ -165,7 +165,7 @@ val ann : string * string -> ('a, 'b) path -> ('a, 'b) path
 val match' : route list -> Request.t -> Response.t option
 val router : route list -> Handler.t
 val sprintf : ('a, string) path -> 'a
-val get_method : ('a, 'b) schema -> Piaf.Method.t
+val get_method : ('a, 'b) schema -> Http.Method.t
 
 val scope :
    ?middlewares:Middleware.t list

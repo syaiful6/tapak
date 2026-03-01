@@ -1,10 +1,10 @@
 let headers = Alcotest.of_pp Tapak.Headers.pp_hum
-let status = Alcotest.of_pp Piaf.Status.pp_hum
+let status = Alcotest.of_pp Http.Status.pp
 
 let with_app ?middlewares ?handler f =
   let hd = Option.value handler ~default:(fun _ -> Tapak.html "") in
   let middlewares = Option.value middlewares ~default:[] in
-  let service = Tapak.Filter.apply_all middlewares hd in
+  let service = Tapak.Middleware.apply_all middlewares hd in
   f service
 
 let make_request
@@ -24,12 +24,11 @@ let make_request
           request_headers
       ]
   in
-  Tapak.Request.create
-    ~scheme:`HTTP
-    ~version:Piaf.Versions.HTTP.HTTP_1_1
+  Tapak.Request.make
+    ~version:`HTTP_1_1
     ~meth
     ~headers:(Tapak.Headers.of_list hdrs)
-    ~body:Tapak.Body.empty
+    ~body:(Cohttp_eio.Body.of_string "")
     "/"
 
 let test_no_origin_header_passes_through () =

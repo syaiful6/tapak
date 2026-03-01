@@ -1,9 +1,11 @@
-type t = (Request.t, Response.t) Filter.simple
+type t = Handler.t -> Handler.t
+
+val apply_all : t list -> t
 
 module type Intf = sig
   type t
 
-  val call : t -> (Request.t, Response.t) Filter.simple
+  val call : t -> Handler.t -> Handler.t
 end
 
 val use : (module Intf with type t = 'a) -> 'a -> t
@@ -70,14 +72,6 @@ module Request_logger : sig
   include Intf with type t := t
 end
 
-module Limit_request_size : sig
-  type t = { max_bytes : int64 }
-
-  val args : max_bytes:int64 -> t
-
-  include Intf with type t := t
-end
-
 module CORS : sig
   (** CORS (Cross-Origin Resource Sharing) middleware.
 
@@ -93,7 +87,7 @@ module CORS : sig
   type t =
     { origins : origin_policy
       (** Origin validation policy. Default: [Allow_all] *)
-    ; methods : Piaf.Method.t list
+    ; methods : Http.Method.t list
       (** Allowed HTTP methods. Default: GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS *)
     ; headers : string list
       (** Allowed request headers. Default: Accept, Content-Type, Authorization, etc. *)
@@ -109,7 +103,7 @@ module CORS : sig
 
   val args :
      ?origins:origin_policy
-    -> ?methods:Piaf.Method.t list
+    -> ?methods:Http.Method.t list
     -> ?headers:string list
     -> ?exposed_headers:string list
     -> ?credentials:bool

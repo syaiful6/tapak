@@ -39,7 +39,7 @@ let find_case_by_tag tag cases =
 
 module Header = struct
   let to_forms h =
-    let xs = Piaf.Headers.to_list h in
+    let xs = Http.Header.to_list h in
     let tbl = Hashtbl.create 16 in
     List.iter
       (fun (key, value) ->
@@ -95,13 +95,6 @@ module Multipart_decoder = struct
     ; apply = (fun vf va -> V.inj (Sch.Validation.apply (V.prj vf) (V.prj va)))
     }
 
-  let multipart_to_string : Form.Multipart.part -> string Sch.Validation.t =
-   fun { body; _ } ->
-    match Body.to_string body with
-    | Ok s -> Sch.Validation.Success s
-    | Error _ ->
-      Sch.Validation.Error [ Sch.error "Can't read multipart part as string" ]
-
   let apply_constraint constraint_ value =
     match Sch.Constraint.apply constraint_ value with
     | Ok v -> Sch.Validation.Success v
@@ -122,58 +115,50 @@ module Multipart_decoder = struct
     | Sch.Str _ ->
       (match node with
       | Form.Multipart.Part part ->
-        let* str = multipart_to_string part in
-        Sch.Json.coerce_string codec str
+        Sch.Json.coerce_string codec (Form.Multipart.part_to_string part)
       | _ ->
         Sch.Validation.Error [ Sch.error "Expected multipart part for string" ])
     | Password _ ->
       (match node with
       | Form.Multipart.Part part ->
-        let* str = multipart_to_string part in
-        Sch.Json.coerce_string codec str
+        Sch.Json.coerce_string codec (Form.Multipart.part_to_string part)
       | _ ->
         Sch.Validation.Error
           [ Sch.error "Expected multipart part for password" ])
     | Int _ ->
       (match node with
       | Form.Multipart.Part part ->
-        let* str = multipart_to_string part in
-        Sch.Json.coerce_string codec str
+        Sch.Json.coerce_string codec (Form.Multipart.part_to_string part)
       | _ ->
         Sch.Validation.Error [ Sch.error "Expected multipart part for int" ])
     | Int32 _ ->
       (match node with
       | Form.Multipart.Part part ->
-        let* str = multipart_to_string part in
-        Sch.Json.coerce_string codec str
+        Sch.Json.coerce_string codec (Form.Multipart.part_to_string part)
       | _ ->
         Sch.Validation.Error [ Sch.error "Expected multipart part for int32" ])
     | Int64 _ ->
       (match node with
       | Form.Multipart.Part part ->
-        let* str = multipart_to_string part in
-        Sch.Json.coerce_string codec str
+        Sch.Json.coerce_string codec (Form.Multipart.part_to_string part)
       | _ ->
         Sch.Validation.Error [ Sch.error "Expected multipart part for int64" ])
     | Bool _ ->
       (match node with
       | Form.Multipart.Part part ->
-        let* str = multipart_to_string part in
-        Sch.Json.coerce_string codec str
+        Sch.Json.coerce_string codec (Form.Multipart.part_to_string part)
       | _ ->
         Sch.Validation.Error [ Sch.error "Expected multipart part for bool" ])
     | Float _ ->
       (match node with
       | Form.Multipart.Part part ->
-        let* str = multipart_to_string part in
-        Sch.Json.coerce_string codec str
+        Sch.Json.coerce_string codec (Form.Multipart.part_to_string part)
       | _ ->
         Sch.Validation.Error [ Sch.error "Expected multipart part for float" ])
     | Double _ ->
       (match node with
       | Form.Multipart.Part part ->
-        let* str = multipart_to_string part in
-        Sch.Json.coerce_string codec str
+        Sch.Json.coerce_string codec (Form.Multipart.part_to_string part)
       | _ ->
         Sch.Validation.Error [ Sch.error "Expected multipart part for double" ])
     | File ->
@@ -184,7 +169,7 @@ module Multipart_decoder = struct
             { name = part.name
             ; filename = part.filename
             ; content_type = part.content_type
-            ; body = Bytesrw_util.reader_of_stream (Body.to_stream part.body)
+            ; body = Bytesrw_util.reader_of_stream part.body
             }
       | _ ->
         Sch.Validation.Error [ Sch.error "Expected multipart part for file" ])
@@ -203,9 +188,7 @@ module Multipart_decoder = struct
       (match node with
       | Form.Multipart.Part { body; content_type; _ }
         when content_type_is_json content_type ->
-        Sch.Json.decode_reader
-          codec
-          (Bytesrw_util.reader_of_stream (Body.to_stream body))
+        Sch.Json.decode_reader codec (Bytesrw_util.reader_of_stream body)
       | Form.Multipart.Object htbl ->
         let known = Hashtbl.create 16 in
         let nat = object_nat htbl known in
@@ -239,9 +222,7 @@ module Multipart_decoder = struct
       (match node with
       | Form.Multipart.Part { body; content_type; _ }
         when content_type_is_json content_type ->
-        Sch.Json.decode_reader
-          codec
-          (Bytesrw_util.reader_of_stream (Body.to_stream body))
+        Sch.Json.decode_reader codec (Bytesrw_util.reader_of_stream body)
       | Form.Multipart.Object htbl -> decode_union discriminator cases htbl
       | _ -> Sch.Validation.Error [ Sch.error "Expected object" ])
     | Rec t -> decode (Lazy.force t) node
@@ -260,10 +241,9 @@ module Multipart_decoder = struct
     -> a Sch.Validation.t
     =
    fun discriminator cases node ->
-    let open Validation_syntax in
     match Hashtbl.find_opt node discriminator with
     | Some (Form.Multipart.Part part) ->
-      let* tag = multipart_to_string part in
+      let tag = Form.Multipart.part_to_string part in
       (match find_case_by_tag tag cases with
       | None ->
         let expected = String.concat ~sep:", " (case_tags cases) in

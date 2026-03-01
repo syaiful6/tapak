@@ -2,7 +2,7 @@ module Log = (val Logs.src_log Logs.default : Logs.LOG)
 
 module Chat_room = struct
   type t =
-    { clients : (int, Tapak.Sse.Event.t option -> unit) Hashtbl.t
+    { clients : (int, Tapak.Sse.Event.t option Eio.Stream.t) Hashtbl.t
     ; mutable next_user_id : int
     }
 
@@ -31,7 +31,7 @@ module Chat_room = struct
 
   let remove_client t user_id =
     let stream = Hashtbl.find_opt t.clients user_id in
-    Option.iter (fun writer -> writer None) stream;
+    Option.iter (fun writer -> Eio.Stream.add writer None) stream;
     Hashtbl.remove t.clients user_id;
     Log.info (fun m -> m "User %d left the chat" user_id)
 
@@ -47,11 +47,7 @@ module Chat_room = struct
     in
     Hashtbl.iter
       (fun user_id writer ->
-         if user_id <> sender_id
-         then
-           try writer (Some event) with
-           | _ ->
-             Log.warn (fun m -> m "Failed to send message to user %d" user_id))
+         if user_id <> sender_id then Eio.Stream.add writer (Some event))
       t.clients
 end
 
@@ -280,47 +276,49 @@ let html_page =
 
 let home_handler () = Tapak.html ~status:`OK html_page
 
-let chat_stream_handler ~clock room req =
-  let sw =
-    match (Tapak.Request.info req).sw with
-    | Some sw -> sw
-    | None -> failwith "No switch available in request"
-  in
-  let piaf_stream, piaf_writer = Piaf.Stream.create 4 in
-  let user_id = Chat_room.add_client room piaf_writer in
+let chat_stream_handler room () =
+  let stream = Eio.Stream.create 125 in
+  let user_id = Chat_room.add_client room stream in
   let user_id_event =
     Tapak.Sse.Event.text ~event:"user-id" (string_of_int user_id)
   in
-  piaf_writer (Some user_id_event);
-  Eio.Switch.on_release sw (fun () -> Chat_room.remove_client room user_id);
-  let kept_alive = Tapak.Sse.keep_alive ~sw ~clock piaf_stream in
-  Tapak.Sse.stream kept_alive
+  Eio.Stream.add stream (Some user_id_event);
+  Tapak.Sse.stream (fun send flush ->
+    Eio.Switch.run @@ fun sw ->
+    Eio.Switch.on_release sw (fun () -> Chat_room.remove_client room user_id);
+    let rec go () =
+      match Eio.Stream.take stream with
+      | Some event ->
+        send event;
+        flush ();
+        go ()
+      | None -> ()
+    in
+    go ())
 
 let post_message_handler room user_id req =
   let open Tapak in
-  let body_str =
-    Request.body req |> Body.to_string |> Result.get_ok |> String.trim
-  in
+  let body_str = Request.body req |> Eio.Flow.read_all |> String.trim in
   if String.length body_str = 0
-  then Response.of_string' ~status:`Bad_request "Message cannot be empty"
+  then Response.of_string ~status:`Bad_request "Message cannot be empty"
   else if String.length body_str > 500
   then
-    Response.of_string' ~status:`Bad_request "Message too long (max 500 bytes)"
+    Response.of_string ~status:`Bad_request "Message too long (max 500 bytes)"
   else (
     Chat_room.broadcast room ~sender_id:user_id body_str;
-    Response.of_string' ~status:`OK "Message sent")
+    Response.of_string ~status:`OK "Message sent")
 
 let () =
   Logs.set_reporter (Logs_fmt.reporter ());
   Logs.set_level (Some Logs.Info);
   Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
   let room = Chat_room.create () in
-  let clock = Eio.Stdenv.clock env in
   let app =
     let open Tapak.Router in
     routes
       [ get (s "") |> unit |> into home_handler
-      ; get (s "chat") |> request |> into (chat_stream_handler ~clock room)
+      ; get (s "chat") |> unit |> into (chat_stream_handler room)
       ; post (s "chat" / int)
         |> request
         |> into (fun req user_id -> post_message_handler room user_id req)
@@ -328,8 +326,14 @@ let () =
   in
   let port = 8080 in
   let address = `Tcp (Eio.Net.Ipaddr.V4.any, port) in
-  let config = Piaf.Server.Config.create address in
+  let socket =
+    Eio.Net.listen ~reuse_addr:true ~backlog:1024 ~sw env#net address
+  in
   Log.info (fun m -> m "Starting SSE chat server on http://localhost:%d" port);
   Log.info (fun m ->
     m "Open http://localhost:%d in multiple browser tabs to chat" port);
-  ignore (Tapak.run_with ~config ~env app)
+  Tapak.run
+    ~on_error:(fun exn ->
+      Log.warn (fun f -> f "Uncaught exception %s" (Printexc.to_string exn)))
+    socket
+    app

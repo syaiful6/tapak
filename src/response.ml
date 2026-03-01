@@ -1,211 +1,190 @@
 open Imports
 
 type t =
-  { response : Piaf.Response.t
-  ; context : Context.t
+  { version : Http.Version.t
+  ; status : Http.Status.t
+  ; headers : Http.Header.t
+  ; body : Body.t
   }
 
-let status { response; _ } = Piaf.Response.status response
-let headers { response; _ } = Piaf.Response.headers response
-let version { response; _ } = Piaf.Response.version response
-let body { response; _ } = Piaf.Response.body response
-let context { context; _ } = context
-let to_piaf { response; _ } = response
+include Headers.Make (struct
+    type nonrec t = t
 
-let create
-      ?(version = Piaf.Versions.HTTP.HTTP_1_1)
-      ?(headers = Piaf.Headers.empty)
-      ?(body = Piaf.Body.empty)
-      ?(context = Context.empty)
-      status
+    let with_headers f t = { t with headers = f t.headers }
+    let headers t = t.headers
+  end)
+
+let make
+      ?(version = `HTTP_1_1)
+      ?(headers = Http.Header.init ())
+      ?(status = `OK)
+      body
   =
-  let response = Piaf.Response.create ~version ~headers ~body status in
-  { response; context }
+  { version; status; headers; body }
 
-let with_ ?status ?headers ?version ?context ?body response =
-  let res =
-    Piaf.Response.with_ ?status ?headers ?version ?body response.response
+let pp_field field_name pp_v fmt v =
+  Format.fprintf fmt "@[<1>%s:@ %a@]" field_name pp_v v
+
+let pp fmt t =
+  let open Format in
+  pp_open_vbox fmt 0;
+  pp_field "version" Http.Version.pp fmt t.version;
+  pp_print_cut fmt ();
+  pp_field "status" Http.Status.pp fmt t.status;
+  pp_print_cut fmt ();
+  pp_field "headers" Http.Header.pp_hum fmt t.headers;
+  pp_print_cut fmt ();
+  pp_close_box fmt ()
+
+let status { status; _ } = status
+let version { version; _ } = version
+let body { body; _ } = body
+let header name t = Http.Header.get t.headers name
+
+let with_ ?status ?headers ?version ?body t =
+  { version = Option.value version ~default:t.version
+  ; status = Option.value status ~default:t.status
+  ; headers = Option.value headers ~default:t.headers
+  ; body = Option.value body ~default:t.body
+  }
+
+let of_string
+      ?(version = `HTTP_1_1)
+      ?(headers = Http.Header.init ())
+      ?(status = `OK)
+      body
+  =
+  { version; headers; body = Body.of_string body; status }
+
+let stream ?version ?headers ?(status = `OK) ?length f =
+  { version = Option.value version ~default:`HTTP_1_1
+  ; headers = Option.value headers ~default:(Http.Header.init ())
+  ; body = Body.stream ?length f
+  ; status
+  }
+
+let plain ?version ?headers ?(status = `OK) body =
+  let headers =
+    Headers.add_unless_exists
+      (Option.value headers ~default:(Headers.init ()))
+      "Content-Type"
+      "text/plain"
   in
-  { response = res; context = Option.value context ~default:response.context }
+  of_string ?version ~headers ~status body
 
-let of_string ?version ?headers ?context ~body status =
-  create ?version ?headers ?context ~body:(Body.of_string body) status
+let html ?version ?headers ?(status = `OK) body =
+  let headers =
+    Headers.add_unless_exists
+      (Option.value headers ~default:(Headers.init ()))
+      "Content-Type"
+      "text/html; charset=utf-8"
+  in
+  of_string ?version ~headers ~status body
 
-let of_bigstring ?version ?headers ?context ~body status =
-  create ?version ?headers ?context ~body:(Body.of_bigstring body) status
-
-let of_string_stream ?version ?headers ?context ~body status =
-  create ?version ?headers ?context ~body:(Body.of_string_stream body) status
-
-let of_stream ?version ?headers ?context ~body status =
-  create ?version ?headers ?context ~body:(Body.of_stream body) status
-
-let sendfile
-      ?version
-      ?(headers = Piaf.Headers.empty)
-      ?(context = Context.empty)
-      path
-  =
-  match Piaf.Response.sendfile ?version ~headers path with
-  | Ok response -> Ok { response; context }
-  | Error e -> Error e
-
-let copy_file
-      ?version
-      ?(headers = Piaf.Headers.empty)
-      ?(context = Context.empty)
-      path
-  =
-  match Piaf.Response.copy_file ?version ~headers path with
-  | Ok response -> Ok { response; context }
-  | Error e -> Error e
-
-module Upgrade = struct
-  let generic
-        ?version
-        ?(headers = Piaf.Headers.empty)
-        ?(context = Context.empty)
-        upgrade_handler
-    =
-    let response =
-      Piaf.Response.Upgrade.generic ?version ~headers upgrade_handler
-    in
-    { response; context }
-
-  let websocket
-        ~f
-        ?(headers = Piaf.Headers.empty)
-        ?(context = Context.empty)
-        request
-    =
-    match
-      Piaf.Response.Upgrade.websocket ~f ~headers (Request.to_piaf request)
-    with
-    | Ok response -> Ok { response; context }
-    | Error e -> Error e
-end
-
-let or_internal_error ret =
-  let result = Result.map to_piaf ret in
-  Piaf.Response.or_internal_error result
-
-let persistent_connection { response; _ } =
-  Piaf.Response.persistent_connection response
-
-let pp_hum fmt t = Piaf.Response.pp_hum fmt t.response
+let json ?version ?headers ?(status = `OK) body =
+  let headers =
+    Headers.add_unless_exists
+      (Option.value headers ~default:(Headers.init ()))
+      "Content-Type"
+      "application/json; charset=utf-8"
+  in
+  of_string ?version ~headers ~status body
 
 let redirect
       ?version
-      ?(status : Piaf.Status.redirection = `Found)
-      ?(headers = Piaf.Headers.empty)
-      ?(context = Context.empty)
+      ?headers
+      ?(status : Http.Status.redirection = `Found)
       location
   =
-  let headers = Headers.add_unless_exists headers "Location" location in
-  create ?version ~headers ~context ~body:Body.empty (status :> Piaf.Status.t)
-
-let header key t = Headers.get (headers t) key
-let multi_header key t = Headers.get_multi (headers t) key
-
-let add_header (k, v) t =
-  let headers = headers t in
-  with_ ~headers:(Headers.add headers k v) t
-
-let add_header_or_replace (k, v) t =
-  let headers = headers t in
-  with_
-    ~headers:
-      (if Headers.mem headers k
-       then Headers.replace headers k v
-       else Headers.add headers k v)
-    t
-
-let add_header_unless_exists (k, v) t =
-  let headers = headers t in
-  with_ ~headers:(Headers.add_unless_exists headers k v) t
-
-let add_headers hs t = with_ ~headers:(Headers.add_list (headers t) hs) t
-
-let remove_header key t =
-  let headers = headers t in
-  with_ ~headers:(Headers.remove headers key) t
-
-let add_to_list_header (k, v) t =
-  let headers = Headers.add_to_list_header (headers t) k v in
-  with_ ~headers t
-
-let of_string'
-      ?(content_type = "text/plain")
-      ?version
-      ?(status = `OK)
-      ?(headers = Headers.empty)
-      ?(context = Context.empty)
-      body
-  =
-  let headers = Headers.add_unless_exists headers "Content-Type" content_type in
-  create ?version ~headers ~body:(Body.of_string body) ~context status
-
-let of_html
-      ?version
-      ?status
-      ?(headers = Headers.empty)
-      ?(context = Context.empty)
-      body
-  =
-  of_string'
-    ?version
-    ?status
-    ~content_type:"text/html; charset=utf-8"
-    ~headers
-    ~context
-    body
-
-let of_json
-      ?version
-      ?status
-      ?(headers = Headers.empty)
-      ?(context = Context.empty)
-      body
-  =
-  of_string'
-    ?version
-    ?status
-    ~content_type:"application/json; charset=utf-8"
-    ~headers
-    ~context
-    body
+  let headers =
+    Headers.add_unless_exists
+      (Option.value headers ~default:(Headers.init ()))
+      "Location"
+      location
+  in
+  of_string ?version ~headers ~status:(status :> Http.Status.t) ""
 
 let negotiate
       ?version
       ?(status = `OK)
       ?(headers = Headers.empty)
-      ?(context = Context.empty)
-      ?(available_formats =
-        Header_parser.Content_negotiation.default_accept_formats)
+      ?(formats = Header_parser.Content_negotiation.default_accept_formats)
       request
       render
   =
+  let open Option.Syntax in
   let accept_header = Request.header "Accept" request in
+  let response =
+    let* format =
+      Header_parser.Content_negotiation.negotiate_format accept_header formats
+    in
+    let* content_type, body = render format in
+    let headers =
+      Headers.add_unless_exists headers "Content-Type" content_type
+    in
+    Option.some @@ of_string ?version ~status ~headers body
+  in
+  Option.value
+    response
+    ~default:
+      (of_string ?version ~headers ~status:`Not_acceptable "Not Acceptable")
+
+let websocket ?size_limit f (request : Request.t) =
   match
-    Header_parser.Content_negotiation.negotiate_format
-      accept_header
-      available_formats
+    Cows.upgrade_headers
+      (Http.Request.make
+         ~meth:request.meth
+         ~version:request.version
+         ~headers:request.headers
+         request.target)
   with
-  | Some format ->
-    (match render format with
-    | Some (content_type, body) ->
-      of_string' ?version ~status ~content_type ~headers ~context body
-    | None ->
-      of_string'
-        ?version
-        ~status:`Not_acceptable
-        ~headers
-        ~context
-        "Not Acceptable")
-  | None ->
-    of_string'
+  | None -> of_string ~status:`Bad_request "Bad WebSocket handshake"
+  | Some headers ->
+    let raw =
+      Body.raw (fun ic oc ->
+        let conn = Cows.make ?size_limit ~role:Server ic oc in
+        f conn)
+    in
+    make ~status:`Switching_protocols ~headers raw
+
+let file ?version ?headers ?(status = `OK) ?(follow = true) path =
+  let file_stat =
+    try Ok Eio.Path.(stat ~follow path) with
+    | Eio.Exn.Io (Eio.Fs.E (Not_found _), _) -> Error `Not_found
+    | Eio.Exn.Io (Eio.Fs.E (Permission_denied _), _) -> Error `Forbidden
+    | Unix.Unix_error (Unix.ENOENT, _, _) -> Error `Not_found
+    | Unix.Unix_error (Unix.EACCES, _, _) -> Error `Forbidden
+    | _ -> Error `Internal_server_error
+  in
+  match file_stat with
+  | Error status ->
+    of_string
       ?version
-      ~status:`Not_acceptable
-      ~headers
-      ~context
-      "Not Acceptable"
+      ?headers
+      ~status
+      (Http.Status.reason_phrase_of_code (Http.Status.to_int status))
+  | Ok stat ->
+    let content_type =
+      Magic_mime.lookup
+        ~default:"application/octet-stream"
+        (Eio.Path.native_exn path)
+    in
+    let headers =
+      Headers.add_unless_exists
+        (Option.value headers ~default:(Headers.init ()))
+        "Content-Type"
+        content_type
+    in
+    let body =
+      Body.stream ~length:(Optint.Int63.to_int64 stat.size) (fun write flush ->
+        Eio.Path.with_open_in path (fun flow ->
+          try
+            let cs = Cstruct.create 65536 in
+            while true do
+              let len = Eio.Flow.single_read flow cs in
+              write (Cstruct.to_string ~off:0 ~len cs)
+            done
+          with
+          | End_of_file -> flush ()))
+    in
+    make ?version ~headers ~status body

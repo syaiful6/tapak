@@ -1,50 +1,52 @@
-include Piaf.Body
+type content =
+  [ `Empty
+  | `String of string
+  | `Stream of Bytesrw.Bytes.Writer.t -> (unit -> unit) -> unit
+  | `Raw of Eio.Buf_read.t -> Eio.Buf_write.t -> unit
+  ]
 
-let limit ~sw ~max_bytes body =
-  match length body with
-  | `Fixed len when Int64.compare len max_bytes > 0 ->
-    Error
-      (`Msg
-          (Printf.sprintf
-             "Body size (%Ld bytes) exceeds limit of %Ld bytes"
-             len
-             max_bytes))
-  | `Fixed _ | `Chunked | `Unknown | `Close_delimited ->
-    let stream = to_stream body in
-    let limited_stream, stream_push = Piaf.Stream.create 4 in
-    let _limiter_fiber =
-      Eio.Fiber.fork_promise ~sw (fun () ->
-        let bytes_read = ref 0L in
-        let rec copy_with_limit () =
-          match Piaf.Stream.take stream with
-          | None ->
-            stream_push None;
-            Ok ()
-          | Some iovec ->
-            let { Piaf.IOVec.len; _ } = iovec in
-            bytes_read := Int64.add !bytes_read (Int64.of_int len);
-            if Int64.compare !bytes_read max_bytes > 0
-            then (
-              stream_push None;
-              Error
-                (`Msg
-                    (Printf.sprintf
-                       "Body exceeds limit of %Ld bytes (read: %Ld bytes)"
-                       max_bytes
-                       !bytes_read)))
-            else (
-              stream_push (Some iovec);
-              copy_with_limit ())
-        in
-        ignore (copy_with_limit ()))
-    in
-    Ok (of_stream limited_stream)
-  | `Error _ as err ->
-    Error
-      (`Msg
-          (Printf.sprintf
-             "Body has error status: %s"
-             (match err with
-             | `Error `Bad_request -> "Bad request"
-             | `Error `Bad_gateway -> "Bad gateway"
-             | `Error `Internal_server_error -> "Internal server error")))
+type t =
+  { length : Int64.t option
+  ; content : content
+  }
+
+let empty = { length = Some 0L; content = `Empty }
+
+let of_string s =
+  { length = Some (Int64.of_int (String.length s)); content = `String s }
+
+(** [stream ?length f] create response streaming body. The function passed here take two parameters,
+    the first parameter provides a means of sending another chunk of data, and the second parameter
+    provides a means of flushing the data to the client. *)
+let stream ?length f =
+  let writer w flush =
+    f
+      (fun chunk ->
+         if chunk <> "" then Bytesrw.Bytes.Writer.write_string w chunk)
+      flush;
+    Bytesrw.Bytes.Writer.write_eod w
+  in
+  { length; content = `Stream writer }
+
+let writer ?length f = { length; content = `Stream f }
+let raw f = { length = None; content = `Raw (fun src dst -> f src dst) }
+let noop () = ()
+
+let stream_to_string f =
+  let buffer = Buffer.create 1024 in
+  let buf_writer = Bytesrw.Bytes.Writer.of_buffer buffer in
+  f buf_writer noop;
+  Buffer.contents buffer
+
+let raw_to_string f =
+  let buffer = Buffer.create 1024 in
+  let src = Eio.Buf_read.of_string "" in
+  let buffer_flow = Eio.Flow.buffer_sink buffer in
+  Eio.Buf_write.with_flow buffer_flow (fun dst -> f src dst);
+  Buffer.contents buffer
+
+let to_string = function
+  | { content = `String s; _ } -> s
+  | { content = `Stream f; _ } -> stream_to_string f
+  | { content = `Raw f; _ } -> raw_to_string f (* or raise exception here? *)
+  | { content = `Empty; _ } -> ""

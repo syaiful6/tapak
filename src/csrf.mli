@@ -7,7 +7,7 @@
 type t =
   { cookie_name : string option
     (** Cookie name for storing the CSRF secret. Defaults to ["XSRF-TOKEN"]. *)
-  ; expiration : Piaf.Cookies.expiration option
+  ; expiration : Cookies.expiration option
     (** Cookie expiration time. Defaults to 1 year. *)
   ; domain : string option
     (** Cookie domain. Defaults to [None] (current domain). *)

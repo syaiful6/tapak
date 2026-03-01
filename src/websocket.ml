@@ -1,5 +1,4 @@
 open Imports
-open Bytesrw
 module Log = (val Logs.src_log (Logs.Src.create "tapak.websocket"))
 
 module Outgoing = struct
@@ -57,7 +56,7 @@ end
 module Transport = struct
   let send ?context ws msg =
     match Jsont_bytesrw.encode_string Socket_protocol.jsont msg with
-    | Ok encoded -> Piaf.Ws.Descriptor.send_string ws encoded
+    | Ok encoded -> Cows.send ws (`Text encoded)
     | Error e ->
       let what = Option.value context ~default:"websocket message" in
       Log.err (fun m -> m "Failed to encode %s: %s" what e)
@@ -79,8 +78,8 @@ module Session = struct
     ; broadcast_queue : Pubsub.message Eio.Stream.t
     ; last_heartbeat : float ref
     ; closed : bool ref
-    ; ws : Piaf.Ws.Descriptor.t
-    ; active_sockets : (string, Piaf.Ws.Descriptor.t list) Hashtbl.t
+    ; ws : Cows.conn
+    ; active_sockets : (string, Cows.conn list) Hashtbl.t
     ; active_sockets_mutex : Eio.Mutex.t
     }
 
@@ -458,30 +457,36 @@ module Session = struct
             | Suppress _ -> ())
 
   let run_message_loop session =
-    let messages = Piaf.Ws.Descriptor.messages session.ws in
-    let process_frame (opcode, iovec) =
-      match opcode with
-      | `Text | `Binary ->
-        let buf = iovec.Piaf.IOVec.buffer in
-        let off = iovec.Piaf.IOVec.off in
-        let len = iovec.Piaf.IOVec.len in
-        let reader =
-          Bytes.Reader.of_slice
-            (Bytes.Slice.of_bigbytes
-               ~first:off
-               ~last:(off + len)
-               (Bytesrw_util.bigstring_to_bigbytes buf))
-        in
-        Result.iter
-          (handle_ws_message session)
-          (Jsont_bytesrw.decode Socket_protocol.jsont reader)
-      | `Connection_close ->
-        cleanup session;
-        Piaf.Ws.Descriptor.close session.ws
-      | _ -> ()
+    let process_frame conn =
+      try
+        (* keep reading frames until the connection is closed or an error
+           occurs *)
+        while true do
+          match Cows.recv conn with
+          | `Text msg | `Binary msg ->
+            Result.iter
+              (handle_ws_message session)
+              (Jsont_bytesrw.decode_string Socket_protocol.jsont msg)
+          | `Ping msg -> Cows.send conn (`Pong msg)
+          | `Pong _ ->
+            ()
+            (* TODO: bookeep track of pings and detect timeouts here instead of
+               relying on heartbeat messages *)
+          | `Close (_, reason) ->
+            (* peer initiate close handshake, send close then exit *)
+            Cows.close ~reason conn;
+            raise Cows.Connection_closed
+        done
+      with
+      | Cows.Connection_closed -> cleanup session
+      | Cows.Protocol_error msg ->
+        Log.info (fun f -> f "Websocket protocol error: %s" msg);
+        cleanup session
+      | exn ->
+        Log.err (fun m -> m "Message loop crashed: %s" (Printexc.to_string exn));
+        cleanup session
     in
-    Piaf.Stream.iter ~f:process_frame messages;
-    cleanup session
+    process_frame session.ws
 
   let run_broadcast_loop session =
     try
@@ -508,7 +513,7 @@ module Session = struct
               elapsed
               session.config.timeout);
           cleanup session;
-          Piaf.Ws.Descriptor.close session.ws)
+          Cows.close session.ws)
       done
     with
     | exn ->
@@ -517,7 +522,7 @@ module Session = struct
 end
 
 type socket_state =
-  { active_sockets : (string, Piaf.Ws.Descriptor.t list) Hashtbl.t
+  { active_sockets : (string, Cows.conn list) Hashtbl.t
   ; active_sockets_mutex : Eio.Mutex.t
   }
 
@@ -539,7 +544,7 @@ let ws_handler state config request ws =
   let params = Form.Urlencoded.of_query request in
   let connect_info = Socket.{ params; request } in
   match S.connect connect_info with
-  | Error _ -> Piaf.Ws.Descriptor.close ws
+  | Error _ -> Cows.close ws
   | Ok initial_assigns ->
     let socket_id = S.id initial_assigns in
     let socket =
@@ -574,12 +579,7 @@ let ws_handler state config request ws =
 
 let handler : socket_state -> Socket_endpoint.t -> Request.t -> Response.t =
  fun state config request ->
-  match
-    Response.Upgrade.websocket ~f:(ws_handler state config request) request
-  with
-  | Ok response -> response
-  | Error _ ->
-    Response.of_string ~body:"Websocket upgrade failed" `Internal_server_error
+  Response.websocket (ws_handler state config request) request
 
 let routes : Socket_endpoint.t -> Router.route list =
  fun config ->
@@ -602,4 +602,4 @@ let shutdown : Socket_endpoint.t -> Socket.t option -> unit =
     Eio.Mutex.use_rw ~protect:true state.active_sockets_mutex (fun () ->
       Hashtbl.find_opt state.active_sockets socket_id)
   in
-  Option.some (List.iter Piaf.Ws.Descriptor.close wss_to_close)
+  Option.some (List.iter Cows.close wss_to_close)
