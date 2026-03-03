@@ -49,4 +49,5 @@ jobs:
           EIO_BACKEND: ${{ matrix.os == 'ubuntu-latest' && 'posix' || 'select' }}
         run: |
           opam pin add cows https://github.com/syaiful6/cows
+          opam install cows
           opam pin add . --with-test -y

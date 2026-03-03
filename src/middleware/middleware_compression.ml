@@ -21,6 +21,16 @@ let encoding_to_string = function
 let args ~encoder ~predicate ~preferred_encodings =
   { encoder; predicate; preferred_encodings }
 
+let body_to_streaming_fn = function
+  | `String s when s <> "" ->
+    Some
+      (fun w flush ->
+        Bytesrw.Bytes.Writer.write_string w s;
+        Bytesrw.Bytes.Writer.write_eod w;
+        flush ())
+  | `Stream (_, f) -> Some f
+  | _ -> None
+
 let call { encoder; predicate; preferred_encodings } next request =
   let response = next request in
 
@@ -37,17 +47,16 @@ let call { encoder; predicate; preferred_encodings } next request =
     | Some `Identity -> response
     | Some encoding ->
       (match
-         encoder encoding, Body.to_streaming_fn (Response.body response)
+         encoder encoding, body_to_streaming_fn (Response.body response)
        with
       | Some filter, Some streaming_fn ->
         let filter_writer writer flush =
           let w = filter ~eod:true writer in
-          (* TODO: should we set eod to true here? *)
           streaming_fn w flush
         in
         let encoding_name = encoding_to_string encoding in
         response
-        |> Response.with_ ~body:(Body.writer filter_writer)
+        |> Response.with_ ~body:(`Stream (None, filter_writer))
         |> Response.add_header "Vary" "Accept-Encoding"
         |> Response.remove_header "Content-Length"
         |> Response.add_header_or_replace "Content-Encoding" encoding_name

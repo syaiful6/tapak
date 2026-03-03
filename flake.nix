@@ -53,7 +53,6 @@
           inherit (pkgs.ocamlPackages)
             tapak
             tapak-compressions
-            tapak-ppx
             sch
             ;
         }

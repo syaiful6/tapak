@@ -1,9 +1,4 @@
-type t =
-  { version : Http.Version.t
-  ; status : Http.Status.t
-  ; headers : Http.Header.t
-  ; body : Body.t
-  }
+type t
 
 include Headers.S with type t := t
 
@@ -13,13 +8,6 @@ val make :
   -> ?status:Http.Status.t
   -> Body.t
   -> t
-
-val pp_field :
-   string
-  -> (Format.formatter -> 'a -> unit)
-  -> Format.formatter
-  -> 'a
-  -> unit
 
 val pp : Format.formatter -> t -> unit
 val status : t -> Http.Status.t
@@ -47,6 +35,13 @@ val stream :
   -> ?status:Http.Status.t
   -> ?length:int64
   -> ((string -> unit) -> (unit -> unit) -> unit)
+  -> t
+
+val writer :
+   ?version:Http.Version.t
+  -> ?headers:Headers.t
+  -> ?status:Http.Status.t
+  -> (Bytesrw.Bytes.Writer.t -> (unit -> unit) -> unit)
   -> t
 
 val plain :

@@ -26,10 +26,8 @@ include Headers.Make (struct
 let meth t = t.meth
 let target t = t.target
 let version t = t.version
-let headers t = t.headers
 let body t = t.body
 let empty_body = Cohttp_eio.Body.of_string ""
-let header name t = Http.Header.get (headers t) name
 
 let is_trusted_proxy ~trusted_proxies ip =
   match ip with
@@ -61,9 +59,6 @@ let is_secure ?trusted_proxies t =
     match trusted_proxies with
     | None -> false
     | Some trusted_proxies -> is_trusted_proxy ~trusted_proxies t.client_addr
-
-let remove_header name t =
-  { t with headers = Http.Header.remove (headers t) name }
 
 let make
       ?(version = `HTTP_1_1)

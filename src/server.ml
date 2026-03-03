@@ -36,27 +36,29 @@ let request_from_cohttp :
   let version = Http.Request.version req in
   Request.make ?client_addr ~version ~headers ~meth ~body target
 
+let add_connection_header request headers =
+  match Headers.connection headers with
+  | Some _ -> headers
+  | None ->
+    Headers.add
+      headers
+      "connection"
+      (if Request.is_keep_alive request then "keep-alive" else "close")
+
 let response_to_cohttp request (response : Response.t) =
   let body = Response.body response in
   let raw_header = Response.headers response in
   let headers =
-    match body.content, Response.status response with
+    match body, Response.status response with
     | `Raw _, _ -> raw_header
     | _, `Switching_protocols -> raw_header
     | _, _ ->
-      (match Headers.get_transfer_encoding raw_header, body.length with
+      (match Headers.get_transfer_encoding raw_header, Body.length body with
         | Unknown, Some content_length ->
           Headers.add_transfer_encoding raw_header (Fixed content_length)
         | Unknown, None -> Headers.add_transfer_encoding raw_header Chunked
         | _ -> raw_header)
-      |> fun headers ->
-      (match Headers.connection headers with
-      | Some _ -> headers
-      | None ->
-        Headers.add
-          headers
-          "connection"
-          (if Request.is_keep_alive request then "keep-alive" else "close"))
+      |> add_connection_header request
   in
   let status = Response.status response in
   let version = Response.version response in
@@ -93,35 +95,42 @@ let make :
         Response.plain ~status:`Internal_server_error "Internal Server Error"
     in
     let body = Response.body response in
-    let headers = Response.headers response in
-    let is_head = match request.meth with `HEAD -> true | _ -> false in
-    match body.content with
+    let is_head =
+      match Request.meth request with `HEAD -> true | _ -> false
+    in
+    match body with
     | `Empty ->
+      let headers =
+        Response.headers response |> add_connection_header request
+      in
       `Response
         (Cohttp_eio.Server.respond_string
            ~headers
            ~status:(Response.status response)
            ~body:""
            ())
-    | `String body ->
+    | `String s ->
+      let headers =
+        Response.headers response |> add_connection_header request
+      in
       `Response
         (Cohttp_eio.Server.respond_string
            ~headers
            ~status:(Response.status response)
-           ~body:(if is_head then "" else body)
+           ~body:(if is_head then "" else s)
            ())
     | `Raw callback ->
       let response = response_to_cohttp request response in
       `Expert (response, callback)
     | `Stream _ when is_head ->
-      let response = response_to_cohttp request response in
+      let http_response = response_to_cohttp request response in
       `Response
         (Cohttp_eio.Server.respond_string
-           ~headers
-           ~status:(Http.Response.status response)
+           ~headers:(Http.Response.headers http_response)
+           ~status:(Http.Response.status http_response)
            ~body:""
            ())
-    | `Stream stream ->
+    | `Stream (_, stream) ->
       let response = response_to_cohttp request response in
       (* cohttp will write the headers for us, so we only need to write the
          body, and flush it at the end of stream *)

@@ -56,11 +56,12 @@
   (re (>= 1.7.2))
   (eio
    (>= 1.3))
-  (piaf
-   (>= 0.2.0))
+  (cohttp-eio
+   (>= 6.0.0))
+  (bytesrw
+   (>= 0.3.0))
   (uri
    (>= 2.0.0))
-  yojson
   (saturn (>= 1.0.0))
   (sch (= :version))
   magic-mime
@@ -100,25 +101,3 @@
   (odoc :with-doc))
  (tags
   ("web" "compression" "brotli" "zstd" "gzip" "deflate")))
-
-(package
- (name tapak-ppx)
- (synopsis "PPX extension for type-safe route generation in Tapak")
- (description
-  "tapak-ppx is a PPX rewriter that generates type-safe route definitions from annotated handler functions. It eliminates boilerplate when defining routes in the Tapak web framework.")
- (depends
-  (ocaml
-   (>= 5.2.0))
-  (dune (>= 3.0.0))
-  (tapak
-   (= :version))
-  (ppxlib
-   (>= 0.36.0))
-  (ocamlformat
-   (and
-    (= 0.28.1)
-    :with-test))
-  angstrom
-  (odoc :with-doc))
- (tags
-  ("ppx" "web" "framework" "tapak" "routes" "type-safe")))

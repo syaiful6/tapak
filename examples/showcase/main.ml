@@ -262,10 +262,7 @@ let setup_log ?(threaded = false) ?style_renderer level =
   ()
 
 let () =
-  let domains =
-    match Sys.getenv_opt "DOMAINS" with Some d -> int_of_string d | None -> 1
-  in
-  setup_log ~threaded:(domains > 1) (Some Logs.Debug);
+  setup_log ~threaded:false (Some Logs.Info);
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
   let port =
@@ -275,21 +272,8 @@ let () =
   let socket =
     Eio.Net.listen ~reuse_addr:true ~backlog:1024 ~sw env#net address
   in
-  match domains with
-  | domains when domains > 1 ->
-    let domain_mgr = Eio.Stdenv.domain_mgr env in
-    Log.info (fun f ->
-      f "Server listening on port %d with domains %d" port domains);
-    Tapak.run
-      ~additional_domains:(domain_mgr, domains)
-      ~on_error:(fun exn ->
-        Log.warn (fun f -> f "Uncaught exception %s" (Printexc.to_string exn)))
-      socket
-      (setup_app env)
-  | _ ->
-    Log.info (fun f -> f "Server listening on port %d" port);
-    Tapak.run
-      ~on_error:(fun exn ->
-        Log.warn (fun f -> f "Uncaught exception %s" (Printexc.to_string exn)))
-      socket
-      (setup_app env)
+  Tapak.run
+    ~on_error:(fun exn ->
+      Log.warn (fun f -> f "Uncaught exception %s" (Printexc.to_string exn)))
+    socket
+    (setup_app env)

@@ -48,7 +48,6 @@ let
   packageNames = [
     "tapak"
     "tapak-compressions"
-    "tapak-ppx"
     "sch"
   ];
   outputs = pkgs.lib.genAttrs ocamlPackageSets (
@@ -63,7 +62,6 @@ outputs
   inherit (pkgs.ocamlPackages)
     tapak
     tapak-compressions
-    tapak-ppx
     sch
     ;
   inherit (pkgs.tapak)

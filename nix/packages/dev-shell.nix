@@ -11,7 +11,6 @@ mkShell {
     sch
     tapak
     tapak-compressions
-    tapak-ppx
   ];
   buildInputs =
     (with ocamlPackages; [

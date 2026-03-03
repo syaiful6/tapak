@@ -10,7 +10,6 @@
   eio
   bytesrw
   ipaddr
-  yojson
   jsont
   jsont.bytesrw
   str
@@ -24,7 +23,6 @@
   re
   sch
   saturn
-  bigstringaf
   angstrom))
 
 (include_subdirs unqualified)

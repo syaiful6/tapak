@@ -132,7 +132,7 @@ val openapi :
 
 val run :
    ?max_connections:int
-  -> ?additional_domains:_ Eio__Domain_manager.t * int
+  -> ?additional_domains:_ Eio.Domain_manager.t * int
   -> ?stop:'a Eio.Promise.t
   -> on_error:(exn -> unit)
   -> _ Eio.Net.listening_socket

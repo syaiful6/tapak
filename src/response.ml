@@ -39,7 +39,6 @@ let pp fmt t =
 let status { status; _ } = status
 let version { version; _ } = version
 let body { body; _ } = body
-let header name t = Http.Header.get t.headers name
 
 let with_ ?status ?headers ?version ?body t =
   { version = Option.value version ~default:t.version
@@ -60,6 +59,13 @@ let stream ?version ?headers ?(status = `OK) ?length f =
   { version = Option.value version ~default:`HTTP_1_1
   ; headers = Option.value headers ~default:(Http.Header.init ())
   ; body = Body.stream ?length f
+  ; status
+  }
+
+let writer ?version ?headers ?(status = `OK) f =
+  { version = Option.value version ~default:`HTTP_1_1
+  ; headers = Option.value headers ~default:(Http.Header.init ())
+  ; body = `Stream (None, f)
   ; status
   }
 
@@ -133,10 +139,10 @@ let websocket ?size_limit f (request : Request.t) =
   match
     Cows.upgrade_headers
       (Http.Request.make
-         ~meth:request.meth
-         ~version:request.version
-         ~headers:request.headers
-         request.target)
+         ~meth:(Request.meth request)
+         ~version:(Request.version request)
+         ~headers:(Request.headers request)
+         (Request.target request))
   with
   | None -> of_string ~status:`Bad_request "Bad WebSocket handshake"
   | Some headers ->
