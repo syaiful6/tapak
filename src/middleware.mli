@@ -19,7 +19,7 @@ end
 
 module Compression : sig
   type encoder =
-    Header_parser.Accept.encoding -> Bytesrw.Bytes.Reader.filter option
+    Header_parser.Accept.encoding -> Bytesrw.Bytes.Writer.filter option
 
   type predicate = Request.t -> Response.t -> bool
 

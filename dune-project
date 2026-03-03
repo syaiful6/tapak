@@ -32,7 +32,7 @@
   jsont
   (re
    (>= 1.7.2))
-  uri
+  (uri (>= 2.0.0))
   ipaddr
   (alcotest :with-test)
   (odoc :with-doc)))
@@ -47,6 +47,8 @@
    (>= 5.2.0))
   (dune (>= 3.0.0))
   (angstrom (>= 0.15.0))
+  (multipart_form (>= 0.7.0))
+  cows
   hmap
   ptime
   ipaddr
@@ -57,7 +59,7 @@
   (piaf
    (>= 0.2.0))
   (uri
-   (>= 4.4.0))
+   (>= 2.0.0))
   yojson
   (saturn (>= 1.0.0))
   (sch (= :version))
@@ -94,8 +96,6 @@
   dune-configurator
   (tapak
    (= :version))
-  (piaf
-   (>= 0.2.0))
   (alcotest :with-test)
   (odoc :with-doc))
  (tags

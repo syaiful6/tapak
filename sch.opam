@@ -17,7 +17,7 @@ depends: [
   "bytesrw" {>= "0.3.0"}
   "jsont"
   "re" {>= "1.7.2"}
-  "uri"
+  "uri" {>= "2.0.0"}
   "ipaddr"
   "alcotest" {with-test}
   "odoc" {with-doc}

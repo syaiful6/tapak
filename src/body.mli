@@ -1,7 +1,9 @@
+type streaming_fn = Bytesrw.Bytes.Writer.t -> (unit -> unit) -> unit
+
 type content =
   [ `Empty
   | `Raw of Eio.Buf_read.t -> Eio.Buf_write.t -> unit
-  | `Stream of Bytesrw.Bytes.Writer.t -> (unit -> unit) -> unit
+  | `Stream of streaming_fn
   | `String of string
   ]
 
@@ -43,3 +45,8 @@ val raw : (Eio.Buf_read.t -> Eio.Buf_write.t -> unit) -> t
 
 val to_string : t -> string
 (** [to_string body] convert response body to string. If the body is a stream or raw, it will be consumed and converted to string. *)
+
+val to_streaming_fn : t -> streaming_fn option
+(** [to_streaming_fn body] convert response body to streaming function. If the body is a string, it will be converted 
+to a stream that sends the string as a single chunk. 
+If the body is raw or empty, it will return None .*)

@@ -2,7 +2,7 @@ module Brotli = Brotli
 module Bytesrw_brotli = Bytesrw_brotli
 module Predicate = Predicate
 
-type compressor = Bytesrw.Bytes.Reader.filter
+type compressor = Bytesrw.Bytes.Writer.filter
 type decompressor = Bytesrw.Bytes.Reader.filter
 
 let decoder :
@@ -24,9 +24,9 @@ let encoder :
   =
  fun encoding ->
   match encoding with
-  | `Gzip -> Some (Bytesrw_zlib.Gzip.compress_reads ~level:6 ())
-  | `Deflate -> Some (Bytesrw_zlib.Deflate.compress_reads ~level:6 ())
-  | `Br -> Some (Bytesrw_brotli.compress_reads ~quality:6 ())
-  | `Zstd -> Some (Bytesrw_zstd.compress_reads ())
+  | `Gzip -> Some (Bytesrw_zlib.Gzip.compress_writes ~level:6 ())
+  | `Deflate -> Some (Bytesrw_zlib.Deflate.compress_writes ~level:6 ())
+  | `Br -> Some (Bytesrw_brotli.compress_writes ~quality:6 ())
+  | `Zstd -> Some (Bytesrw_zstd.compress_writes ())
   | `Identity -> None
   | `Star | `Other _ -> None

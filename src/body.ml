@@ -1,8 +1,10 @@
+type streaming_fn = Bytesrw.Bytes.Writer.t -> (unit -> unit) -> unit
+
 type content =
   [ `Empty
-  | `String of string
-  | `Stream of Bytesrw.Bytes.Writer.t -> (unit -> unit) -> unit
   | `Raw of Eio.Buf_read.t -> Eio.Buf_write.t -> unit
+  | `Stream of streaming_fn
+  | `String of string
   ]
 
 type t =
@@ -48,5 +50,16 @@ let raw_to_string f =
 let to_string = function
   | { content = `String s; _ } -> s
   | { content = `Stream f; _ } -> stream_to_string f
-  | { content = `Raw f; _ } -> raw_to_string f (* or raise exception here? *)
+  | { content = `Raw f; _ } ->
+    raw_to_string f (* or returns empty string here? *)
   | { content = `Empty; _ } -> ""
+
+let to_streaming_fn = function
+  | { content = `String s; _ } when s <> "" ->
+    Some
+      (fun w flush ->
+        Bytesrw.Bytes.Writer.write_string w s;
+        Bytesrw.Bytes.Writer.write_eod w;
+        flush ())
+  | { content = `Stream f; _ } -> Some f
+  | _ -> None
