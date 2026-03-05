@@ -66,6 +66,7 @@ outputs
     ;
   inherit (pkgs.tapak)
     dev-shell
+    docs
     ;
   checks.formatting = pkgs.tapak.checks.formatting;
 }
