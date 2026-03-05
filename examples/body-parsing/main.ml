@@ -401,7 +401,7 @@ let app env =
 let () =
   Logs_threaded.enable ();
   Fmt_tty.setup_std_outputs ();
-  Logs.set_level (Some Logs.Info);
+  Logs.set_level (Some Logs.Debug);
   Logs.set_reporter (Logs_fmt.reporter ());
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->

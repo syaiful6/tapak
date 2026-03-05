@@ -45,7 +45,9 @@ let reader_of_stream stream =
   let read () =
     match Eio.Stream.take stream with
     | Some str ->
-      let buf = Bytes.of_string str in
+      (* we use unsafe here, safe, since that how Bytes.Reader expects the
+         buffer to be used, and we won't modify it *)
+      let buf = Bytes.unsafe_of_string str in
       Bytes.Slice.of_bytes buf
     | None -> Bytes.Slice.eod
   in

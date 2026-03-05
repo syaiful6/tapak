@@ -76,6 +76,7 @@
    (and
     (= 0.28.1)
     :with-dev-setup))
+  (eio_main :with-test)
   (alcotest :with-test)
   (benchmark :with-test)
   (odoc :with-doc))

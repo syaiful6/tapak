@@ -568,9 +568,7 @@ let evaluate_body_schema : type a.
       |> Form.Urlencoded.to_json)
     |> Sch.Validation.to_result
   | Multipart ->
-    Sch_ext.Multipart_decoder.decode
-      schema
-      (request |> Form.Multipart.parse |> Form.Multipart.to_tree)
+    Sch_ext.Multipart_decoder.decode_request schema request
     |> Sch.Validation.to_result
 
 let rec evaluate_schema : type a b.

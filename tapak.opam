@@ -33,6 +33,7 @@ depends: [
   "reason" {>= "3.12" & with-dev-setup}
   "ocaml-lsp-server" {with-dev-setup}
   "ocamlformat" {= "0.28.1" & with-dev-setup}
+  "eio_main" {with-test}
   "alcotest" {with-test}
   "benchmark" {with-test}
   "odoc" {with-doc}

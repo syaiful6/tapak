@@ -395,6 +395,64 @@ let test_multipart_get_all_fields_empty () =
   | [] -> ()
   | _ -> Alcotest.fail "Should return empty list, got non-empty"
 
+let boundary = "------------------------eb790219f130e103"
+
+let multipart_content =
+  "--"
+  ^ boundary
+  ^ "\r\n"
+  ^ "Content-Disposition: form-data; name=\"description\"\r\n"
+  ^ "\r\n"
+  ^ "default"
+  ^ "\r\n--"
+  ^ boundary
+  ^ "\r\n"
+  ^ "Content-Disposition: form-data; name=\"file\"; filename=\"test.txt\"\r\n"
+  ^ "Content-Type: text/plain\r\n"
+  ^ "\r\n"
+  ^ "here is some text"
+  ^ "\r\n--"
+  ^ boundary
+  ^ "--\r\n"
+
+let test_multipart_parsing () =
+  let headers =
+    Headers.of_list
+      [ ( "Content-Type"
+        , "multipart/form-data; \
+           boundary=------------------------eb790219f130e103" )
+      ]
+  in
+  let request =
+    Request.make
+      ~headers
+      ~body:(Cohttp_eio.Body.of_string multipart_content)
+      "/upload"
+  in
+  let result = Form.Multipart.parse request in
+  match result with
+  | Ok parsed -> Alcotest.(check int) "Parsed 2 parts" 2 (List.length parsed)
+  | Error (`Msg msg) -> Alcotest.failf "Failed to parse multipart: %s" msg
+
+let test_multipart_parsing_invalid () =
+  let headers =
+    Headers.of_list
+      [ "Content-Type", "multipart/form-data; boundary=myboundary" ]
+  in
+  let request =
+    Request.make
+      ~headers
+      ~body:(Cohttp_eio.Body.of_string "this is not valid multipart content")
+      "/upload"
+  in
+  let result = Form.Multipart.parse request in
+  match result with
+  | Ok parsed ->
+    Alcotest.failf
+      "Invalid multipart should not parse, got %d parts"
+      (List.length parsed)
+  | Error (`Msg _) -> ()
+
 let tests =
   List.map
     (fun (name, cases) -> Format.asprintf "Form: %s" name, cases)
@@ -516,5 +574,10 @@ let tests =
             "Get all fields empty"
             `Quick
             test_multipart_get_all_fields_empty
+        ; Alcotest.test_case "parsing multipart" `Quick test_multipart_parsing
+        ; Alcotest.test_case
+            "invalid multipart returns empty"
+            `Quick
+            test_multipart_parsing_invalid
         ] )
     ]

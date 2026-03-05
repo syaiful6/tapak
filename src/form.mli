@@ -22,7 +22,7 @@ module Multipart : sig
       Use this for small text fields. For file uploads or large fields, read the
       body stream directly to avoid memory issues. *)
 
-  val parse : Request.t -> t
+  val parse : Request.t -> (t, [ `Msg of string ]) result
   (** [parse request] parses a multipart/form-data request. *)
 
   val get_part : string -> t -> part option
@@ -64,6 +64,40 @@ module Multipart : sig
       Parts are grouped by field name. A field that appears only once becomes a
       [Part] leaf; a field that appears multiple times (repeated fields, i.e. an
       array of values) becomes an [Array] of [Part] leaves. *)
+
+  val drain_node : node -> unit
+  (** [drain_node node] discards all unread body data in [node] and its
+      descendants. Call this on unknown fields so their body streams are
+      consumed and the parser fiber can make progress. *)
+
+  val preload : string -> string option Eio.Stream.t
+  (** [preload s] wraps [s] in a two-element stream [(Some s; None)] so that
+      consumers expecting a streaming body (e.g. [Bytesrw] readers) work
+      without holding any live parser reference. Used internally by
+      [decode_request] and [parse]. *)
+
+  (** {2 Streaming iter API} *)
+  module Cursor : sig
+    type t
+
+    val make : sw:Eio.Switch.t -> Request.t -> t
+    (** [make ~sw request] starts parsing the multipart body. The parser fiber
+      runs concurrently under [sw]. Use [next] to pull parts one at a
+      time. [sw] only needs to stay open while [next] calls are in
+      progress. *)
+
+    val next : t -> part option
+    (** [next cursor] returns the next part, or [None] when the stream is
+      exhausted.
+
+      Each call eagerly reads the part's bounded body into a [Buffer.t] and
+      returns a preloaded [part.body] stream. This keeps memory proportional to
+      the largest single part (not the whole body) and ensures the parser fiber
+      is never blocked on a full bounded stream.
+
+      For true zero-copy streaming of large file fields, use the lower-level
+      [stream] primitive directly. *)
+  end
 end
 
 module Urlencoded : sig

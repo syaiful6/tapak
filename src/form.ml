@@ -78,60 +78,29 @@ module Multipart = struct
           in
           Eio.Stream.add output None;
           Result.Ok (Multipart_form.map client_id_of_id t)
-        | `Fail _ -> Result.Error (`Msg "Invalid multipart/form"))
+        | `Fail _ ->
+          Eio.Stream.add output None;
+          Result.Error (`Msg "Invalid multipart/form"))
     in
     Eio.Fiber.fork_promise ~sw go, output
 
   let ( <.> ) f g x = f (g x)
   let add_new_line s = s ^ "\r\n"
 
-  let parse request =
-    let ctype =
-      let default =
-        Multipart_form.(
-          Content_type.make
-            `Text
-            (`Iana_token "plain")
-            Content_type.Parameters.empty)
-      in
-      Request.header "content-type" request
-      |> Fun.flip
-           Option.bind
-           (Result.to_option
-           <.> (Multipart_form.Content_type.of_string <.> add_new_line))
-      |> Option.value ~default
+  let request_ctype request =
+    let default =
+      Multipart_form.(
+        Content_type.make
+          `Text
+          (`Iana_token "plain")
+          Content_type.Parameters.empty)
     in
-    Eio.Switch.run @@ fun sw ->
-    let p, st =
-      stream ~sw ~identify:name_of_header (Request.body request) ctype
-    in
-    let consumed =
-      Eio.Fiber.fork_promise ~sw (fun () ->
-        let parts = Hashtbl.create 0x10 in
-        let rec go () =
-          match Eio.Stream.take st with
-          | Some (name, header, body) ->
-            let key = Option.value name ~default:"" in
-            Hashtbl.replace
-              parts
-              key
-              { name = key
-              ; filename =
-                  content_disposition header
-                  |> Fun.flip
-                       Option.bind
-                       Multipart_form.Content_disposition.filename
-              ; content_type =
-                  content_type header |> Multipart_form.Content_type.to_string
-              ; body
-              };
-            go ()
-          | None -> parts
-        in
-        go ())
-    in
-    ignore @@ Eio.Promise.await_exn p;
-    Eio.Promise.await_exn consumed |> Hashtbl.to_seq |> List.of_seq
+    Request.header "content-type" request
+    |> Fun.flip
+         Option.bind
+         (Result.to_option
+         <.> (Multipart_form.Content_type.of_string <.> add_new_line))
+    |> Option.value ~default
 
   let body_to_string body =
     let buffer = Buffer.create 1024 in
@@ -143,6 +112,72 @@ module Multipart = struct
       | None -> Buffer.contents buffer
     in
     go ()
+
+  let preload s =
+    let st = Eio.Stream.create 2 in
+    if s <> "" then Eio.Stream.add st (Some s);
+    Eio.Stream.add st None;
+    st
+
+  let drain_body body =
+    let rec go () =
+      match Eio.Stream.take body with Some _ -> go () | None -> ()
+    in
+    go ()
+
+  type cursor =
+    { output :
+        (string option * Multipart_form.Header.t * string option Eio.Stream.t)
+          option
+          Eio.Stream.t
+    ; promise :
+        ( (string option Multipart_form.t, [ `Msg of string ]) result
+          , exn )
+          result
+          Eio.Promise.t
+    }
+
+  let make_cursor ~sw request =
+    let ctype = request_ctype request in
+    let promise, output =
+      stream ~sw ~identify:name_of_header (Request.body request) ctype
+    in
+    { output; promise }
+
+  let next_part cursor =
+    match Eio.Stream.take cursor.output with
+    | None -> None
+    | Some (name, header, bounded_body) ->
+      (* Eagerly drain the bounded body stream into a Buffer. This unblocks the
+         parser fiber immediately (no backpressure accumulation) and avoids the
+         need to track whether the caller consumed the stream, which would cause
+         drain_body to block on an empty stream. *)
+      let content = body_to_string bounded_body in
+      let key = Option.value name ~default:"" in
+      Some
+        { name = key
+        ; filename =
+            content_disposition header
+            |> Fun.flip Option.bind Multipart_form.Content_disposition.filename
+        ; content_type =
+            content_type header |> Multipart_form.Content_type.to_string
+        ; body = preload content
+        }
+
+  let parse request =
+    Eio.Switch.run @@ fun sw ->
+    let cursor = make_cursor ~sw request in
+    let rec go acc =
+      match next_part cursor with
+      | None ->
+        (* Output stream exhausted; check the promise to distinguish a
+           successful parse from a malformed body. *)
+        (match Eio.Promise.await_exn cursor.promise with
+        | Ok _ -> Ok (List.rev acc)
+        | Error e -> Error e)
+      | Some part -> go ((part.name, part) :: acc)
+    in
+    go []
 
   let part_to_string part = body_to_string part.body
   let get_part key fields = List.assoc_opt key fields
@@ -170,6 +205,13 @@ module Multipart = struct
     | Array of node list
     | Part of part
 
+  let drain_part part = drain_body part.body
+
+  let rec drain_node = function
+    | Part part -> drain_part part
+    | Array nodes -> List.iter drain_node nodes
+    | Object tbl -> Hashtbl.iter (fun _ node -> drain_node node) tbl
+
   let to_tree (parts : t) : node =
     (* Group parts by name; multiple parts with the same name form an array. Per
        OpenAPI multipart spec, nested objects/arrays are encoded as a single
@@ -193,6 +235,13 @@ module Multipart = struct
          Hashtbl.add root_tbl name node)
       by_name;
     Object root_tbl
+
+  module Cursor = struct
+    type t = cursor
+
+    let make = make_cursor
+    let next = next_part
+  end
 end
 
 module Urlencoded = struct

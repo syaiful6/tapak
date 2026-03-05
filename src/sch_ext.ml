@@ -193,6 +193,10 @@ module Multipart_decoder = struct
         let known = Hashtbl.create 16 in
         let nat = object_nat htbl known in
         let result = V.prj (Sch.Free.run validation_applicative nat members) in
+        Hashtbl.iter
+          (fun name node ->
+             if not (Hashtbl.mem known name) then Form.Multipart.drain_node node)
+          htbl;
         (match unknown with
         | Skip -> result
         | Error_on_unknown ->
@@ -301,4 +305,10 @@ module Multipart_decoder = struct
                      field.name
                      [ Sch.error "Missing required field" ]))))
     }
+
+  let decode_request : type a. a Sch.t -> Request.t -> a Sch.Validation.t =
+   fun schema request ->
+    match Form.Multipart.parse request with
+    | Ok parts -> decode schema (Form.Multipart.to_tree parts)
+    | Error (`Msg msg) -> Sch.Validation.Error (Sch.errors [ msg ])
 end
