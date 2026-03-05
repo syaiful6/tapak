@@ -51,12 +51,7 @@ let echo_handler req =
 
   match method_ with
   | `POST | `PUT ->
-    let body_content =
-      Result.fold
-        ~ok:Fun.id
-        ~error:(fun _ -> "")
-        (Body.to_string (Request.body req))
-    in
+    let body_content = Eio.Flow.read_all (Request.body req) in
     let encoding_header = Request.header "Content-Encoding" req in
     let encoding_status =
       match encoding_header with
@@ -70,9 +65,9 @@ let echo_handler req =
         encoding_status
         body_content
     in
-    Response.of_string' ~status:`OK response_text
+    Response.plain ~status:`OK response_text
   | _ ->
-    Response.of_string'
+    Response.plain
       ~status:`Method_not_allowed
       "Please POST or PUT data to this endpoint"
 
@@ -115,12 +110,10 @@ let form_get_handler req =
 let form_post_handler req =
   let open Tapak in
   let form_data =
-    Form.Urlencoded.of_body (Request.body req)
-    |> Result.map Form.Urlencoded.normalize
+    Form.Urlencoded.of_body (Request.body req) |> Form.Urlencoded.normalize
   in
-  match Result.map (Form.Urlencoded.get "csrf_token") form_data with
-  | Ok (Some token) when Csrf.verify_token ~token req ->
-    let form_data = Result.get_ok form_data in
+  match Form.Urlencoded.get "csrf_token" form_data with
+  | Some token when Csrf.verify_token ~token req ->
     let message =
       Form.Urlencoded.get "message" form_data
       |> Option.value ~default:"(no message)"
@@ -141,34 +134,23 @@ let form_post_handler req =
 |}
         (String.escaped message)
     in
-    Response.of_html ~status:`OK html
-  | Ok (Some _) | Ok None ->
-    Response.of_html
+    Response.html ~status:`OK html
+  | Some _ | None ->
+    Response.html
       ~status:`Forbidden
       "<h1>403 Forbidden</h1><p>Invalid CSRF token</p><p><a href=\"/form\">Try \
        again</a></p>"
-  | Error _ ->
-    Response.of_html
-      ~status:`Bad_request
-      "<h1>400 Bad Request</h1><p>Invalid form data</p><p><a \
-       href=\"/form\">Try again</a></p>"
 
-let stream_csv_handler req =
-  let open Tapak in
-  let sw =
-    match (Request.info req).sw with
-    | Some sw -> sw
-    | None -> failwith "No switch available in request"
-  in
+let stream_csv_handler () =
   let headers =
-    Headers.of_list
+    Tapak.Headers.of_list
       [ "Content-Type", "text/csv"
       ; "Content-Disposition", "attachment; filename=\"users.csv\""
       ]
   in
-  stream ~sw ~headers (fun write ->
+  Tapak.stream ~headers (fun write flush ->
     (* Write CSV header *)
-    write (Some "id,username,email,created_at,status\n");
+    write "id,username,email,created_at,status\n";
 
     (* Stream 10,000 user records *)
     for i = 1 to 10_000 do
@@ -183,14 +165,14 @@ let stream_csv_handler req =
           timestamp
           status
       in
-      write (Some row);
+      write row;
 
       (* Yield every 100 rows to allow other fibers to run *)
-      if i mod 100 = 0 then Eio.Fiber.yield ()
+      if i mod 100 = 0 then flush ();
+      Eio.Fiber.yield ()
     done;
 
-    (* Signal end of stream *)
-    write None)
+    flush ())
 
 type user =
   { id : int
@@ -228,12 +210,7 @@ let update_user_schema =
     message, data)
 
 let api_update_user_handler req id =
-  let body_content =
-    Result.fold
-      ~ok:Fun.id
-      ~error:(fun _ -> "")
-      Tapak.(Body.to_string (Request.body req))
-  in
+  let body_content = Eio.Flow.read_all (Tapak.Request.body req) in
   let message = Printf.sprintf "User %Ld updated" id, body_content in
   Tapak.json ~status:`OK (Sch.Json.encode_string update_user_schema message)
 
@@ -245,7 +222,6 @@ let not_found _req =
 let setup_app env =
   let now () = Eio.Time.now (Eio.Stdenv.clock env) in
   let decoder = Tapak_compressions.decoder in
-  let max_bytes = Int64.mul 10L (Int64.mul 1024L 1024L) in
 
   Tapak.(
     Router.(
@@ -257,11 +233,6 @@ let setup_app env =
             (s "api")
             [ get (s "version") |> request |> into api_version_handler
             ; scope
-                ~middlewares:
-                  [ use
-                      (module Middleware.Limit_request_size)
-                      (Middleware.Limit_request_size.args ~max_bytes)
-                  ]
                 (s "users")
                 [ get (s "") |> unit |> into api_users_handler
                 ; get int64 |> into api_detail_user_handler
@@ -273,9 +244,7 @@ let setup_app env =
         ; put (s "echo") |> request |> into echo_handler
         ; get (s "form") |> request |> into form_get_handler
         ; post (s "form") |> request |> into form_post_handler
-        ; get (s "download" / s "users.csv")
-          |> request
-          |> into stream_csv_handler
+        ; get (s "download" / s "users.csv") |> unit |> into stream_csv_handler
         ])
     |> pipe
          ~through:
@@ -293,30 +262,18 @@ let setup_log ?(threaded = false) ?style_renderer level =
   ()
 
 let () =
-  let domains =
-    match Sys.getenv_opt "DOMAINS" with Some d -> int_of_string d | None -> 1
-  in
-  setup_log ~threaded:(domains > 1) (Some Logs.Debug);
+  setup_log ~threaded:false (Some Logs.Info);
   Eio_main.run @@ fun env ->
-  let use_systemd =
-    match Sys.getenv_opt "TAPAK_SYSTEMD" with
-    | Some "false" | Some "0" -> false
-    | _ -> true
-  in
+  Eio.Switch.run @@ fun sw ->
   let port =
     match Sys.getenv_opt "PORT" with Some p -> int_of_string p | None -> 3000
   in
   let address = `Tcp (Eio.Net.Ipaddr.V4.any, port) in
-  let config = Piaf.Server.Config.create ~domains address in
-
-  if use_systemd
-  then (
-    Log.info (fun log ->
-      log
-        "Starting with systemd socket activation support (domains: %d)"
-        domains);
-    ignore (Tapak.run_with_systemd_socket ~config ~env (setup_app env)))
-  else (
-    Log.warn (fun log ->
-      log "Starting Tapak Showcase WITHOUT systemd support on port %d" port);
-    ignore (Tapak.run_with ~config ~env (setup_app env)))
+  let socket =
+    Eio.Net.listen ~reuse_addr:true ~backlog:1024 ~sw env#net address
+  in
+  Tapak.run
+    ~on_error:(fun exn ->
+      Log.warn (fun f -> f "Uncaught exception %s" (Printexc.to_string exn)))
+    socket
+    (setup_app env)

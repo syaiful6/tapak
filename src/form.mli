@@ -10,43 +10,20 @@ module Multipart : sig
     { name : string
     ; filename : string option
     ; content_type : string
-    ; body : Body.t
+    ; body : string option Eio.Stream.t
     }
   (** A multipart form part. Both text fields and file uploads use this representation. *)
 
   type t = (string * part) list
   (** Association list of field names to their parts. *)
 
-  val parse :
-     ?max_chunk_size:int
-    -> Request.t
-    -> (t, [> `Msg of string ]) result
-  (** [parse ?max_chunk_size request] parses a multipart/form-data request.
+  val part_to_string : part -> string
+  (** [body_to_string stream] reads the entire body of a multipart part into a string.
+      Use this for small text fields. For file uploads or large fields, read the
+      body stream directly to avoid memory issues. *)
 
-      @param max_chunk_size Maximum size in bytes for each chunk when streaming (default: 1 MB = 1_048_576 bytes)
-      @return Association list of field names to their parts
-
-      {b Example:}
-      {[
-        match Form.Multipart.parse request with
-        | Error (`Msg err) -> Response.of_plain_text ~status:`Bad_request err
-        | Ok fields ->
-          (* Get a text field *)
-          let username = match Form.Multipart.get_field "username" fields with
-            | Some (Ok value) -> value
-            | Some (Error _) -> "error reading field"
-            | None -> "guest"
-          in
-          (* Get a file upload by field name - you know from your form structure *)
-          match Form.Multipart.get_part "avatar" fields with
-          | Some { filename; body; _ } ->
-              save_file ?filename body
-          | None -> (* no file uploaded *)
-
-          (* Important: drain unconsumed parts *)
-          let* () = Form.Multipart.drain fields in
-          Response.of_plain_text "OK"
-      ]} *)
+  val parse : Request.t -> (t, [ `Msg of string ]) result
+  (** [parse request] parses a multipart/form-data request. *)
 
   val get_part : string -> t -> part option
   (** [get_part key fields] returns the first part with [key], or [None]. *)
@@ -54,27 +31,15 @@ module Multipart : sig
   val get_all_parts : string -> t -> part list
   (** [get_all_parts key fields] returns all parts for [key]. *)
 
-  val get_field : string -> t -> (string, [> `Msg of string ]) result option
+  val get_field : string -> t -> string option
   (** [get_field key fields] is a convenience function that:
       1. Finds the first part with [key]
       2. Reads its body to a string
-      3. Returns [Some (Ok value)] if successful, [Some (Error e)] if body read fails, or [None] if not found
 
       Use this for text form fields where you expect small values. *)
 
-  val get_all_fields : string -> t -> (string list, [> `Msg of string ]) result
-  (** [get_all_fields key fields] reads all parts with [key] as strings.
-      Returns [Ok values] with all successfully read values, or [Error e] if any read fails. *)
-
-  val drain : t -> (unit, [> `Msg of string ]) result
-  (** [drain fields] drains all unconsumed part bodies.
-
-      This is important to call if you don't fully consume all parts,
-      as unconsumed request body data can interfere with connection reuse
-      and HTTP keep-alive.
-
-      Note: [get_field] and [get_all_fields] consume the body when reading,
-      but [get_part] returns the body as a stream which you must consume manually. *)
+  val get_all_fields : string -> t -> string list
+  (** [get_all_fields key fields] reads all parts with [key] as strings. *)
 
   type node =
     | Object of (string, node) Hashtbl.t
@@ -99,18 +64,48 @@ module Multipart : sig
       Parts are grouped by field name. A field that appears only once becomes a
       [Part] leaf; a field that appears multiple times (repeated fields, i.e. an
       array of values) becomes an [Array] of [Part] leaves. *)
+
+  val drain_node : node -> unit
+  (** [drain_node node] discards all unread body data in [node] and its
+      descendants. Call this on unknown fields so their body streams are
+      consumed and the parser fiber can make progress. *)
+
+  val preload : string -> string option Eio.Stream.t
+  (** [preload s] wraps [s] in a two-element stream [(Some s; None)] so that
+      consumers expecting a streaming body (e.g. [Bytesrw] readers) work
+      without holding any live parser reference. Used internally by
+      [decode_request] and [parse]. *)
+
+  (** {2 Streaming iter API} *)
+  module Cursor : sig
+    type t
+
+    val make : sw:Eio.Switch.t -> Request.t -> t
+    (** [make ~sw request] starts parsing the multipart body. The parser fiber
+      runs concurrently under [sw]. Use [next] to pull parts one at a
+      time. [sw] only needs to stay open while [next] calls are in
+      progress. *)
+
+    val next : t -> part option
+    (** [next cursor] returns the next part, or [None] when the stream is
+      exhausted.
+
+      Each call eagerly reads the part's bounded body into a [Buffer.t] and
+      returns a preloaded [part.body] stream. This keeps memory proportional to
+      the largest single part (not the whole body) and ensures the parser fiber
+      is never blocked on a full bounded stream.
+
+      For true zero-copy streaming of large file fields, use the lower-level
+      [stream] primitive directly. *)
+  end
 end
 
 module Urlencoded : sig
   type t = (string * string list) list
 
-  val of_string : string -> (string * string list) list
-
-  val of_body :
-     Body.t
-    -> ((string * string list) list, [> `Bad_request ]) result
-
-  val of_query : Request.t -> (string * string list) list
+  val of_string : string -> t
+  val of_body : _ Eio.Flow.source -> t
+  val of_query : Request.t -> t
 
   val normalize : t -> t
   (** [normalize params] groups duplicate keys into single entries with all values combined.

@@ -120,4 +120,4 @@ let with_cookie ?settings secret response =
       (cookie_name, secret)
     |> Set_cookie.serialize
   in
-  Response.add_header (header_name, header_value) response
+  Response.add_header header_name header_value response

@@ -203,8 +203,8 @@ module type STORAGE = sig
       for conditional requests (If-None-Match). If [None],
       ETags won't be generated. *)
 
-  val content : sw:Eio.Switch.t -> t -> (Body.t, lookup_error) result
-  (** [content ~sw file] returns the complete file content as a
+  val content : t -> (Body.t, lookup_error) result
+  (** [content file] returns the complete file content as a
       Body.t.
 
       The content should be returned as-is from storage
@@ -222,15 +222,13 @@ module type STORAGE = sig
         gzipped bytes *)
 
   val partial_content :
-     sw:Eio.Switch.t
-    -> t
+     t
     -> start:int64
     -> end_:int64 option
     -> (Body.t, lookup_error) result
-  (** [partial_content ~sw file ~start ~end_] returns a slice
+  (** [partial_content file ~start ~end_] returns a slice
       of the file content for HTTP Range requests.
 
-      - [sw] is used to manage I/O resource lifecycle
       - [start] is the byte offset to start from (0-indexed)
       - [end_] is the optional end byte offset (inclusive)
 
@@ -345,7 +343,7 @@ module Response_finfo : sig
   end
 
   type response =
-    { status : Piaf.Status.t
+    { status : Http.Status.t
     ; offset : int64
     ; headers : Headers.t
     ; length : int64
@@ -353,7 +351,7 @@ module Response_finfo : sig
   (** Response metadata for conditional requests with body. *)
 
   type t =
-    [ `Without_body of Piaf.Status.t
+    [ `Without_body of Http.Status.t
       (** Return status code without body (304 Not Modified,
           412 Precondition Failed, etc.) *)
     | `With_body of response  (** Return body with specified parameters *)

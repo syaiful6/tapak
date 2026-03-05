@@ -8,7 +8,7 @@ type origin_policy =
 
 type t =
   { origins : origin_policy
-  ; methods : Piaf.Method.t list
+  ; methods : Http.Method.t list
   ; headers : string list
   ; exposed_headers : string list
   ; credentials : bool
@@ -16,8 +16,7 @@ type t =
   ; send_preflight : bool
   }
 
-let default_methods =
-  [ `GET; `POST; `PUT; `Other "PATCH"; `DELETE; `HEAD; `OPTIONS ]
+let default_methods = [ `GET; `POST; `PUT; `PATCH; `DELETE; `HEAD; `OPTIONS ]
 
 let default_headers =
   [ "Accept"
@@ -74,7 +73,7 @@ let credentials_header ~credentials ~origin =
 
 let with_vary config response =
   if should_vary config
-  then Response.add_to_list_header ("Vary", "Origin") response
+  then Response.add_header "Vary" "Origin" response
   else response
 
 let add_cors_headers config origin response =
@@ -102,14 +101,14 @@ let handle_preflight config origin request =
     Request.header "Access-Control-Request-Headers" request
   in
   let methods_str =
-    config.methods |> List.map Piaf.Method.to_string |> String.concat ~sep:", "
+    config.methods |> List.map Http.Method.to_string |> String.concat ~sep:", "
   in
   let headers_str =
     match config.headers, requested_headers with
     | [ "*" ], Some h -> h
     | hs, _ -> String.concat ~sep:", " hs
   in
-  Response.of_string' ~status:`No_content ""
+  Response.plain ~status:`No_content ""
   |> Response.add_headers
        (List.filter_map
           Fun.id
@@ -130,7 +129,7 @@ let call config next request =
     (match check_origin config origin with
     | None ->
       if is_preflight request && config.send_preflight
-      then Response.of_string' ~status:`Forbidden "CORS policy violation"
+      then Response.plain ~status:`Forbidden "CORS policy violation"
       else next request
     | Some allowed_origin ->
       if is_preflight request && config.send_preflight

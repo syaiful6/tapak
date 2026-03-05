@@ -115,14 +115,13 @@ module type STORAGE = sig
   (** Optional hash of the file contents for ETag generation.
       Useful for conditional requests (If-None-Match). *)
 
-  val content : sw:Eio.Switch.t -> t -> (Body.t, lookup_error) result
+  val content : t -> (Body.t, lookup_error) result
   (** Get the complete file content as a Body.t. The sw
       parameter is used to manage I/O resource lifecycle. The
       encoding information is provided via finfo. *)
 
   val partial_content :
-     sw:Eio.Switch.t
-    -> t
+     t
     -> start:int64
     -> end_:int64 option
     -> (Body.t, lookup_error) result
@@ -182,14 +181,14 @@ module Response_finfo : sig
   end
 
   type response =
-    { status : Piaf.Status.t
+    { status : Http.Status.t
     ; offset : int64
     ; headers : Headers.t
     ; length : int64
     }
 
   type t =
-    [ `Without_body of Piaf.Status.t
+    [ `Without_body of Http.Status.t
     | `With_body of response
     ]
 
@@ -202,14 +201,14 @@ end = struct
   module P = Header_parser
 
   type response =
-    { status : Piaf.Status.t
+    { status : Http.Status.t
     ; offset : int64
     ; headers : Headers.t
     ; length : int64
     }
 
   type t =
-    [ `Without_body of Piaf.Status.t
+    [ `Without_body of Http.Status.t
     | `With_body of response
     ]
 
@@ -300,21 +299,21 @@ end = struct
 
   let parse_range rn size =
     match P.Range.parse (Some rn) with
-    | Error _ -> `Without_body `Range_not_satisfiable
-    | Ok [] -> `Without_body `Range_not_satisfiable
+    | Error _ -> `Without_body `Requested_range_not_satisfiable
+    | Ok [] -> `Without_body `Requested_range_not_satisfiable
     | Ok (r :: _) ->
       let beg, end_ = check_range r size in
       let length = Int64.add (Int64.sub end_ beg) 1L in
       let status =
         if beg = 0L && end_ = Int64.sub size 1L then `OK else `Partial_content
       in
-      `With_body { status; headers = Headers.empty; offset = beg; length }
+      `With_body { status; headers = Headers.init (); offset = beg; length }
 
   let unconditional hm size =
     match Headers.get hm "Range" with
     | None ->
       `With_body
-        { status = `OK; headers = Headers.empty; offset = 0L; length = size }
+        { status = `OK; headers = Headers.init (); offset = 0L; length = size }
     | Some rn -> parse_range rn size
 
   let if_modified headers size mtime =
@@ -324,7 +323,11 @@ end = struct
       (if Http_date.equal mtime ims = false
        then
          `With_body
-           { status = `OK; headers = Headers.empty; offset = 0L; length = size }
+           { status = `OK
+           ; headers = Headers.init ()
+           ; offset = 0L
+           ; length = size
+           }
        else `Without_body `Not_modified)
 
   let if_unmodified headers size mtime =
@@ -364,7 +367,7 @@ end = struct
          else
            `With_body
              { status = `OK
-             ; headers = Headers.empty
+             ; headers = Headers.init ()
              ; offset = 0L
              ; length = size
              })
@@ -382,7 +385,7 @@ end = struct
          else
            `With_body
              { status = `OK
-             ; headers = Headers.empty
+             ; headers = Headers.init ()
              ; offset = 0L
              ; length = size
              })
@@ -394,7 +397,7 @@ end = struct
          else
            `With_body
              { status = `OK
-             ; headers = Headers.empty
+             ; headers = Headers.init ()
              ; offset = 0L
              ; length = size
              })
@@ -726,19 +729,23 @@ let filesystem ~env:fs_env ?(follow = true) ?(ttl_seconds = 45.0) root =
            (stat.File.Stat.size |> Optint.Int63.to_int64)
            (Float.to_int stat.File.Stat.mtime))
 
-    let content ~sw:_ (File { path; stat }) =
+    let content (File { path; stat }) =
       try
         if stat.File.Stat.kind <> `Regular_file
         then Error `Not_found
         else
-          match Path.native path with
-          | None -> Error (`IO_error "Cannot get native path for file")
-          | Some native_path ->
-            let size = stat.File.Stat.size |> Optint.Int63.to_int64 in
-            (match Body.sendfile ~length:(`Fixed size) native_path with
-            | Ok body -> Ok body
-            | Error (#Piaf.Error.common as e) ->
-              Error (`IO_error (Format.asprintf "%a" Piaf.Error.pp_hum e)))
+          let length = stat.File.Stat.size |> Optint.Int63.to_int64 in
+          Result.ok
+          @@ Body.stream ~length (fun write flush ->
+            Path.with_open_in path (fun flow ->
+              try
+                let cstruct = Cstruct.create 65536 in
+                while true do
+                  let len = Eio.Flow.single_read flow cstruct in
+                  write (Cstruct.to_string ~off:0 ~len cstruct)
+                done
+              with
+              | End_of_file -> flush ()))
       with
       | Exn.Io (Fs.E (Not_found _), _) -> Error `Not_found
       | Exn.Io (Fs.E (Permission_denied _), _) -> Error `Permission_denied
@@ -746,7 +753,7 @@ let filesystem ~env:fs_env ?(follow = true) ?(ttl_seconds = 45.0) root =
       | Unix.Unix_error (Unix.EACCES, _, _) -> Error `Permission_denied
       | e -> Error (`IO_error (Printexc.to_string e))
 
-    let partial_content ~sw (File { path; stat }) ~start ~end_ =
+    let partial_content (File { path; stat }) ~start ~end_ =
       try
         if stat.File.Stat.kind <> `Regular_file
         then Error `Not_found
@@ -761,37 +768,26 @@ let filesystem ~env:fs_env ?(follow = true) ?(ttl_seconds = 45.0) root =
           if length <= 0L || start >= file_size
           then Error `Not_found
           else
-            let stream, stream_push = Piaf.Stream.create 4 in
-            let buf_size = 8192 in
-            let _producer_fiber =
-              Eio.Fiber.fork_promise ~sw (fun () ->
-                Path.with_open_in path (fun flow ->
-                  let offset = ref start in
-                  let remaining = ref length in
-                  try
-                    while !remaining > 0L do
-                      let to_read =
-                        Int.min buf_size (Int64.to_int !remaining)
-                      in
-                      let buf = Bigstringaf.create to_read in
-                      let cstruct = Cstruct.of_bigarray buf ~len:to_read in
-                      Eio.File.pread_exact
-                        flow
-                        ~file_offset:(Optint.Int63.of_int64 !offset)
-                        [ cstruct ];
-                      stream_push
-                        (Some (Piaf.IOVec.make buf ~off:0 ~len:to_read));
-                      offset := Int64.add !offset (Int64.of_int to_read);
-                      remaining := Int64.sub !remaining (Int64.of_int to_read)
-                    done;
-                    stream_push None
-                  with
-                  | End_of_file -> stream_push None
-                  | exn ->
-                    stream_push None;
-                    raise exn))
-            in
-            Ok (Body.of_stream ~length:(`Fixed length) stream)
+            Result.ok
+            @@ Body.stream ~length (fun write flush ->
+              Path.with_open_in path (fun flow ->
+                let offset = ref start in
+                let remaining = ref length in
+                try
+                  while !remaining > 0L do
+                    let to_read = Int.min 65536 (Int64.to_int !remaining) in
+                    let cstruct = Cstruct.create to_read in
+                    Eio.File.pread_exact
+                      flow
+                      ~file_offset:(Optint.Int63.of_int64 !offset)
+                      [ cstruct ];
+                    write (Cstruct.to_string ~off:0 ~len:to_read cstruct);
+                    offset := Int64.add !offset (Int64.of_int to_read);
+                    remaining := Int64.sub !remaining (Int64.of_int to_read)
+                  done;
+                  flush ()
+                with
+                | End_of_file -> flush ()))
       with
       | Exn.Io (Fs.E (Not_found _), _) -> Error `Not_found
       | Exn.Io (Fs.E (Permission_denied _), _) -> Error `Permission_denied
@@ -857,7 +853,7 @@ let serve (module F : STORAGE) ?(config = default_config) () request segments =
       match
         Piece.of_list (List.filter (fun s -> String.length s > 0) segments)
       with
-      | None -> Error (Response.create `Bad_request)
+      | None -> Error (Response.make ~status:`Bad_request Body.empty)
       | Some ps -> Ok ps
     in
 
@@ -884,30 +880,31 @@ let serve (module F : STORAGE) ?(config = default_config) () request segments =
 
     let* lookup_result =
       match F.lookup ~encoding:preferred_encoding pieces with
-      | Error `Not_found -> Error (Response.create `Not_found)
-      | Error `Permission_denied -> Error (Response.create `Forbidden)
+      | Error `Not_found -> Error (Response.make ~status:`Not_found Body.empty)
+      | Error `Permission_denied ->
+        Error (Response.make ~status:`Forbidden Body.empty)
       | Error (`IO_error msg) ->
         Log.err (fun m -> m "Static file IO error: %s" msg);
-        Error (Response.create `Internal_server_error)
+        Error (Response.make ~status:`Internal_server_error Body.empty)
       | Ok result -> Ok result
     in
 
     let* file =
       match lookup_result with
-      | `Missing -> Error (Response.create `Not_found)
+      | `Missing -> Error (Response.make ~status:`Not_found Body.empty)
       | `Folder (_name, _contents) ->
         (match find_index_file (module F) config pieces with
         | Some index_file -> Ok index_file
         | None ->
           (* TODO: Implement directory listing if
              config.show_directory_listing *)
-          Error (Response.create `Forbidden))
+          Error (Response.make ~status:`Forbidden Body.empty))
       | `File file ->
         (match F.finfo file with
-        | None -> Error (Response.create `Not_found)
+        | None -> Error (Response.make ~status:`Not_found Body.empty)
         | Some finfo ->
           if not (should_serve_file config finfo.name)
-          then Error (Response.create `Not_found)
+          then Error (Response.make ~status:`Not_found Body.empty)
           else Ok file)
     in
 
@@ -922,7 +919,7 @@ let serve (module F : STORAGE) ?(config = default_config) () request segments =
     let cache_control = make_cache_control config in
 
     let response_headers =
-      Headers.empty |> fun hs ->
+      Headers.init () |> fun hs ->
       Headers.add hs "Content-Type" mime_type |> fun hs ->
       Headers.add hs "Cache-Control" cache_control |> fun hs ->
       (match encoding_to_string finfo.encoding with
@@ -942,47 +939,35 @@ let serve (module F : STORAGE) ?(config = default_config) () request segments =
         finfo
     with
     | `Without_body status ->
-      Ok (Response.create ~headers:response_headers status)
+      Ok (Response.make ~headers:response_headers ~status Body.empty)
     | `With_body { status; headers; offset; length } ->
-      let request_info = Request.info request in
-      let sw_opt = request_info.sw in
-      let handle_body () =
-        match sw_opt with
-        | Some sw ->
-          if offset = 0L && length = finfo.size
-          then F.content ~sw file
-          else
-            F.partial_content
-              ~sw
-              file
-              ~start:offset
-              ~end_:(Some (Int64.sub (Int64.add offset length) 1L))
-        | None ->
-          (* Fallback for tests: create a temporary switch. Note: This will
-             block until content is fully read. *)
-          Eio.Switch.run (fun sw ->
-            if offset = 0L && length = finfo.size
-            then F.content ~sw file
-            else
-              F.partial_content
-                ~sw
-                file
-                ~start:offset
-                ~end_:(Some (Int64.sub (Int64.add offset length) 1L)))
+      let body_result =
+        if offset = 0L && length = finfo.size
+        then F.content file
+        else
+          F.partial_content
+            file
+            ~start:offset
+            ~end_:(Some (Int64.sub (Int64.add offset length) 1L))
       in
-      let body_result = handle_body () in
+
       (match body_result with
-      | Error `Not_found -> Error (Response.create `Not_found)
-      | Error `Permission_denied -> Error (Response.create `Forbidden)
+      | Error `Not_found -> Error (Response.make ~status:`Not_found Body.empty)
+      | Error `Permission_denied ->
+        Error (Response.make ~status:`Forbidden Body.empty)
       | Error (`IO_error msg) ->
         Log.err (fun m -> m "Static file content error: %s" msg);
-        Error (Response.create `Internal_server_error)
-      | Ok body -> Ok (Response.create ~headers ~body status))
+        Error (Response.make ~status:`Internal_server_error Body.empty)
+      | Ok body -> Ok (Response.make ~headers ~status body))
   in
   match result with Ok response -> response | Error response -> response
 
 let app (module F : STORAGE) ?config () request =
-  let uri = Request.uri request in
-  let path = Uri.path uri in
+  let target = Request.target request in
+  let path =
+    match String.index_opt target '?' with
+    | Some idx -> String.sub target ~pos:0 ~len:idx
+    | None -> target
+  in
   let segments = String.split_on_char ~sep:'/' path in
   serve (module F) ?config () request segments

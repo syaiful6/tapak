@@ -1,5 +1,21 @@
 {
   "nodes": {
+    "cows": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1772293829,
+        "narHash": "sha256-2VtFcPmkaJSAqPdXKe1eVbkQbwDRjjnK7552hAicIVs=",
+        "owner": "syaiful6",
+        "repo": "cows",
+        "rev": "fc74ab9f372adf6b19d00feec60e4bc669ea10a8",
+        "type": "github"
+      },
+      "original": {
+        "owner": "syaiful6",
+        "repo": "cows",
+        "type": "github"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1765762245,
@@ -18,6 +34,7 @@
     },
     "root": {
       "inputs": {
+        "cows": "cows",
         "nixpkgs": "nixpkgs",
         "treefmt-nix": "treefmt-nix"
       }

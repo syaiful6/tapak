@@ -45,48 +45,18 @@ module Event = struct
     { id = None; data = None; event = None; comment = Some text; retry = None }
 end
 
-let keep_alive
-      ~sw
-      ~clock
-      ?(interval = 15.0)
-      ?(comment = "keep-alive")
-      event_stream
-  =
-  let output_stream, push = Piaf.Stream.create 4 in
-  let keep_alive_event = Event.comment comment in
-  Eio.Fiber.fork ~sw (fun () ->
-    let rec loop () =
-      match
-        Eio.Time.with_timeout clock interval (fun () ->
-          Piaf.Stream.take event_stream |> Result.ok)
-      with
-      | Ok (Some event) ->
-        push (Some event);
-        loop ()
-      | Ok None -> push None
-      | Error `Timeout ->
-        push (Some keep_alive_event);
-        loop ()
-    in
-    try loop () with _ -> push None);
-  output_stream
+let ( <.> ) f g x = f (g x)
 
-let stream
-      ?(version = Piaf.Versions.HTTP.HTTP_1_1)
-      ?(headers = Headers.empty)
-      ?(context = Context.empty)
-      event_stream
-  =
+let stream ?(version = `HTTP_1_1) ?headers f =
   let base_headers =
     [ "Content-Type", "text/event-stream"; "Cache-Control", "no-cache" ]
   in
   let headers =
     Headers.add_list
-      headers
+      (Option.value headers ~default:(Headers.init ()))
       (match version with
-      | Piaf.Versions.HTTP.HTTP_1_0 ->
-        ("Connection", "keep-alive") :: base_headers
+      | `HTTP_1_0 -> ("Connection", "keep-alive") :: base_headers
       | _ -> base_headers)
   in
-  let string_stream = Piaf.Stream.map ~f:Event.to_string event_stream in
-  Response.of_string_stream ~version ~headers ~context ~body:string_stream `OK
+  Response.stream ~version ~headers (fun write flush ->
+    f (write <.> Event.to_string) flush)

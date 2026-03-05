@@ -8,13 +8,16 @@
   hmap,
   logs,
   re,
-  piaf,
+  cohttp,
+  cohttp-eio,
+  cows,
   magic-mime,
   uri,
   ptime,
   saturn,
   yojson,
   jsont,
+  multipart_form,
   sch,
   mirage-crypto,
   mirage-crypto-rng,
@@ -47,13 +50,16 @@ buildDunePackage {
     hmap
     logs
     re
-    piaf
+    cohttp
+    cohttp-eio
+    cows
     magic-mime
     uri
     ptime
     saturn
     yojson
     jsont
+    multipart_form
     sch
     mirage-crypto
     mirage-crypto-rng

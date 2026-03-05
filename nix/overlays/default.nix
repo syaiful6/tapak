@@ -20,9 +20,6 @@ let
     tapak-compressions = final'.callPackage ../packages/tapak-compressions.nix {
       inherit (final.tapak) doCheck;
     };
-    tapak-ppx = final'.callPackage ../packages/tapak-ppx.nix {
-      inherit (final.tapak) doCheck;
-    };
   };
 in
 {

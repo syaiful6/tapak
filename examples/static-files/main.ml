@@ -24,6 +24,7 @@ let () =
   Logs.set_level (Some Logs.Info);
   Logs.set_reporter (Logs_fmt.reporter ());
   Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
   let cwd = Eio.Stdenv.cwd env in
 
   let public_dir = Eio.Path.(cwd / "examples" / "static-files" / "public") in
@@ -42,7 +43,8 @@ let () =
   let api_handler () =
     let json_body = "Hello from API", Ptime_clock.now () |> Ptime.to_float_s in
     let headers =
-      Piaf.Headers.of_list [ "Content-Type", "application/json; charset=utf-8" ]
+      Tapak.Headers.of_list
+        [ "Content-Type", "application/json; charset=utf-8" ]
     in
     Tapak.json ~headers (Sch.Json.encode_string message_schema json_body)
   in
@@ -68,10 +70,16 @@ let () =
 
   let port = 8080 in
   let address = `Tcp (Eio.Net.Ipaddr.V4.loopback, port) in
-  let config = Piaf.Server.Config.create address in
+  let socket =
+    Eio.Net.listen ~reuse_addr:true ~backlog:1024 ~sw env#net address
+  in
 
   Log.info (fun m -> m "Starting static file server on http://127.0.0.1:8080");
   Log.info (fun m ->
     m "Serving files from: %s" (Eio.Path.native_exn public_dir));
 
-  ignore (Tapak.run_with ~config ~env handler)
+  Tapak.run
+    ~on_error:(fun exn ->
+      Log.warn (fun f -> f "Uncaught exception %s" (Printexc.to_string exn)))
+    socket
+    handler

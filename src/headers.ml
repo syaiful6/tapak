@@ -1,43 +1,43 @@
-include Piaf.Headers
+include Http.Header
 
-(** [add_to_list_header t name value] adds [value] to the comma-separated list
-    header [name]. If the header doesn't exist, it creates it with [value].
-    If it exists, it appends [value] to the comma-separated list.
+let empty = init ()
 
-    This is useful for headers like Vary, Accept, Cache-Control, Allow, etc.
-    that support comma-separated values according to RFC 7230.
+module type MESSAGE = sig
+  type t
 
-    Example:
-    {[
-      let headers = empty in
-      let headers = add_to_list_header headers "Vary" "Accept-Encoding" in
-      let headers = add_to_list_header headers "Vary" "Cookie" in
-      (* Results in: Vary: Accept-Encoding, Cookie *)
-    ]}
+  val with_headers : (Http.Header.t -> Http.Header.t) -> t -> t
+  val headers : t -> Http.Header.t
+end
 
-    Note: This function does not deduplicate values. If you need deduplication,
-    consider checking if the value exists before adding it. *)
-let add_to_list_header headers name value =
-  match get headers name with
-  | None -> add headers name value
-  | Some existing ->
-    let values = String.split_on_char ',' existing |> List.map String.trim in
-    if List.mem value values
-    then headers
-    else replace headers name (existing ^ ", " ^ value)
+module type S = sig
+  type t
 
-(** [add_to_list_header_multi t name values] adds multiple [values] to the
-    comma-separated list header [name]. Efficiently handles multiple values
-    at once.
+  val headers : t -> Http.Header.t
+  val header : string -> t -> string option
+  val add_header : string -> string -> t -> t
+  val add_header_or_replace : string -> string -> t -> t
+  val add_header_unless_exists : string -> string -> t -> t
+  val add_headers : (string * string) list -> t -> t
+  val remove_header : string -> t -> t
+end
 
-    Example:
-    {[
-      let headers = empty in
-      let headers = add_to_list_header_multi headers "Vary" ["Accept-Encoding"; "Cookie"] in
-      (* Results in: Vary: Accept-Encoding, Cookie *)
-    ]} *)
-let add_to_list_header_multi headers name values =
-  List.fold_left
-    (fun acc value -> add_to_list_header acc name value)
-    headers
-    values
+(* helpers for working with headers in request and response types *)
+module Make (M : MESSAGE) = struct
+  let headers = M.headers
+  let header name t = Http.Header.get (M.headers t) name
+
+  let add_header name value =
+    M.with_headers (fun h -> Http.Header.add h name value)
+
+  let add_header_or_replace name value =
+    M.with_headers (fun h ->
+      if Http.Header.mem h name
+      then Http.Header.replace h name value
+      else Http.Header.add h name value)
+
+  let add_header_unless_exists name value =
+    M.with_headers (fun h -> Http.Header.add_unless_exists h name value)
+
+  let add_headers hs = M.with_headers (fun h -> Http.Header.add_list h hs)
+  let remove_header name = M.with_headers (fun h -> Http.Header.remove h name)
+end

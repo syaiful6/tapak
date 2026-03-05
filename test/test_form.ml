@@ -98,37 +98,21 @@ let test_of_string_complex () =
 
 let test_of_body_success () =
   let body_content = "name=value&foo=bar" in
-  let body = Piaf.Body.of_string body_content in
+  let body = Cohttp_eio.Body.of_string body_content in
   let result = Form.Urlencoded.of_body body in
-  Alcotest.(
-    check
-      (result
-         urlencoded_testable
-         (of_pp (fun ppf _ -> Format.fprintf ppf "Bad_request"))))
+  Alcotest.(check urlencoded_testable)
     "Parse body successfully"
-    (Ok [ "name", [ "value" ]; "foo", [ "bar" ] ])
+    [ "name", [ "value" ]; "foo", [ "bar" ] ]
     result
 
 let test_of_body_empty () =
-  let body = Piaf.Body.empty in
+  let body = Cohttp_eio.Body.of_string "" in
   let result = Form.Urlencoded.of_body body in
-  Alcotest.(
-    check
-      (result
-         urlencoded_testable
-         (of_pp (fun ppf _ -> Format.fprintf ppf "Bad_request"))))
-    "Parse empty body"
-    (Ok [])
-    result
+  Alcotest.(check urlencoded_testable) "Parse empty body" [] result
 
 let make_test_request_with_query query =
-  let uri = Uri.of_string ("http://example.com/test" ^ query) in
-  Request.create
-    ~scheme:`HTTP
-    ~version:Piaf.Versions.HTTP.HTTP_1_1
-    ~meth:`GET
-    ~body:Piaf.Body.empty
-    (Uri.path_and_query uri)
+  let target = "/test" ^ query in
+  Request.make ~body:(Cohttp_eio.Body.of_string "") target
 
 let test_of_query_empty () =
   let request = make_test_request_with_query "" in
@@ -291,14 +275,17 @@ let test_multipart_get_part_from_empty () =
     None
     (Option.map (fun _ -> ()) result)
 
+let body_of_string s =
+  let stream = Eio.Stream.create 2 in
+  Eio.Stream.add stream (Some s);
+  Eio.Stream.add stream None;
+  stream
+
 let test_multipart_get_part_existing () =
+  let body = body_of_string "John" in
   let fields : Form.Multipart.t =
     [ ( "name"
-      , { name = "name"
-        ; filename = None
-        ; content_type = "text/plain"
-        ; body = Piaf.Body.of_string "John"
-        } )
+      , { name = "name"; filename = None; content_type = "text/plain"; body } )
     ]
   in
   let result = Form.Multipart.get_part "name" fields in
@@ -317,29 +304,24 @@ let test_multipart_get_field_from_empty () =
     (Option.map (fun _ -> ()) result)
 
 let test_multipart_get_field_existing () =
+  let body = body_of_string "John" in
   let fields : Form.Multipart.t =
     [ ( "name"
-      , { name = "name"
-        ; filename = None
-        ; content_type = "text/plain"
-        ; body = Piaf.Body.of_string "John"
-        } )
+      , { name = "name"; filename = None; content_type = "text/plain"; body } )
     ]
   in
   let result = Form.Multipart.get_field "name" fields in
   match result with
-  | Some (Ok value) -> Alcotest.(check string) "Value matches" "John" value
-  | Some (Error _) -> Alcotest.fail "Failed to read field"
+  | Some value -> Alcotest.(check string) "Value matches" "John" value
   | None -> Alcotest.fail "Expected to find field"
 
 let test_multipart_get_field_missing () =
+  let body = Eio.Stream.create 2 in
+  Eio.Stream.add body (Some "John");
+  Eio.Stream.add body None;
   let fields : Form.Multipart.t =
     [ ( "name"
-      , { name = "name"
-        ; filename = None
-        ; content_type = "text/plain"
-        ; body = Piaf.Body.of_string "John"
-        } )
+      , { name = "name"; filename = None; content_type = "text/plain"; body } )
     ]
   in
   let result = Form.Multipart.get_field "age" fields in
@@ -354,19 +336,19 @@ let test_multipart_get_all_parts () =
       , { name = "tag"
         ; filename = None
         ; content_type = "text/plain"
-        ; body = Piaf.Body.of_string "ocaml"
+        ; body = body_of_string "ocaml"
         } )
     ; ( "name"
       , { name = "name"
         ; filename = None
         ; content_type = "text/plain"
-        ; body = Piaf.Body.of_string "John"
+        ; body = body_of_string "John"
         } )
     ; ( "tag"
       , { name = "tag"
         ; filename = None
         ; content_type = "text/plain"
-        ; body = Piaf.Body.of_string "web"
+        ; body = body_of_string "web"
         } )
     ]
   in
@@ -379,27 +361,24 @@ let test_multipart_get_all_fields () =
       , { name = "tag"
         ; filename = None
         ; content_type = "text/plain"
-        ; body = Piaf.Body.of_string "ocaml"
+        ; body = body_of_string "ocaml"
         } )
     ; ( "name"
       , { name = "name"
         ; filename = None
         ; content_type = "text/plain"
-        ; body = Piaf.Body.of_string "John"
+        ; body = body_of_string "John"
         } )
     ; ( "tag"
       , { name = "tag"
         ; filename = None
         ; content_type = "text/plain"
-        ; body = Piaf.Body.of_string "web"
+        ; body = body_of_string "web"
         } )
     ]
   in
   let result = Form.Multipart.get_all_fields "tag" fields in
-  match result with
-  | Ok values ->
-    Alcotest.(check (list string)) "Values match" [ "ocaml"; "web" ] values
-  | Error _ -> Alcotest.fail "Failed to read fields"
+  Alcotest.(check (list string)) "Values match" [ "ocaml"; "web" ] result
 
 let test_multipart_get_all_fields_empty () =
   let fields : Form.Multipart.t =
@@ -407,44 +386,72 @@ let test_multipart_get_all_fields_empty () =
       , { name = "name"
         ; filename = None
         ; content_type = "text/plain"
-        ; body = Piaf.Body.of_string "John"
+        ; body = body_of_string "John"
         } )
     ]
   in
   let result = Form.Multipart.get_all_fields "tag" fields in
   match result with
-  | Ok values -> Alcotest.(check (list string)) "Empty list" [] values
-  | Error _ -> Alcotest.fail "Should return empty list"
+  | [] -> ()
+  | _ -> Alcotest.fail "Should return empty list, got non-empty"
 
-let test_multipart_drain_empty () =
-  let fields : Form.Multipart.t = [] in
-  let result = Form.Multipart.drain fields in
-  Alcotest.(check (result unit (of_pp (fun ppf _ -> Format.fprintf ppf "Msg"))))
-    "Drain empty list"
-    (Ok ())
-    result
+let boundary = "------------------------eb790219f130e103"
 
-let test_multipart_drain_with_parts () =
-  let fields : Form.Multipart.t =
-    [ ( "name"
-      , { name = "name"
-        ; filename = None
-        ; content_type = "text/plain"
-        ; body = Piaf.Body.of_string "John"
-        } )
-    ; ( "avatar"
-      , { name = "avatar"
-        ; filename = Some "photo.jpg"
-        ; content_type = "image/jpeg"
-        ; body = Piaf.Body.of_string "fake image data"
-        } )
-    ]
+let multipart_content =
+  "--"
+  ^ boundary
+  ^ "\r\n"
+  ^ "Content-Disposition: form-data; name=\"description\"\r\n"
+  ^ "\r\n"
+  ^ "default"
+  ^ "\r\n--"
+  ^ boundary
+  ^ "\r\n"
+  ^ "Content-Disposition: form-data; name=\"file\"; filename=\"test.txt\"\r\n"
+  ^ "Content-Type: text/plain\r\n"
+  ^ "\r\n"
+  ^ "here is some text"
+  ^ "\r\n--"
+  ^ boundary
+  ^ "--\r\n"
+
+let test_multipart_parsing () =
+  let headers =
+    Headers.of_list
+      [ ( "Content-Type"
+        , "multipart/form-data; \
+           boundary=------------------------eb790219f130e103" )
+      ]
   in
-  let result = Form.Multipart.drain fields in
-  Alcotest.(check (result unit (of_pp (fun ppf _ -> Format.fprintf ppf "Msg"))))
-    "Drain successfully"
-    (Ok ())
-    result
+  let request =
+    Request.make
+      ~headers
+      ~body:(Cohttp_eio.Body.of_string multipart_content)
+      "/upload"
+  in
+  let result = Form.Multipart.parse request in
+  match result with
+  | Ok parsed -> Alcotest.(check int) "Parsed 2 parts" 2 (List.length parsed)
+  | Error (`Msg msg) -> Alcotest.failf "Failed to parse multipart: %s" msg
+
+let test_multipart_parsing_invalid () =
+  let headers =
+    Headers.of_list
+      [ "Content-Type", "multipart/form-data; boundary=myboundary" ]
+  in
+  let request =
+    Request.make
+      ~headers
+      ~body:(Cohttp_eio.Body.of_string "this is not valid multipart content")
+      "/upload"
+  in
+  let result = Form.Multipart.parse request in
+  match result with
+  | Ok parsed ->
+    Alcotest.failf
+      "Invalid multipart should not parse, got %d parts"
+      (List.length parsed)
+  | Error (`Msg _) -> ()
 
 let tests =
   List.map
@@ -567,10 +574,10 @@ let tests =
             "Get all fields empty"
             `Quick
             test_multipart_get_all_fields_empty
-        ; Alcotest.test_case "Drain empty" `Quick test_multipart_drain_empty
+        ; Alcotest.test_case "parsing multipart" `Quick test_multipart_parsing
         ; Alcotest.test_case
-            "Drain with parts"
+            "invalid multipart returns empty"
             `Quick
-            test_multipart_drain_with_parts
+            test_multipart_parsing_invalid
         ] )
     ]

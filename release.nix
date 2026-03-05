@@ -15,11 +15,13 @@ let
     };
   nixpkgsSrc = fetchGitHub "nixpkgs";
   treefmtSrc = fetchGitHub "treefmt-nix";
+  cowsSrc = fetchGitHub "cows";
 
   pkgs = import nixpkgsSrc {
     inherit system;
     overlays = [
       (import ./nix/overlays)
+      (import "${cowsSrc}/nix/overlays/default.nix")
       (_final: prev: {
         treefmt-nix = import treefmtSrc;
         # In the default overlay the projects packages inherit the tapak.doCheck attribute
@@ -46,7 +48,6 @@ let
   packageNames = [
     "tapak"
     "tapak-compressions"
-    "tapak-ppx"
     "sch"
   ];
   outputs = pkgs.lib.genAttrs ocamlPackageSets (
@@ -61,7 +62,6 @@ outputs
   inherit (pkgs.ocamlPackages)
     tapak
     tapak-compressions
-    tapak-ppx
     sch
     ;
   inherit (pkgs.tapak)

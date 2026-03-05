@@ -1,5 +1,4 @@
 open Imports
-open Piaf
 module Log = (val Logging.setup ~src:"tapak.server" ~doc:"Tapak Server module")
 
 (** Parse systemd socket activation environment variables.
@@ -18,181 +17,132 @@ let get_systemd_listen_fd () =
     Some (Obj.magic first_fd : Unix.file_descr)
   | _ -> None
 
-let port_of_address = function `Tcp (_, port) -> port | `Unix _ -> 0
+let request_from_cohttp :
+   Cohttp_eio.Server.conn
+  -> Http.Request.t
+  -> Cohttp_eio.Server.body
+  -> Request.t
+  =
+ fun conn req body ->
+  let client_addr =
+    let sockaddr = conn |> Stdlib.fst |> Stdlib.snd in
+    match sockaddr with
+    | `Tcp (ip, _) -> Some (Format.asprintf "%a" Eio.Net.Ipaddr.pp ip)
+    | `Unix _ -> None
+  in
+  let headers = Http.Request.headers req in
+  let meth = Http.Request.meth req in
+  let target = Http.Request.resource req in
+  let version = Http.Request.version req in
+  Request.make ?client_addr ~version ~headers ~meth ~body target
 
-let run_with ?error_handler ~config ~env app =
-  Eio.Switch.run @@ fun sw ->
-  let server = Server.create ?error_handler ~config (Handler.to_piaf app) in
-  Server.Command.start ~sw env server
-
-module Systemd = struct
-  type shutdown_resolver = unit -> unit
-
-  type t =
-    { sockets :
-        Eio_unix.Net.listening_socket_ty Eio_unix.Net.listening_socket list
-    ; shutdown_resolvers : shutdown_resolver array
-    ; client_sockets :
-        ( int
-          , Eio_unix.Net.stream_socket_ty Eio_unix.Net.stream_socket )
-          Hashtbl.t
-          array
-    ; clock : float Eio.Time.clock_ty Eio.Resource.t
-    ; shutdown_timeout : float
-    }
-
-  let shutdown
-        { sockets; shutdown_resolvers; client_sockets; clock; shutdown_timeout }
-    =
-    let length sockets =
-      Array.fold_left (fun acc item -> Hashtbl.length item + acc) 0 sockets
-    in
-    Logs.info (fun m -> m "Starting server teardown...");
-    Array.iter (fun resolver -> resolver ()) shutdown_resolvers;
-    List.iter Eio.Net.close sockets;
-    Eio.Fiber.first
-      (fun () ->
-         while length client_sockets > 0 do
-           Eio.Time.sleep clock 0.1
-         done)
-      (fun () ->
-         Eio.Time.sleep clock shutdown_timeout;
-         Array.iter
-           (fun client_sockets ->
-              Hashtbl.iter
-                (fun _ client_socket ->
-                   try Eio.Flow.shutdown client_socket `All with
-                   | Eio.Io (Eio.Exn.X (Eio_unix.Unix_error (ENOTCONN, _, _)), _)
-                     ->
-                     Logs.debug (fun m -> m "Socket already disconnected"))
-                client_sockets)
-           client_sockets);
-    Logs.info (fun m -> m "Server teardown finished")
-
-  let accept_loop ~sw ~listening_socket ~client_sockets connection_handler =
-    let accept =
-      let id = ref 0 in
-      let rec accept () =
-        Eio.Net.accept_fork
-          listening_socket
-          ~sw
-          ~on_error:(fun exn ->
-            let bt = Printexc.get_backtrace () in
-            Logs.err (fun m ->
-              m
-                "Error in connection handler: %s@\n%s"
-                (Printexc.to_string exn)
-                bt))
-          (fun socket addr ->
-             Eio.Switch.run (fun sw ->
-               let connection_id =
-                 let cid = !id in
-                 incr id;
-                 cid
-               in
-               Hashtbl.replace client_sockets connection_id socket;
-               Eio.Switch.on_release sw (fun () ->
-                 Hashtbl.remove client_sockets connection_id);
-               connection_handler ~sw socket addr));
-        accept ()
-      in
-      accept
-    in
-    let released_p, released_u = Eio.Promise.create () in
-    Eio.Fiber.fork ~sw (fun () ->
-      Eio.Fiber.first (fun () -> Eio.Promise.await released_p) accept);
-    fun () -> Eio.Promise.resolve released_u ()
-
-  let listen_with_socket
-        ~sw
-        ~listening_socket
-        ~domains
-        ~shutdown_timeout
-        env
-        connection_handler
-    =
-    let resolvers = Array.make domains (Fun.id, Hashtbl.create 0) in
-    let started_domains = Eio.Semaphore.make domains in
-    let run_accept_loop =
-      let resolver_mutex = Eio.Mutex.create () in
-      fun idx ->
-        Eio.Switch.run (fun sw ->
-          let resolver =
-            let client_sockets = Hashtbl.create 256 in
-            let resolver =
-              accept_loop
-                ~sw
-                ~client_sockets
-                ~listening_socket
-                connection_handler
-            in
-            resolver, client_sockets
-          in
-          Eio.Mutex.lock resolver_mutex;
-          resolvers.(idx) <- resolver;
-          Eio.Mutex.unlock resolver_mutex;
-          Eio.Semaphore.acquire started_domains)
-    in
-    for idx = 0 to domains - 1 do
-      let run_accept_loop () = run_accept_loop idx in
-      if idx = domains - 1
-      then Eio.Fiber.fork ~sw run_accept_loop
-      else
-        Eio.Fiber.fork ~sw (fun () ->
-          let domain_mgr = Eio.Stdenv.domain_mgr env in
-          Eio.Domain_manager.run domain_mgr run_accept_loop)
-    done;
-    while Eio.Semaphore.get_value started_domains > 0 do
-      Eio.Fiber.yield ()
-    done;
-    { sockets = [ listening_socket ]
-    ; shutdown_resolvers = Array.map fst resolvers
-    ; client_sockets = Array.map snd resolvers
-    ; clock = Eio.Stdenv.clock env
-    ; shutdown_timeout
-    }
-end
-
-let run_with_systemd_socket ?error_handler ~config ~env app =
-  Eio.Switch.run @@ fun sw ->
-  let server = Server.create ?error_handler ~config (Handler.to_piaf app) in
-
-  match get_systemd_listen_fd () with
-  | Some unix_fd ->
-    let listening_socket =
-      Eio_unix.Net.import_socket_listening ~sw ~close_unix:true unix_fd
-    in
-    let actual_port =
-      match Unix.getsockname unix_fd with
-      | Unix.ADDR_INET (_, port) -> port
-      | Unix.ADDR_UNIX _ -> 0
-    in
-    Logs.info (fun log ->
-      log
-        "Using socket activation (port %d, %d domain%s)"
-        actual_port
-        config.domains
-        (if config.domains = 1 then "" else "s"));
-
-    let piaf_handler = Server.http_connection_handler server in
-    let connection_handler ~sw socket addr = piaf_handler ~sw socket addr in
-
-    `Systemd
-      (Systemd.listen_with_socket
-         ~sw
-         ~listening_socket
-         ~domains:config.domains
-         ~shutdown_timeout:config.shutdown_timeout
-         env
-         connection_handler)
+let add_connection_header request headers =
+  match Headers.connection headers with
+  | Some _ -> headers
   | None ->
-    let port = port_of_address config.address in
-    Logs.warn (fun log ->
-      log "No socket activation found, starting server normally on port %d" port);
-    Logs.warn (fun log ->
-      log
-        "For hot reload in development, use: systemfd --no-pid -s http::%d -- \
-         watchexec -r -e ml,mli --ignore _build -- dune exec <your-exe>"
-        port);
-    Logs.info (fun log -> log "Starting server on port %d..." port);
-    `Piaf (Server.Command.start ~sw env server)
+    Headers.add
+      headers
+      "connection"
+      (if Request.is_keep_alive request then "keep-alive" else "close")
+
+let response_to_cohttp request (response : Response.t) =
+  let body = Response.body response in
+  let raw_header = Response.headers response in
+  let headers =
+    match body, Response.status response with
+    | `Raw _, _ -> raw_header
+    | _, `Switching_protocols -> raw_header
+    | _, _ ->
+      (match Headers.get_transfer_encoding raw_header, Body.length body with
+        | Unknown, Some content_length ->
+          Headers.add_transfer_encoding raw_header (Fixed content_length)
+        | Unknown, None -> Headers.add_transfer_encoding raw_header Chunked
+        | _ -> raw_header)
+      |> add_connection_header request
+  in
+  let status = Response.status response in
+  let version = Response.version response in
+  Http.Response.make ~version ~status ~headers ()
+
+let send_response_body_writer (response : Http.Response.t) stream _ic oc =
+  let need_chunked_encoding =
+    match Headers.get_transfer_encoding response.headers with
+    | Http.Transfer.Chunked -> true
+    | _ -> false
+  in
+  let writer =
+    if need_chunked_encoding
+    then
+      Bytesrw_util.(
+        chunked_writer ~write_footer:true () ~eod:true (writer_of_eio_buf oc))
+    else Bytesrw_util.writer_of_eio_buf oc
+  in
+  stream writer (fun () -> Eio.Buf_write.flush oc);
+  Eio.Buf_write.flush oc
+
+let make :
+   ?conn_closed:(Cohttp_eio.Server.conn -> unit)
+  -> Handler.t
+  -> Cohttp_eio.Server.t
+  =
+ fun ?conn_closed handler ->
+  let callback conn req body =
+    let request = request_from_cohttp conn req body in
+    let response =
+      try handler request with
+      | exn ->
+        Log.err (fun m -> m "Handler raised an exception: %a" Fmt.exn exn);
+        Response.plain ~status:`Internal_server_error "Internal Server Error"
+    in
+    let body = Response.body response in
+    let is_head =
+      match Request.meth request with `HEAD -> true | _ -> false
+    in
+    match body with
+    | `Empty ->
+      let headers =
+        Response.headers response |> add_connection_header request
+      in
+      `Response
+        (Cohttp_eio.Server.respond_string
+           ~headers
+           ~status:(Response.status response)
+           ~body:""
+           ())
+    | `String s ->
+      let headers =
+        Response.headers response |> add_connection_header request
+      in
+      `Response
+        (Cohttp_eio.Server.respond_string
+           ~headers
+           ~status:(Response.status response)
+           ~body:(if is_head then "" else s)
+           ())
+    | `Raw callback ->
+      let response = response_to_cohttp request response in
+      `Expert (response, callback)
+    | `Stream _ when is_head ->
+      let http_response = response_to_cohttp request response in
+      `Response
+        (Cohttp_eio.Server.respond_string
+           ~headers:(Http.Response.headers http_response)
+           ~status:(Http.Response.status http_response)
+           ~body:""
+           ())
+    | `Stream (_, stream) ->
+      let response = response_to_cohttp request response in
+      (* cohttp will write the headers for us, so we only need to write the
+         body, and flush it at the end of stream *)
+      `Expert (response, send_response_body_writer response stream)
+  in
+  Cohttp_eio.Server.make_response_action ?conn_closed ~callback ()
+
+let run ?max_connections ?additional_domains ?stop ~on_error socket service =
+  Cohttp_eio.Server.run
+    ?max_connections
+    ?additional_domains
+    ?stop
+    ~on_error
+    socket
+    (make service)

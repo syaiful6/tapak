@@ -401,11 +401,16 @@ let app env =
 let () =
   Logs_threaded.enable ();
   Fmt_tty.setup_std_outputs ();
-  Logs.set_level (Some Logs.Info);
+  Logs.set_level (Some Logs.Debug);
   Logs.set_reporter (Logs_fmt.reporter ());
   Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
   let address = `Tcp (Eio.Net.Ipaddr.V4.loopback, 8080) in
-  let config = Piaf.Server.Config.create address in
-  Logs.info (fun m -> m "Body Parsing Example");
-  Logs.info (fun m -> m "Listening on http://localhost:8080");
-  ignore (Tapak.run_with ~config ~env (app env))
+  let socket =
+    Eio.Net.listen ~reuse_addr:true ~backlog:1024 ~sw env#net address
+  in
+  Tapak.run
+    ~on_error:(fun exn ->
+      Logs.warn (fun f -> f "Uncaught exception %s" (Printexc.to_string exn)))
+    socket
+    (app env)

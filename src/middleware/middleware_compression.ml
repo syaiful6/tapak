@@ -1,6 +1,6 @@
 open Header_parser
 
-type encoder = Accept.encoding -> Bytesrw.Bytes.Reader.filter option
+type encoder = Accept.encoding -> Bytesrw.Bytes.Writer.filter option
 type predicate = Request.t -> Response.t -> bool
 
 type t =
@@ -21,6 +21,16 @@ let encoding_to_string = function
 let args ~encoder ~predicate ~preferred_encodings =
   { encoder; predicate; preferred_encodings }
 
+let body_to_streaming_fn = function
+  | `String s when s <> "" ->
+    Some
+      (fun w flush ->
+        Bytesrw.Bytes.Writer.write_string w s;
+        Bytesrw.Bytes.Writer.write_eod w;
+        flush ())
+  | `Stream (_, f) -> Some f
+  | _ -> None
+
 let call { encoder; predicate; preferred_encodings } next request =
   let response = next request in
 
@@ -36,25 +46,18 @@ let call { encoder; predicate; preferred_encodings } next request =
     | None -> response
     | Some `Identity -> response
     | Some encoding ->
-      (match encoder encoding with
-      | None -> response
-      | Some filter ->
-        let compressed_stream =
-          Response.body response
-          |> Body.to_stream
-          |> Bytesrw_util.reader_of_stream
-          |> filter
-          |> Bytesrw_util.stream_of_reader
+      (match
+         encoder encoding, body_to_streaming_fn (Response.body response)
+       with
+      | Some filter, Some streaming_fn ->
+        let filter_writer writer flush =
+          let w = filter ~eod:true writer in
+          streaming_fn w flush
         in
-
         let encoding_name = encoding_to_string encoding in
-        let headers =
-          Headers.add_to_list_header
-            (Response.headers response)
-            "Vary"
-            "Accept-Encoding"
-        in
         response
-        |> Response.with_ ~body:(Body.of_stream compressed_stream) ~headers
+        |> Response.with_ ~body:(`Stream (None, filter_writer))
+        |> Response.add_header "Vary" "Accept-Encoding"
         |> Response.remove_header "Content-Length"
-        |> Response.add_header_or_replace ("Content-Encoding", encoding_name))
+        |> Response.add_header_or_replace "Content-Encoding" encoding_name
+      | _, _ -> response)

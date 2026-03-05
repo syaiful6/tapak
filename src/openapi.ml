@@ -264,7 +264,7 @@ end
 type any_schema = Schema : ('a, Response.t) Router.schema -> any_schema
 
 let rec get_method_and_path : type a b.
-  (a, b) Router.schema -> Piaf.Method.t * string * Spec.Parameter.t list
+  (a, b) Router.schema -> Http.Method.t * string * Spec.Parameter.t list
   =
  fun schema ->
   match schema with
@@ -282,7 +282,7 @@ let rec get_method_and_path : type a b.
 type operation_parts =
   { parameters : Spec.Parameter.t list
   ; body : (Router.media_type * Spec.Json_schema.t) option
-  ; response : (Piaf.Status.t * Spec.Json_schema.t) option
+  ; response : (Http.Status.t * Spec.Json_schema.t) option
   }
 
 let rec extract_parts : type a b. (a, b) Router.schema -> operation_parts =
@@ -334,7 +334,7 @@ let make_request_body description input_type json_schema =
     }
 
 let make_responses status json_schema =
-  let status_str = string_of_int (Piaf.Status.to_code status) in
+  let status_str = string_of_int (Http.Status.to_int status) in
   let response =
     Spec.Response.
       { description = ""
@@ -417,7 +417,7 @@ let add_operation meth operation item =
   | `HEAD -> { item with head = Some operation }
   | `OPTIONS -> { item with options = Some operation }
   | `TRACE -> { item with trace = Some operation }
-  | `Other "PATCH" -> { item with patch = Some operation }
+  | `PATCH -> { item with patch = Some operation }
   | `Other "*" ->
     { item with
       get = Some operation

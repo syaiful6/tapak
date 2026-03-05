@@ -26,9 +26,7 @@ let call (decoder : decoder) next request =
   match content_encodings request with
   | None -> next request
   | Some encodings ->
-    let reader =
-      Request.body request |> Body.to_stream |> Bytesrw_util.reader_of_stream
-    in
+    let reader = Request.body request |> Bytesrw_util.reader_of_flow in
     let rec aux algorithms cr =
       match algorithms with
       | [] -> Ok cr
@@ -44,11 +42,12 @@ let call (decoder : decoder) next request =
     | Ok reader ->
       let new_request =
         request
-        |> Request.with_
-             ~body:(Bytesrw_util.stream_of_reader reader |> Body.of_stream)
+        |> Request.with_ ~body:(Bytesrw_util.source_of_reader reader)
         |> Request.remove_header "Content-Encoding"
         |> Request.remove_header "Content-Length"
       in
       next new_request
-    | Error `Unsupported_encoding -> Response.create `Unsupported_media_type
-    | Error (`Decompression_error _) -> Response.create `Bad_request)
+    | Error `Unsupported_encoding ->
+      Response.make ~status:`Unsupported_media_type Body.empty
+    | Error (`Decompression_error _) ->
+      Response.make ~status:`Bad_request Body.empty)

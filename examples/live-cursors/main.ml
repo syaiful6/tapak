@@ -1,3 +1,5 @@
+module Log = (val Logs.src_log Logs.default : Logs.LOG)
+
 let user_id_key : string Tapak.Context.key =
   Tapak.Context.Key.create { name = Some "user_id"; show = Some Fun.id }
 
@@ -157,25 +159,9 @@ module Cursor_channel : Tapak.CHANNEL = struct
   let intercept = []
 end
 
-let serve_static_file path =
-  let content_type =
-    if String.ends_with ~suffix:".html" path
-    then "text/html"
-    else if String.ends_with ~suffix:".js" path
-    then "application/javascript"
-    else if String.ends_with ~suffix:".css" path
-    then "text/css"
-    else "text/plain"
-  in
+let serve_static_file root path =
   let file_path = "examples/live-cursors/static/" ^ path in
-  match Tapak.Response.copy_file file_path with
-  | Ok response ->
-    Tapak.Response.with_
-      ~headers:
-        (Piaf.Headers.of_list
-           [ "content-type", content_type; "cache-control", "no-cache" ])
-      response
-  | Error _ -> Tapak.Response.of_string ~body:"File not found" `Not_found
+  Tapak.Response.file Eio.Path.(root / file_path)
 
 let () =
   Random.self_init ();
@@ -195,6 +181,7 @@ let () =
   let node_name = Printf.sprintf "node-%d" (Random.int 10000) in
   let presence = Tapak.Presence.create ~sw ~pubsub ~node_name ~clock () in
   let now () = Eio.Time.now clock in
+  let root = Eio.Stdenv.fs env in
 
   let endpoint =
     Tapak.Socket.Endpoint.(
@@ -209,8 +196,10 @@ let () =
 
   let all_routes =
     Tapak.Router.
-      [ get (s "") |> unit |> into (fun () -> serve_static_file "index.html")
-      ; get (s "static" / str) |> into (fun file -> serve_static_file file)
+      [ get (s "")
+        |> unit
+        |> into (fun () -> serve_static_file root "index.html")
+      ; get (s "static" / str) |> into (serve_static_file root)
       ; Tapak.Socket.mount (s "socket") endpoint
       ]
   in
@@ -222,26 +211,27 @@ let () =
            (Middleware.Request_logger.args ~now ~trusted_proxies:[] ()))
   in
 
-  let use_systemd =
-    match Sys.getenv_opt "TAPAK_SYSTEMD" with
-    | Some "false" | Some "0" -> false
-    | _ -> true
-  in
-  let port =
-    match Sys.getenv_opt "PORT" with Some p -> int_of_string p | None -> 3000
-  in
+  let port = 8080 in
   let address = `Tcp (Eio.Net.Ipaddr.V4.any, port) in
-  let config = Piaf.Server.Config.create ~domains address in
+  let socket =
+    Eio.Net.listen ~reuse_addr:true ~backlog:1024 ~sw env#net address
+  in
 
-  if use_systemd
-  then (
-    Logs.info (fun log ->
-      log
-        "Starting Live Cursors with systemd socket activation support \
-         (domains: %d)"
-        domains);
-    ignore (Tapak.run_with_systemd_socket ~config ~env app))
-  else (
-    Logs.warn (fun log ->
-      log "Starting Live Cursors WITHOUT systemd support on port %d" port);
-    ignore (Tapak.run_with ~config ~env app))
+  match domains with
+  | domains when domains > 1 ->
+    let domain_mgr = Eio.Stdenv.domain_mgr env in
+    Log.info (fun f ->
+      f "Server listening on port %d with domains %d" port domains);
+    Tapak.run
+      ~additional_domains:(domain_mgr, domains)
+      ~on_error:(fun exn ->
+        Log.warn (fun f -> f "Uncaught exception %s" (Printexc.to_string exn)))
+      socket
+      app
+  | _ ->
+    Log.info (fun f -> f "Server listening on port %d" port);
+    Tapak.run
+      ~on_error:(fun exn ->
+        Logs.warn (fun f -> f "Uncaught exception %s" (Printexc.to_string exn)))
+      socket
+      app

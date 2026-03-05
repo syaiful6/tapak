@@ -1,14 +1,13 @@
 open Tapak
 
 let create_mock_request ~meth ~path =
-  Request.create
-    ~scheme:`HTTP
-    ~version:Piaf.Versions.HTTP.HTTP_1_1
+  Request.make
+    ~version:`HTTP_1_1
     ~meth
-    ~body:Piaf.Body.empty
+    ~body:(Cohttp_eio.Body.of_string "")
     path
 
-let ok body = Response.of_string ~body `OK
+let ok body = Response.of_string ~status:`OK body
 
 (* Google+ API - 13 routes *)
 let gplus_api =
