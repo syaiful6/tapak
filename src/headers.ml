@@ -16,7 +16,9 @@ module type S = sig
   val header : string -> t -> string option
   val add_header : string -> string -> t -> t
   val add_header_or_replace : string -> string -> t -> t
+  val add_headers_or_replace : (string * string) list -> t -> t
   val add_header_unless_exists : string -> string -> t -> t
+  val add_headers_unless_exists : (string * string) list -> t -> t
   val add_headers : (string * string) list -> t -> t
   val remove_header : string -> t -> t
 end
@@ -35,8 +37,25 @@ module Make (M : MESSAGE) = struct
       then Http.Header.replace h name value
       else Http.Header.add h name value)
 
+  let add_headers_or_replace hs =
+    M.with_headers (fun h ->
+      List.fold_left
+        (fun h (name, value) ->
+           if Http.Header.mem h name
+           then Http.Header.replace h name value
+           else Http.Header.add h name value)
+        h
+        hs)
+
   let add_header_unless_exists name value =
     M.with_headers (fun h -> Http.Header.add_unless_exists h name value)
+
+  let add_headers_unless_exists hs =
+    M.with_headers (fun h ->
+      List.fold_left
+        (fun h (name, value) -> Http.Header.add_unless_exists h name value)
+        h
+        hs)
 
   let add_headers hs = M.with_headers (fun h -> Http.Header.add_list h hs)
   let remove_header name = M.with_headers (fun h -> Http.Header.remove h name)
