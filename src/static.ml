@@ -367,7 +367,7 @@ end = struct
          else
            `With_body
              { status = `OK
-             ; headers = Headers.init ()
+             ; headers = Headers.empty
              ; offset = 0L
              ; length = size
              })
@@ -385,7 +385,7 @@ end = struct
          else
            `With_body
              { status = `OK
-             ; headers = Headers.init ()
+             ; headers = Headers.empty
              ; offset = 0L
              ; length = size
              })
@@ -397,18 +397,13 @@ end = struct
          else
            `With_body
              { status = `OK
-             ; headers = Headers.init ()
+             ; headers = Headers.empty
              ; offset = 0L
              ; length = size
              })
 
   let content_range_header ~beg ~end_ total =
-    Format.sprintf
-      "bytes %s/%Ld"
-      (if Int64.compare beg end_ = 0
-       then "*"
-       else Format.sprintf "%Ld-%Ld" beg end_)
-      total
+    Format.sprintf "bytes %Ld-%Ld/%Ld" beg end_ total
 
   let add_content_headers ~offset ~len ~size headers =
     let hs =

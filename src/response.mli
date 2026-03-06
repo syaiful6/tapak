@@ -41,6 +41,7 @@ val writer :
    ?version:Http.Version.t
   -> ?headers:Headers.t
   -> ?status:Http.Status.t
+  -> ?length:int64
   -> (Bytesrw.Bytes.Writer.t -> (unit -> unit) -> unit)
   -> t
 

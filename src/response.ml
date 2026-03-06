@@ -62,17 +62,17 @@ let stream ?version ?headers ?(status = `OK) ?length f =
   ; status
   }
 
-let writer ?version ?headers ?(status = `OK) f =
+let writer ?version ?headers ?(status = `OK) ?length f =
   { version = Option.value version ~default:`HTTP_1_1
   ; headers = Option.value headers ~default:(Http.Header.init ())
-  ; body = `Stream (None, f)
+  ; body = `Stream (length, f)
   ; status
   }
 
 let plain ?version ?headers ?(status = `OK) body =
   let headers =
     Headers.add_unless_exists
-      (Option.value headers ~default:(Headers.init ()))
+      (Option.value headers ~default:Headers.empty)
       "Content-Type"
       "text/plain"
   in
@@ -81,7 +81,7 @@ let plain ?version ?headers ?(status = `OK) body =
 let html ?version ?headers ?(status = `OK) body =
   let headers =
     Headers.add_unless_exists
-      (Option.value headers ~default:(Headers.init ()))
+      (Option.value headers ~default:Headers.empty)
       "Content-Type"
       "text/html; charset=utf-8"
   in
@@ -90,7 +90,7 @@ let html ?version ?headers ?(status = `OK) body =
 let json ?version ?headers ?(status = `OK) body =
   let headers =
     Headers.add_unless_exists
-      (Option.value headers ~default:(Headers.init ()))
+      (Option.value headers ~default:Headers.empty)
       "Content-Type"
       "application/json; charset=utf-8"
   in
@@ -177,7 +177,7 @@ let file ?version ?headers ?(status = `OK) ?(follow = true) path =
     in
     let headers =
       Headers.add_unless_exists
-        (Option.value headers ~default:(Headers.init ()))
+        (Option.value headers ~default:Headers.empty)
         "Content-Type"
         content_type
     in

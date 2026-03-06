@@ -18,7 +18,9 @@ module type S = sig
   val header : string -> t -> string option
   val add_header : string -> string -> t -> t
   val add_header_or_replace : string -> string -> t -> t
+  val add_headers_or_replace : (string * string) list -> t -> t
   val add_header_unless_exists : string -> string -> t -> t
+  val add_headers_unless_exists : (string * string) list -> t -> t
   val add_headers : (string * string) list -> t -> t
   val remove_header : string -> t -> t
 end
