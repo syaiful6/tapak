@@ -7,8 +7,11 @@
 #include <caml/mlvalues.h>
 #include <string.h>
 
+#define Tapak_br_dec_val(v) (*((BrotliDecoderState **)Data_custom_val(v)))
+#define Tapak_br_enc_val(v) (*((BrotliEncoderState **)Data_custom_val(v)))
+
 static void tapak_finalize_brotli_decoder(value v) {
-  BrotliDecoderState *state = *((BrotliDecoderState **)Data_custom_val(v));
+  BrotliDecoderState *state = Tapak_br_dec_val(v);
   if (state != NULL) {
     BrotliDecoderDestroyInstance(state);
   }
@@ -21,7 +24,7 @@ static struct custom_operations tapak_brotli_decoder_ops = {
     custom_compare_ext_default};
 
 static void tapak_finalize_brotli_encoder(value v) {
-  BrotliEncoderState *state = *((BrotliEncoderState **)Data_custom_val(v));
+  BrotliEncoderState *state = Tapak_br_enc_val(v);
   if (state != NULL) {
     BrotliEncoderDestroyInstance(state);
   }
@@ -33,6 +36,12 @@ static struct custom_operations tapak_brotli_encoder_ops = {
     custom_serialize_default,  custom_deserialize_default,
     custom_compare_ext_default};
 
+enum tapak_bbuf_fields {
+  tapak_bbuf_bytes = 0,
+  tapak_bbuf_size,
+  tapak_bbuf_pos
+};
+
 CAMLprim value tapak_brotli_decoder_create_instance(value unit) {
   CAMLparam1(unit);
   CAMLlocal1(v);
@@ -42,47 +51,43 @@ CAMLprim value tapak_brotli_decoder_create_instance(value unit) {
   }
   v = caml_alloc_custom(&tapak_brotli_decoder_ops, sizeof(BrotliDecoderState *),
                         0, 1);
-  *((BrotliDecoderState **)Data_custom_val(v)) = state;
+  Tapak_br_dec_val(v) = state;
   CAMLreturn(v);
 }
 
 CAMLprim value tapak_brotli_decoder_destroy_instance(value state_val) {
   CAMLparam1(state_val);
-  BrotliDecoderState *state =
-      *((BrotliDecoderState **)Data_custom_val(state_val));
+  BrotliDecoderState *state = Tapak_br_dec_val(state_val);
   if (state != NULL) {
     BrotliDecoderDestroyInstance(state);
-    *((BrotliDecoderState **)Data_custom_val(state_val)) = NULL;
+    Tapak_br_dec_val(state_val) = NULL;
   }
   CAMLreturn(Val_unit);
 }
 
-CAMLprim value tapak_brotli_decompress_stream(value state_val, value input_val,
-                                              value output_size_val) {
-  CAMLparam3(state_val, input_val, output_size_val);
-  CAMLlocal2(result, output_val);
-
-  BrotliDecoderState *state =
-      *((BrotliDecoderState **)Data_custom_val(state_val));
-  const uint8_t *input = (const uint8_t *)String_val(input_val);
-  size_t input_size = caml_string_length(input_val);
-  size_t available_in = input_size;
-  const uint8_t *next_in = input;
-
-  size_t output_buffer_size = Int_val(output_size_val);
-  uint8_t *output_buffer = malloc(output_buffer_size);
-  if (output_buffer == NULL) {
-    caml_failwith("Failed to allocate output buffer");
-  }
-
-  size_t available_out = output_buffer_size;
-  uint8_t *next_out = output_buffer;
-  size_t total_out = 0;
+CAMLprim value tapak_brotli_decompress_stream(value state, value src,
+                                              value dst) {
+  CAMLparam3(state, src, dst);
+  BrotliDecoderState *decoder_state = Tapak_br_dec_val(state);
+  /* input buffer */
+  size_t src_pos = Long_val(Field(src, tapak_bbuf_pos));
+  size_t src_size = Long_val(Field(src, tapak_bbuf_size));
+  const uint8_t *next_in =
+      (const uint8_t *)Bytes_val(Field(src, tapak_bbuf_bytes)) + src_pos;
+  size_t available_in = src_size - src_pos;
+  /* output buffer */
+  size_t dst_pos = Long_val(Field(dst, tapak_bbuf_pos));
+  size_t dst_size = Long_val(Field(dst, tapak_bbuf_size));
+  uint8_t *next_out =
+      (uint8_t *)Bytes_val(Field(dst, tapak_bbuf_bytes)) + dst_pos;
+  size_t available_out = dst_size - dst_pos;
 
   BrotliDecoderResult res = BrotliDecoderDecompressStream(
-      state, &available_in, &next_in, &available_out, &next_out, &total_out);
+      decoder_state, &available_in, &next_in, &available_out, &next_out, NULL);
 
-  result = caml_alloc_tuple(3);
+  /* update positions */
+  Store_field(src, tapak_bbuf_pos, Val_long(src_size - available_in));
+  Store_field(dst, tapak_bbuf_pos, Val_long(dst_size - available_out));
 
   int status;
   switch (res) {
@@ -102,17 +107,7 @@ CAMLprim value tapak_brotli_decompress_stream(value state_val, value input_val,
     status = 0;
   }
 
-  Store_field(result, 0, Val_int(status));
-  Store_field(result, 1,
-              Val_int(input_size - available_in)); /* bytes consumed */
-
-  size_t output_size = output_buffer_size - available_out;
-  output_val = caml_alloc_string(output_size);
-  memcpy(Bytes_val(output_val), output_buffer, output_size);
-  Store_field(result, 2, output_val);
-
-  free(output_buffer);
-  CAMLreturn(result);
+  CAMLreturn(Val_int(status));
 }
 
 CAMLprim value tapak_brotli_encoder_create_instance(value quality_val) {
@@ -128,74 +123,61 @@ CAMLprim value tapak_brotli_encoder_create_instance(value quality_val) {
 
   v = caml_alloc_custom(&tapak_brotli_encoder_ops, sizeof(BrotliEncoderState *),
                         0, 1);
-  *((BrotliEncoderState **)Data_custom_val(v)) = state;
+  Tapak_br_enc_val(v) = state;
   CAMLreturn(v);
 }
 
 CAMLprim value tapak_brotli_encoder_destroy_instance(value state_val) {
   CAMLparam1(state_val);
-  BrotliEncoderState *state =
-      *((BrotliEncoderState **)Data_custom_val(state_val));
+  BrotliEncoderState *state = Tapak_br_enc_val(state_val);
   if (state != NULL) {
     BrotliEncoderDestroyInstance(state);
-    *((BrotliEncoderState **)Data_custom_val(state_val)) = NULL;
+    Tapak_br_enc_val(state_val) = NULL;
   }
   CAMLreturn(Val_unit);
 }
 
-CAMLprim value tapak_brotli_compress_stream(value state_val, value input_val,
-                                            value output_size_val,
-                                            value op_val) {
-  CAMLparam4(state_val, input_val, output_size_val, op_val);
-  CAMLlocal2(result, output_val);
+CAMLprim value tapak_brotli_compress_stream(value state_val, value src,
+                                            value dst, value op_val) {
+  CAMLparam4(state_val, src, dst, op_val);
 
-  BrotliEncoderState *state =
-      *((BrotliEncoderState **)Data_custom_val(state_val));
-  const uint8_t *input = (const uint8_t *)String_val(input_val);
-  size_t input_size = caml_string_length(input_val);
-  size_t available_in = input_size;
-  const uint8_t *next_in = input;
+  BrotliEncoderState *state = Tapak_br_enc_val(state_val);
+  /* input buffer */
+  size_t src_pos = Long_val(Field(src, tapak_bbuf_pos));
+  size_t src_size = Long_val(Field(src, tapak_bbuf_size));
+  const uint8_t *next_in =
+      (const uint8_t *)Bytes_val(Field(src, tapak_bbuf_bytes)) + src_pos;
+  size_t available_in = src_size - src_pos;
+  /* output buffer */
+  size_t dst_pos = Long_val(Field(dst, tapak_bbuf_pos));
+  size_t dst_size = Long_val(Field(dst, tapak_bbuf_size));
+  uint8_t *next_out =
+      (uint8_t *)Bytes_val(Field(dst, tapak_bbuf_bytes)) + dst_pos;
+  size_t available_out = dst_size - dst_pos;
 
   /* op: 0 = process, 1 = flush, 2 = finish */
   BrotliEncoderOperation op;
   switch (Int_val(op_val)) {
-  case 0:
-    op = BROTLI_OPERATION_PROCESS;
-    break;
-  case 1:
-    op = BROTLI_OPERATION_FLUSH;
-    break;
-  case 2:
-    op = BROTLI_OPERATION_FINISH;
-    break;
-  default:
-    op = BROTLI_OPERATION_PROCESS;
+  case 1:  op = BROTLI_OPERATION_FLUSH;   break;
+  case 2:  op = BROTLI_OPERATION_FINISH;  break;
+  default: op = BROTLI_OPERATION_PROCESS; break;
   }
-
-  size_t output_buffer_size = Int_val(output_size_val);
-  uint8_t *output_buffer = malloc(output_buffer_size);
-  if (output_buffer == NULL) {
-    caml_failwith("Failed to allocate output buffer");
-  }
-
-  size_t available_out = output_buffer_size;
-  uint8_t *next_out = output_buffer;
 
   BROTLI_BOOL success = BrotliEncoderCompressStream(
       state, op, &available_in, &next_in, &available_out, &next_out, NULL);
 
-  result = caml_alloc_tuple(4);
+  Store_field(src, tapak_bbuf_pos, Val_long(src_size - available_in));
+  Store_field(dst, tapak_bbuf_pos, Val_long(dst_size - available_out));
 
-  Store_field(result, 0, Val_bool(success));
-  Store_field(result, 1, Val_int(input_size - available_in));
+  /* 0 = error, 1 = ok, 2 = ok and finished */
+  int status;
+  if (!success) {
+    status = 0;
+  } else if (BrotliEncoderIsFinished(state)) {
+    status = 2;
+  } else {
+    status = 1;
+  }
 
-  size_t output_size = output_buffer_size - available_out;
-  output_val = caml_alloc_string(output_size);
-  memcpy(Bytes_val(output_val), output_buffer, output_size);
-  Store_field(result, 2, output_val);
-
-  Store_field(result, 3, Val_bool(BrotliEncoderIsFinished(state)));
-
-  free(output_buffer);
-  CAMLreturn(result);
+  CAMLreturn(Val_int(status));
 }
