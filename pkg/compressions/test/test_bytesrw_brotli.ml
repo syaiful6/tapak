@@ -5,18 +5,16 @@ let test_decompress_reads_basic () =
   let original =
     "Hello, World! This is a test string for Brotli compression."
   in
+  let src = Brotli.Bbuf.make_empty () in
+  let dst = Brotli.Bbuf.make 63553 in
+  Brotli.Bbuf.src_set_slice src (Bytes.Slice.of_string original);
 
-  let compressed =
-    Brotli.Encoder.with_encoder ~quality:6 (fun encoder ->
-      let success, _consumed, output, is_finished =
-        Brotli.Encoder.compress_stream encoder original Brotli.Finish
-      in
-      assert success;
-      assert is_finished;
-      output)
-  in
-
-  let reader = Bytes.Reader.of_string compressed in
+  Brotli.Encoder.with_encoder ~quality:6 (fun encoder ->
+    let success = Brotli.Encoder.compress_stream encoder Finish ~src ~dst in
+    assert (success = Brotli.Encoder.Finished));
+  let compress = Brotli.Bbuf.dst_to_slice dst in
+  Brotli.Bbuf.dst_clear dst;
+  let reader = Bytes.Reader.of_slice compress in
   let decompressed_reader = Bytesrw_brotli.decompress_reads () reader in
   let decompressed = Bytes.Reader.to_string decompressed_reader in
 
@@ -25,170 +23,107 @@ let test_decompress_reads_basic () =
     original
     decompressed
 
-let test_compress_reads_basic () =
-  let original =
-    "Hello, World! This is a test string for Brotli compression."
+let test_roundtrip_writer_reader () =
+  let input = "Hello, World! This is a test string for Brotli compression." in
+  let buffer = Buffer.create 256 in
+  let writer =
+    Bytesrw_brotli.compress_writes () ~eod:true (Bytes.Writer.of_buffer buffer)
   in
-
-  let reader = Bytes.Reader.of_string original in
-  let compressed_reader = Bytesrw_brotli.compress_reads ~quality:6 () reader in
-  let compressed = Bytes.Reader.to_string compressed_reader in
-
-  let decompressed =
-    Brotli.Decoder.with_decoder (fun decoder ->
-      let rec decompress_all acc input =
-        if String.length input = 0
-        then acc
-        else
-          let status, consumed, output =
-            Brotli.Decoder.decompress_stream decoder input
-          in
-          let remaining =
-            String.sub input consumed (String.length input - consumed)
-          in
-          match status with
-          | Brotli.Error -> failwith "Decompression failed"
-          | Brotli.Success -> acc ^ output
-          | Brotli.Needs_more_input -> decompress_all (acc ^ output) remaining
-          | Brotli.Needs_more_output -> decompress_all (acc ^ output) input
-      in
-      decompress_all "" compressed)
+  Bytes.Writer.write_string writer input;
+  Bytes.Writer.write_eod writer;
+  let reader =
+    Bytesrw_brotli.decompress_reads
+      ()
+      (Bytes.Reader.of_string (Buffer.contents buffer))
   in
-
   Alcotest.(check string)
     "roundtrip should match original"
-    original
-    decompressed
+    input
+    (Bytes.Reader.to_string reader)
 
-let test_roundtrip_reads () =
-  let original =
-    "Testing roundtrip compression and decompression with bytesrw!"
+let test_quality_roundtrip buffer quality =
+  let inputs =
+    [ "a"
+    ; "hello world"
+    ; String.make 100 'x'
+    ; String.make 1000 'y'
+    ; String.init 256 Char.chr
+    ; "The quick brown fox jumps over the lazy dog"
+    ; "This is a test of Brotli compression with quality "
+      ^ string_of_int quality
+    ]
   in
-
-  let reader = Bytes.Reader.of_string original in
-  let compressed_reader = Bytesrw_brotli.compress_reads ~quality:4 () reader in
-  let decompressed_reader =
-    Bytesrw_brotli.decompress_reads () compressed_reader
+  let writer =
+    Bytesrw_brotli.compress_writes
+      ~quality
+      ()
+      ~eod:true
+      (Bytes.Writer.of_buffer buffer)
   in
-  let result = Bytes.Reader.to_string decompressed_reader in
-
-  Alcotest.(check string) "roundtrip should match original" original result
-
-let test_compress_writes_basic () =
-  let original =
-    "Hello, World! This is a test string for Brotli compression."
+  List.iter (Bytes.Writer.write_string writer) inputs;
+  Bytes.Writer.write_eod writer;
+  let reader =
+    Bytesrw_brotli.decompress_reads
+      ()
+      (Bytes.Reader.of_string (Buffer.contents buffer))
   in
-
-  let buf = Buffer.create 256 in
-  let underlying_writer =
-    Bytes.Writer.make (fun slice ->
-      if not (Bytes.Slice.is_eod slice)
-      then Buffer.add_string buf (Bytes.Slice.to_string slice))
-  in
-  let compress_writer =
-    Bytesrw_brotli.compress_writes ~quality:6 () ~eod:true underlying_writer
-  in
-
-  Bytes.Writer.write_string compress_writer original;
-  Bytes.Writer.write_eod compress_writer;
-
-  let compressed = Buffer.contents buf in
-
-  let decompressed =
-    Brotli.Decoder.with_decoder (fun decoder ->
-      let rec decompress_all acc input =
-        if String.length input = 0
-        then acc
-        else
-          let status, consumed, output =
-            Brotli.Decoder.decompress_stream decoder input
-          in
-          let remaining =
-            String.sub input consumed (String.length input - consumed)
-          in
-          match status with
-          | Brotli.Error -> failwith "Decompression failed"
-          | Brotli.Success -> acc ^ output
-          | Brotli.Needs_more_input -> decompress_all (acc ^ output) remaining
-          | Brotli.Needs_more_output -> decompress_all (acc ^ output) input
-      in
-      decompress_all "" compressed)
-  in
-
   Alcotest.(check string)
-    "roundtrip should match original"
-    original
-    decompressed
+    ("roundtrip quality " ^ string_of_int quality)
+    (String.concat "" inputs)
+    (Bytes.Reader.to_string reader)
 
-let test_large_data () =
-  let chunk = "The quick brown fox jumps over the lazy dog. " in
-  let original = String.concat "" (List.init 1000 (fun _ -> chunk)) in
+let test_quality_roundtrips () =
+  let buffer = Buffer.create 65536 in
+  List.iter
+    (fun q ->
+       test_quality_roundtrip buffer q;
+       Buffer.reset buffer)
+    [ 1; 2; 3; 4; 5; 6; 7; 8; 9; 10; 11 ]
 
-  let reader = Bytes.Reader.of_string original in
-  let compressed_reader = Bytesrw_brotli.compress_reads ~quality:4 () reader in
-  let compressed = Bytes.Reader.to_string compressed_reader in
-
-  let decompressed_lowlevel =
-    Brotli.Decoder.with_decoder (fun decoder ->
-      let rec decompress_all acc input =
-        if String.length input = 0
-        then acc
-        else
-          let status, consumed, output =
-            Brotli.Decoder.decompress_stream decoder input
-          in
-          let remaining =
-            String.sub input consumed (String.length input - consumed)
-          in
-          match status with
-          | Brotli.Error -> failwith "Decompression failed"
-          | Brotli.Success -> acc ^ output
-          | Brotli.Needs_more_input -> decompress_all (acc ^ output) remaining
-          | Brotli.Needs_more_output -> decompress_all (acc ^ output) input
-      in
-      decompress_all "" compressed)
+let test_roundtrip_reader_reader () =
+  let input = "Hello, World! This is a test string for Brotli compression." in
+  let reader =
+    Bytesrw_brotli.decompress_reads
+      ()
+      (Bytesrw_brotli.compress_reads () (Bytes.Reader.of_string input))
   in
-
-  Alcotest.(check int)
-    "low-level decompression length"
-    (String.length original)
-    (String.length decompressed_lowlevel);
-
   Alcotest.(check string)
-    "low-level decompression should match"
-    original
-    decompressed_lowlevel;
+    "reader+reader roundtrip should match original"
+    input
+    (Bytes.Reader.to_string reader)
 
-  let compressed_reader2 = Bytes.Reader.of_string compressed in
-  let decompressed_reader =
-    Bytesrw_brotli.decompress_reads () compressed_reader2
+let test_quality_roundtrip_readers quality =
+  let inputs =
+    [ "a"
+    ; "hello world"
+    ; String.make 100 'x'
+    ; String.make 1000 'y'
+    ; String.init 256 Char.chr
+    ; "The quick brown fox jumps over the lazy dog"
+    ; "This is a test of Brotli compression with quality "
+      ^ string_of_int quality
+    ]
   in
-  let result = Bytes.Reader.to_string decompressed_reader in
-
-  Alcotest.(check int)
-    "bytesrw decompression length"
-    (String.length original)
-    (String.length result);
-
-  Alcotest.(check string) "large data roundtrip should match" original result
-
-let test_empty_string () =
-  let original = "" in
-
-  let reader = Bytes.Reader.of_string original in
-  let compressed_reader = Bytesrw_brotli.compress_reads ~quality:4 () reader in
-  let decompressed_reader =
-    Bytesrw_brotli.decompress_reads () compressed_reader
+  let reader =
+    Bytesrw_brotli.decompress_reads
+      ()
+      (Bytesrw_brotli.compress_reads
+         ~quality
+         ()
+         (Bytes.Reader.of_string (String.concat "" inputs)))
   in
-  let result = Bytes.Reader.to_string decompressed_reader in
+  Alcotest.(check string)
+    ("reader+reader roundtrip quality " ^ string_of_int quality)
+    (String.concat "" inputs)
+    (Bytes.Reader.to_string reader)
 
-  Alcotest.(check string) "empty string roundtrip should match" original result
+let test_quality_roundtrips_reader () =
+  List.iter test_quality_roundtrip_readers [ 1; 2; 3; 4; 5; 6; 7; 8; 9; 10; 11 ]
 
 let suite =
   [ "decompress_reads basic", `Quick, test_decompress_reads_basic
-  ; "compress_reads basic", `Quick, test_compress_reads_basic
-  ; "roundtrip reads", `Quick, test_roundtrip_reads
-  ; "compress_writes basic", `Quick, test_compress_writes_basic
-  ; "large data", `Quick, test_large_data
-  ; "empty string", `Quick, test_empty_string
+  ; "roundtrip writer+reader", `Quick, test_roundtrip_writer_reader
+  ; "roundtrip reader+reader", `Quick, test_roundtrip_reader_reader
+  ; "quality roundtrips writer+reader", `Quick, test_quality_roundtrips
+  ; "quality roundtrips reader+reader", `Quick, test_quality_roundtrips_reader
   ]

@@ -1,5 +1,4 @@
 (test
  (name test)
  (package tapak-compressions)
- (modules test test_brotli test_bytesrw_brotli)
  (libraries alcotest bytesrw tapak-compressions))
