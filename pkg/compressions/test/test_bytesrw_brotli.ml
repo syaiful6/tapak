@@ -120,10 +120,56 @@ let test_quality_roundtrip_readers quality =
 let test_quality_roundtrips_reader () =
   List.iter test_quality_roundtrip_readers [ 1; 2; 3; 4; 5; 6; 7; 8; 9; 10; 11 ]
 
+let test_quality_roundtrips_writer buffer quality =
+  let inputs =
+    [ "a"
+    ; "hello world"
+    ; String.make 100 'x'
+    ; String.make 1000 'y'
+    ; String.init 256 Char.chr
+    ; "The quick brown fox jumps over the lazy dog"
+    ; "This is a test of Brotli compression with quality "
+      ^ string_of_int quality
+    ]
+  in
+  let writer =
+    Bytesrw_brotli.compress_writes
+      ~quality
+      ()
+      ~eod:true
+      (Bytes.Writer.of_buffer buffer)
+  in
+  List.iter (Bytes.Writer.write_string writer) inputs;
+  Bytes.Writer.write_eod writer;
+  let compressed = Buffer.contents buffer in
+  (* reset buffer for decompressed writer *)
+  Buffer.reset buffer;
+  let w =
+    Bytesrw_brotli.decompress_writes
+      ()
+      ~eod:true
+      (Bytes.Writer.of_buffer buffer)
+  in
+  Bytes.Writer.write_string w compressed;
+  Bytes.Writer.write_eod w;
+  Alcotest.(check string)
+    ("writer+writer roundtrip quality " ^ string_of_int quality)
+    (String.concat "" inputs)
+    (Buffer.contents buffer)
+
+let test_quality_roundtrips_writer () =
+  let buffer = Buffer.create 65536 in
+  List.iter
+    (fun quality ->
+       test_quality_roundtrips_writer buffer quality;
+       Buffer.reset buffer)
+    [ 1; 2; 3; 4; 5; 6; 7; 8; 9; 10; 11 ]
+
 let suite =
   [ "decompress_reads basic", `Quick, test_decompress_reads_basic
   ; "roundtrip writer+reader", `Quick, test_roundtrip_writer_reader
   ; "roundtrip reader+reader", `Quick, test_roundtrip_reader_reader
   ; "quality roundtrips writer+reader", `Quick, test_quality_roundtrips
+  ; "quality roundtrips writer+writer", `Quick, test_quality_roundtrips_writer
   ; "quality roundtrips reader+reader", `Quick, test_quality_roundtrips_reader
   ]
