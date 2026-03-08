@@ -12,7 +12,7 @@ module User_request = struct
       let+ name =
         mem
           ~enc:(fun u -> u.name)
-          "email"
+          "name"
           Sch.(with_ ~constraint_:(Constraint.min_length 3) string)
       and+ email =
         mem
@@ -30,7 +30,7 @@ end
 
 module User = struct
   type t =
-    { id : int
+    { id : int64
     ; name : string
     ; email : string
     ; age : int option
@@ -43,11 +43,11 @@ module User = struct
     Sch.Object.(
       define ~kind:"User"
       @@
-      let+ id = mem ~enc:(fun u -> u.id) "id" Sch.int
+      let+ id = mem ~enc:(fun u -> u.id) "id" Sch.int64
       and+ name =
         mem
           ~enc:(fun u -> u.name)
-          "email"
+          "name"
           Sch.(with_ ~constraint_:(Constraint.min_length 3) string)
       and+ email =
         mem
@@ -66,7 +66,7 @@ end
 let create_user user =
   Tapak.json
     ~status:`Created
-    (Sch.Json.encode_string User.schema (User.of_request 12 user))
+    (Sch.Json.encode_string User.schema (User.of_request 12L user))
 
 type user_update =
   { name : string option
@@ -237,12 +237,12 @@ let upload_file upload =
 
 let list_users _req =
   let users =
-    [ { User.id = 1
+    [ { User.id = 1L
       ; name = "Alice"
       ; email = "alice@example.com"
       ; age = Some 18
       }
-    ; { id = 2; name = "Bob"; email = "bob@example.com"; age = None }
+    ; { id = 2L; name = "Bob"; email = "bob@example.com"; age = None }
     ]
   in
   Tapak.json (Sch.Json.encode_string (Sch.list User.schema) users)

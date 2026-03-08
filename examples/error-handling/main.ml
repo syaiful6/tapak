@@ -30,7 +30,7 @@ end
 
 module User = struct
   type t =
-    { id : int
+    { id : int64
     ; name : string
     ; email : string
     ; age : int
@@ -43,7 +43,7 @@ module User = struct
     Sch.Object.(
       define ~kind:"User"
       @@
-      let+ id = mem ~enc:(fun u -> u.id) "id" Sch.int
+      let+ id = mem ~enc:(fun u -> u.id) "id" Sch.int64
       and+ name =
         mem
           ~enc:(fun u -> u.name)
@@ -66,7 +66,7 @@ end
 let create_user_json user =
   Tapak.json
     ~status:`Created
-    (Sch.Json.encode_string User.schema (User.of_request ~id:123 user))
+    (Sch.Json.encode_string User.schema (User.of_request ~id:123L user))
 
 let create_user_html user =
   let html =
