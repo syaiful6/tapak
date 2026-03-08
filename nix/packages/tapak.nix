@@ -15,7 +15,6 @@
   uri,
   ptime,
   saturn,
-  yojson,
   jsont,
   multipart_form,
   sch,
@@ -57,7 +56,6 @@ buildDunePackage {
     uri
     ptime
     saturn
-    yojson
     jsont
     multipart_form
     sch
