@@ -1,6 +1,6 @@
 module User = struct
   type t =
-    { id : int
+    { id : int64
     ; name : string
     ; email : string
     }
@@ -27,7 +27,7 @@ module User = struct
     Sch.Object.(
       define ~kind:"User"
       @@
-      let+ id = mem ~enc:(fun { id; _ } -> id) "id" Sch.int
+      let+ id = mem ~enc:(fun { id; _ } -> id) "id" Sch.int64
       and+ name = mem ~enc:(fun { name; _ } -> name) "name" schema_name
       and+ email = mem ~enc:(fun { email; _ } -> email) "email" schema_email in
       { id; name; email })
@@ -122,8 +122,8 @@ let list_drop n l =
 
 let list_users search =
   let users =
-    [ { User.id = 1; name = "Alice"; email = "alice@example.com" }
-    ; { id = 2; name = "Bob"; email = "bob@example.com" }
+    [ { User.id = 1L; name = "Alice"; email = "alice@example.com" }
+    ; { id = 2L; name = "Bob"; email = "bob@example.com" }
     ]
   in
   if search.offset >= List.length users
@@ -142,10 +142,13 @@ let list_users search =
         || String.starts_with ~prefix:query user.User.email)
 
 let get_user id = { User.id; name = "Alice"; email = "alice@example.com" }
-let create_user (name, email) = { User.id = 2; name; email }
+let create_user (name, email) = { User.id = 2L; name; email }
 
 let bulk_create_users users =
-  List.mapi (fun i (name, email) -> { User.id = i + 100; name; email }) users
+  List.mapi
+    (fun i (name, email) ->
+       { User.id = Int64.add (Int64.of_int i) 100L; name; email })
+    users
 
 let update_user (name, email) id = { User.id; name; email }
 let delete_user id = { message = Format.sprintf "User %d deleted" id }
@@ -166,7 +169,7 @@ let v1_api_routes =
       |> tags [ "Users" ]
       |> response_model ~status:`OK ~schema:User.schema_list
       |> into list_users
-    ; get (s "users" / p "userId" int)
+    ; get (s "users" / p "userId" int64)
       |> summary "Get a user by ID"
       |> operation_id "getUser"
       |> tags [ "Users" ]
@@ -187,7 +190,7 @@ let v1_api_routes =
       |> tags [ "Users" ]
       |> response_model ~status:`Created ~schema:User.schema_list
       |> into bulk_create_users
-    ; put (s "users" / p "userId" int)
+    ; put (s "users" / p "userId" int64)
       |> body Json User.schema_request
       |> summary "Update a user"
       |> description "Requires authentication via X-API-Key header"
