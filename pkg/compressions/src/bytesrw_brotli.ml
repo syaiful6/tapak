@@ -88,9 +88,11 @@ let decompress_writes () =
       destroyed := true;
       Decoder.destroy decoder)
   in
-  let rec decompress ~error ctx ~src ~dst =
+  let rec decompress ?(final = false) ~error ctx ~src ~dst =
     match Decoder.decompress_stream ctx ~src ~dst with
-    | Decoder.Error -> error "brotli decompression error"
+    | Decoder.Error ->
+      cleanup ();
+      error "brotli decompression error"
     | Success ->
       if not (Bbuf.dst_is_empty dst)
       then begin
@@ -98,19 +100,24 @@ let decompress_writes () =
         Bbuf.dst_clear dst;
         Bytes.Writer.write w slice
       end;
-      if not (Bbuf.src_is_consumed src) then decompress ~error ctx ~src ~dst
+      if not (Bbuf.src_is_consumed src)
+      then decompress ~final ~error ctx ~src ~dst
     | Needs_more_input ->
-      () (* wait more input to be written before resuming decompression *)
+      if final
+      then (
+        cleanup ();
+        error err_unexp_eod)
+      else () (* wait more input to be written before resuming decompression *)
     | Needs_more_output ->
       (* dst is always full here by definition; flush and keep going *)
       let slice = Bbuf.dst_to_slice dst in
       Bbuf.dst_clear dst;
       Bytes.Writer.write w slice;
-      decompress ~error ctx ~src ~dst
+      decompress ~final ~error ctx ~src ~dst
   in
   let write = function
     | slice when Bytes.Slice.is_eod slice ->
-      decompress ~error decoder ~src ~dst;
+      decompress ~final:true ~error decoder ~src ~dst;
       cleanup ();
       if eod then Bytes.Writer.write_eod w
     | slice ->
