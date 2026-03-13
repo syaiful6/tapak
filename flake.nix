@@ -6,7 +6,6 @@
     cows = {
       url = "github:syaiful6/cows";
       flake = false;
-      inputs.nixpkgs.follows = "nixpkgs";
     };
     treefmt-nix.url = "github:numtide/treefmt-nix";
     treefmt-nix.flake = false;
