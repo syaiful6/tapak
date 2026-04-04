@@ -385,12 +385,20 @@ module Session = struct
              (Socket_endpoint.Channel_state
                 { channel = (module H); state; join_ref; presence_refs; _ })
             ->
+            let current_presence_refs = ref presence_refs in
+            let subscription = Hashtbl.find_opt session.subscriptions topic in
             let broadcast_msg =
               Channel.
                 { topic; event = pubsubmsg.event; payload = pubsubmsg.payload }
             in
             let push =
-              H.handle_info broadcast_msg ~socket:!(session.socket) state
+              run_with_effect
+                ?subscription
+                ~topic
+                ~presence_refs:current_presence_refs
+                session
+                (fun () ->
+                   H.handle_info broadcast_msg ~socket:!(session.socket) state)
             in
             session.socket := Channel.Push.socket push;
             Hashtbl.replace
@@ -401,7 +409,7 @@ module Session = struct
                  ; state = Channel.Push.state push
                  ; topic
                  ; join_ref
-                 ; presence_refs
+                 ; presence_refs = !current_presence_refs
                  });
             let should_intercept = List.mem pubsubmsg.event H.intercept in
             match push with
@@ -409,11 +417,17 @@ module Session = struct
               if should_intercept
               then (
                 let push_out =
-                  H.handle_out
-                    ~event:pubsubmsg.event
-                    ~payload
-                    ~socket:!(session.socket)
-                    ctx.state
+                  run_with_effect
+                    ?subscription
+                    ~topic
+                    ~presence_refs:current_presence_refs
+                    session
+                    (fun () ->
+                       H.handle_out
+                         ~event:pubsubmsg.event
+                         ~payload
+                         ~socket:!(session.socket)
+                         ctx.state)
                 in
                 session.socket := Channel.Push.socket push_out;
                 Hashtbl.replace
@@ -424,7 +438,7 @@ module Session = struct
                      ; state = Channel.Push.state push_out
                      ; topic
                      ; join_ref
-                     ; presence_refs
+                     ; presence_refs = !current_presence_refs
                      });
                 match push_out with
                 | Channel.Push.Push { payload; _ } | Intercept { payload; _ } ->
@@ -433,11 +447,17 @@ module Session = struct
               else send_push payload
             | Intercept { payload; ctx = { state; socket } } ->
               let push_out =
-                H.handle_out
-                  ~event:pubsubmsg.event
-                  ~payload
-                  ~socket:!(session.socket)
-                  state
+                run_with_effect
+                  ?subscription
+                  ~topic
+                  ~presence_refs:current_presence_refs
+                  session
+                  (fun () ->
+                     H.handle_out
+                       ~event:pubsubmsg.event
+                       ~payload
+                       ~socket:!(session.socket)
+                       state)
               in
               session.socket := socket;
               Hashtbl.replace
@@ -448,7 +468,7 @@ module Session = struct
                    ; state = Channel.Push.state push_out
                    ; topic
                    ; join_ref
-                   ; presence_refs
+                   ; presence_refs = !current_presence_refs
                    });
               (match push_out with
               | Channel.Push.Push { payload; _ } | Intercept { payload; _ } ->
