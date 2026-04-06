@@ -88,9 +88,7 @@ let user_handler user_id =
 
 let api_handler id name =
   (* Both id (int64) and name (string) are type-safe *)
-  let json =
-    `Assoc [("user_id", `String (Int64.to_string id)); ("name", `String name)]
-  in
+  let json = Printf.sprintf {|{"user_id": "%Ld","name": "%s"}|} id name in
   Tapak.json ~status:`OK json
 
 let app env =
@@ -104,15 +102,21 @@ let app env =
         ])
     |> use
          (module Middleware.Request_logger)
-         (Middleware.Request_logger.args ~now ()))
+         (Middleware.Request_logger.args ~now ~trusted_proxies:[] ()))
 
 let () =
   Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
   let port = 3000 in
   let address = `Tcp (Eio.Net.Ipaddr.V4.any, port) in
-  let config = Piaf.Server.Config.create address in
-  Printf.printf "Server running on http://localhost:%d\n" port;
-  ignore (Tapak.run_with ~config ~env (app env))
+  let socket =
+    Eio.Net.listen ~reuse_addr:true ~backlog:1024 ~sw env#net address
+  in
+  Tapak.run
+    ~on_error:(fun exn ->
+      Log.warn (fun f -> f "Uncaught exception %s" (Printexc.to_string exn)))
+    socket
+    (app env)
 ```
 
 For more examples, see the [`examples/`](./examples) directory.
