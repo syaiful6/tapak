@@ -820,8 +820,6 @@ module Trie = struct
     router' trie
 end
 
-let router = Trie.router
-
 let match' routes =
   let trie = Trie.compile routes in
   fun request -> try Some (Trie.router' trie request) with Not_found -> None
@@ -871,10 +869,8 @@ let resource ?(middlewares = []) prefix_builder (module R : Resource) =
     ; delete (R.id_path ()) |> request |> into R.delete
     ]
 
-(** [routes ~not_found routes] creates a handler that dispatches to the given routes.
-    If no route matches, the [not_found] handler is called instead of raising an exception. *)
-let routes ?(not_found = Handler.not_found) route_list =
-  let matcher = router route_list in
+let of_list ?(not_found = Handler.not_found) route_list =
+  let matcher = Trie.router route_list in
   fun req -> try matcher req with Not_found -> not_found req
 
 let validation_error_to_json errors =

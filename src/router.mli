@@ -162,8 +162,6 @@ val tag : string -> ('a, 'b) schema -> ('a, 'b) schema
 val include_in_schema : bool -> ('a, 'b) schema -> ('a, 'b) schema
 val p : string -> ('a, 'b) path -> ('a, 'b) path
 val ann : string * string -> ('a, 'b) path -> ('a, 'b) path
-val match' : route list -> Request.t -> Response.t option
-val router : route list -> Handler.t
 val sprintf : ('a, string) path -> 'a
 val get_method : ('a, 'b) schema -> Http.Method.t
 
@@ -194,7 +192,11 @@ val resource :
 
 val validation_error_to_json : (string * string) list -> Jsont.json
 
-val routes : ?not_found:Handler.t -> route list -> Handler.t
-(** [routes ~not_found routes] creates a handler that dispatches to the given
+val match' : route list -> Request.t -> Response.t option
+(** [match' routes req] matches the request against the given routes and returns the
+    response if a match is found. If no match is found, returns [None]. *)
+
+val of_list : ?not_found:Handler.t -> route list -> Handler.t
+(** [of_list ~not_found routes] creates a handler that dispatches to the given
     routes. If no route matches, the [not_found] handler is called instead of
     raising an exception. Default [not_found] returns a 404 "Not Found" response. *)

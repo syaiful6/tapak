@@ -225,7 +225,7 @@ let setup_app env =
 
   Tapak.(
     Router.(
-      routes
+      of_list
         ~not_found
         [ get (s "") |> unit |> into home_handler
         ; get (s "users" / int64) |> into user_handler

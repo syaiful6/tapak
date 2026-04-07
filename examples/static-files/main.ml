@@ -52,7 +52,7 @@ let () =
   let handler =
     Tapak.(
       Router.(
-        routes
+        of_list
           [ get (s "api" / s "hello") |> unit |> into api_handler
           ; get splat
             |> request

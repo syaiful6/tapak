@@ -204,7 +204,7 @@ let extractor_error_middleware : Tapak.middleware =
 
 let setup_app () =
   Tapak.Router.(
-    routes
+    of_list
       ~not_found
       [ get (s "") |> unit |> into home_handler
       ; get (s "api-info") |> extract api_key |> into api_info_handler

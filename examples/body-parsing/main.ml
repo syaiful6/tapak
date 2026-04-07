@@ -370,7 +370,7 @@ let app env =
   let now () = Eio.Time.now clock in
   Tapak.(
     Router.(
-      routes
+      of_list
         [ get (s "") |> unit |> into index_page
         ; scope
             (s "api")

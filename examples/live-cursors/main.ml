@@ -205,7 +205,7 @@ let () =
   in
   let app =
     Tapak.(
-      Router.routes all_routes
+      Router.of_list all_routes
       |> use
            (module Middleware.Request_logger)
            (Middleware.Request_logger.args ~now ~trusted_proxies:[] ()))

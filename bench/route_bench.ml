@@ -415,7 +415,7 @@ let () =
   let open Benchmark in
   Printf.printf " Google+ API (13 routes)\n";
 
-  let gplus_router = Router.routes gplus_api in
+  let gplus_router = Router.of_list gplus_api in
 
   Printf.printf "--- GPlus Static (no params): GET /people ---\n";
   let req = create_mock_request ~meth:`GET ~path:"/people" in
@@ -465,7 +465,7 @@ let () =
 
   Printf.printf " GitHub API (203 routes)\n";
 
-  let github_router = Router.routes github_api in
+  let github_router = Router.of_list github_api in
 
   Printf.printf "--- GitHub Static (no params): GET /user ---\n";
   let req = create_mock_request ~meth:`GET ~path:"/user" in
