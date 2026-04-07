@@ -289,7 +289,7 @@ let app env =
 
   Tapak.(
     Router.(
-      routes
+      of_list
         [ scope (s "api") api_v1_routes
         ; get (s "docs") |> unit |> into swagger_ui_handler
         ; get (s "openapi.json")

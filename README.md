@@ -95,7 +95,7 @@ let app env =
   let now () = Eio.Time.now (Eio.Stdenv.clock env) in
   Tapak.(
     Router.(
-      routes
+      of_list
         [ get (s "") |> unit |> into home_handler
         ; get (s "users" / int64) |> into user_handler
         ; get (s "api" / s "users" / int64 / str) |> into api_handler

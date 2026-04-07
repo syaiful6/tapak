@@ -316,7 +316,7 @@ let () =
   let room = Chat_room.create () in
   let app =
     let open Tapak.Router in
-    routes
+    of_list
       [ get (s "") |> unit |> into home_handler
       ; get (s "chat") |> unit |> into (chat_stream_handler room)
       ; post (s "chat" / int)

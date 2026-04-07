@@ -285,7 +285,7 @@ let app env =
   let now () = Eio.Time.now clock in
   Tapak.(
     Router.(
-      routes
+      of_list
         [ get (s "") |> unit |> into home_page
         ; post (s "api" / s "users")
           |> body Json User_request.schema
