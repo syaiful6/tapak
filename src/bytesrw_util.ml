@@ -1,28 +1,53 @@
 open Bytesrw
 
 module Reader_source = struct
-  type t = Bytes.Reader.t
+  type t =
+    { reader : Bytes.Reader.t
+    ; leftover : Bytes.Slice.t option ref
+    }
 
   let read_methods = []
 
   let single_read t buf =
-    let slice = Bytes.Reader.read t in
-    if Bytes.Slice.is_eod slice
-    then raise End_of_file
+    let slice =
+      match !(t.leftover) with
+      | Some s ->
+        t.leftover := None;
+        s
+      | None ->
+        let s = Bytes.Reader.read t.reader in
+        if Bytes.Slice.is_eod s then raise End_of_file;
+        s
+    in
+    let buf_len = Cstruct.length buf in
+    let slice_len = Bytes.Slice.length slice in
+    if slice_len <= buf_len
+    then begin
+      Cstruct.blit_from_bytes
+        (Bytes.Slice.bytes slice)
+        (Bytes.Slice.first slice)
+        buf
+        0
+        slice_len;
+      slice_len
+    end
     else begin
       Cstruct.blit_from_bytes
         (Bytes.Slice.bytes slice)
         (Bytes.Slice.first slice)
         buf
         0
-        (Bytes.Slice.length slice);
-      Bytes.Slice.length slice
+        buf_len;
+      t.leftover := Bytes.Slice.drop buf_len slice;
+      buf_len
     end
 end
 
 let source_of_reader =
   let handler = Eio.Flow.Pi.source (module Reader_source) in
-  fun b -> Eio.Resource.T (b, handler)
+  fun reader ->
+    let t = { Reader_source.reader; leftover = ref None } in
+    Eio.Resource.T (t, handler)
 
 let reader_of_flow
       ?(slice_length = Bytes.Slice.unix_io_buffer_size)
