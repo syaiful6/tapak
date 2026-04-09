@@ -14,12 +14,7 @@ include Headers.Make (struct
     let headers t = t.headers
   end)
 
-let make
-      ?(version = `HTTP_1_1)
-      ?(headers = Http.Header.init ())
-      ?(status = `OK)
-      body
-  =
+let make ?(version = `HTTP_1_1) ?(headers = Headers.empty) ?(status = `OK) body =
   { version; status; headers; body }
 
 let pp_field field_name pp_v fmt v =
@@ -49,7 +44,7 @@ let with_ ?status ?headers ?version ?body t =
 
 let of_string
       ?(version = `HTTP_1_1)
-      ?(headers = Http.Header.init ())
+      ?(headers = Headers.empty)
       ?(status = `OK)
       body
   =
@@ -57,14 +52,14 @@ let of_string
 
 let stream ?version ?headers ?(status = `OK) ?length f =
   { version = Option.value version ~default:`HTTP_1_1
-  ; headers = Option.value headers ~default:(Http.Header.init ())
+  ; headers = Option.value headers ~default:Headers.empty
   ; body = Body.stream ?length f
   ; status
   }
 
 let writer ?version ?headers ?(status = `OK) ?length f =
   { version = Option.value version ~default:`HTTP_1_1
-  ; headers = Option.value headers ~default:(Http.Header.init ())
+  ; headers = Option.value headers ~default:Headers.empty
   ; body = `Stream (length, f)
   ; status
   }
@@ -104,7 +99,7 @@ let redirect
   =
   let headers =
     Headers.add_unless_exists
-      (Option.value headers ~default:(Headers.init ()))
+      (Option.value headers ~default:Headers.empty)
       "Location"
       location
   in

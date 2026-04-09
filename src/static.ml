@@ -307,13 +307,13 @@ end = struct
       let status =
         if beg = 0L && end_ = Int64.sub size 1L then `OK else `Partial_content
       in
-      `With_body { status; headers = Headers.init (); offset = beg; length }
+      `With_body { status; headers = Headers.empty; offset = beg; length }
 
   let unconditional hm size =
     match Headers.get hm "Range" with
     | None ->
       `With_body
-        { status = `OK; headers = Headers.init (); offset = 0L; length = size }
+        { status = `OK; headers = Headers.empty; offset = 0L; length = size }
     | Some rn -> parse_range rn size
 
   let if_modified headers size mtime =
@@ -323,11 +323,7 @@ end = struct
       (if Http_date.equal mtime ims = false
        then
          `With_body
-           { status = `OK
-           ; headers = Headers.init ()
-           ; offset = 0L
-           ; length = size
-           }
+           { status = `OK; headers = Headers.empty; offset = 0L; length = size }
        else `Without_body `Not_modified)
 
   let if_unmodified headers size mtime =
