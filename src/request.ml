@@ -70,7 +70,7 @@ let make
       target
   =
   { client_addr
-  ; headers = Option.value headers ~default:(Http.Header.init ())
+  ; headers = Option.value headers ~default:Headers.empty
   ; meth
   ; target
   ; version
