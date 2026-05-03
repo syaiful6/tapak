@@ -45,7 +45,7 @@ module Set_cookie = struct
     let parts =
       List.filter_map
         Fun.id
-        [ (if t.secure then Some "Secure" else None)
+        [ (if t.secure || t.same_site = Some `None then Some "Secure" else None)
         ; (if t.http_only then Some "HttpOnly" else None)
         ; t.path |> Option.map (fun p -> Printf.sprintf "Path=%s" p)
         ; t.domain |> Option.map (fun d -> Printf.sprintf "Domain=%s" d)
