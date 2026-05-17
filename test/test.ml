@@ -3,7 +3,8 @@ let () =
   Alcotest.run
     "Tapak Tests"
     (List.flatten
-       [ Test_form.tests
+       [ Test_request.tests
+       ; Test_form.tests
        ; Test_router.tests
        ; Test_static.tests
        ; Test_sse.tests

@@ -58,7 +58,12 @@ let is_secure ?trusted_proxies t =
   else
     match trusted_proxies with
     | None -> false
-    | Some trusted_proxies -> is_trusted_proxy ~trusted_proxies t.client_addr
+    | Some trusted_proxies ->
+      is_trusted_proxy ~trusted_proxies t.client_addr
+      &&
+        (match header "X-Forwarded-Proto" t with
+        | Some proto -> String.lowercase_ascii proto = "https"
+        | None -> false)
 
 let make
       ?(version = `HTTP_1_1)
