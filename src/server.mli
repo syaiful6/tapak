@@ -1,9 +1,3 @@
-val get_systemd_listen_fd : unit -> Unix.file_descr option
-(** get_systemd_listen_fd () returns Some fd if the process was started by systemd with a socket activated service,
-    and None otherwise.
-
-    You can use this to by importing this file descriptor with Eio_unix.Net.import_socket_listening *)
-
 val make :
    ?conn_closed:(Cohttp_eio.Server.conn -> unit)
   -> Handler.t
