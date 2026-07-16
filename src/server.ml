@@ -122,11 +122,19 @@ let make :
   in
   Cohttp_eio.Server.make_response_action ?conn_closed ~callback ()
 
-let run ?max_connections ?additional_domains ?stop ~on_error socket service =
+let run
+      ?conn_closed
+      ?max_connections
+      ?additional_domains
+      ?stop
+      ~on_error
+      socket
+      service
+  =
   Cohttp_eio.Server.run
     ?max_connections
     ?additional_domains
     ?stop
     ~on_error
     socket
-    (make service)
+    (make ?conn_closed service)
