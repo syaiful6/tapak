@@ -57,6 +57,12 @@ and _ t =
       ; constraint_ : 'a list Constraint.t option
       }
       -> 'a list t
+  | Map :
+      { doc : string
+      ; item : 'a t
+      ; constraint_ : (string * 'a) list Constraint.t option
+      }
+      -> (string * 'a) list t
   | Object :
       { kind : string
       ; doc : string
@@ -134,6 +140,7 @@ let rec type_name : type a. a t -> string = function
   | File -> "string"
   | Option ta -> type_name ta
   | List _ -> "array"
+  | Map _ -> "object"
   | Object _ -> "object"
   | Union _ -> "object"
   | Rec t -> type_name (Lazy.force t)
@@ -152,6 +159,7 @@ let rec format_name : type a. a t -> string option = function
   | File -> None
   | Option ta -> format_name ta
   | List _ -> None
+  | Map _ -> None
   | Object _ -> None
   | Union _ -> None
   | Rec t -> format_name (Lazy.force t)
@@ -169,6 +177,7 @@ let rec doc : type a. a t -> string = function
   | File -> "A file upload"
   | Option t -> doc t
   | List { doc; _ } -> doc
+  | Map { doc; _ } -> doc
   | Object { doc; _ } -> doc
   | Union { doc; _ } -> doc
   | Rec t -> doc (Lazy.force t)
@@ -209,6 +218,12 @@ let rec with_ : type a.
         constraint_ = constraint_ <|> c.constraint_
       ; doc = Option.value doc ~default:c.doc
       }
+  | Map c ->
+    Map
+      { c with
+        constraint_ = constraint_ <|> c.constraint_
+      ; doc = Option.value doc ~default:c.doc
+      }
   | Object _ -> codec
   | Union u ->
     Union
@@ -234,6 +249,9 @@ let custom ~enc ~dec repr = Iso { fwd = dec; bwd = enc; repr }
 
 let list ?doc:c ?constraint_:ct t =
   List { doc = Option.value c ~default:"A list"; item = t; constraint_ = ct }
+
+let map ?doc:c ?constraint_:ct t =
+  Map { doc = Option.value c ~default:"A map"; item = t; constraint_ = ct }
 
 module Object = struct
   include Free.Syntax
@@ -457,6 +475,18 @@ module Json = struct
             | Success lst -> apply_constraint constraint_ lst
             | Error errs -> Error errs)
           | _ -> Validation.Error [ error "Expected array" ])
+        | Map { item; constraint_; _ } ->
+          (match json with
+          | Object (mems, _) ->
+            let decode_one ((k, _), v) =
+              match go item v with
+              | Validation.Success a -> Validation.Success (k, a)
+              | Validation.Error errs -> Validation.Error (in_field k errs)
+            in
+            (match Validation.traverse decode_one mems with
+            | Success kvs -> apply_constraint constraint_ kvs
+            | Error errs -> Error errs)
+          | _ -> Validation.Error [ error "Expected object" ])
         | Object { members; unknown; _ } ->
           (match json with
           | Object (mems, _) ->
@@ -748,6 +778,7 @@ module Json = struct
 
     let rec is_object_item : type a. a codec -> bool = function
       | Object _ -> true
+      | Map _ -> true
       | Rec t -> is_object_item (Lazy.force t)
       | Iso { repr; _ } -> is_object_item repr
       | _ -> false
@@ -804,6 +835,26 @@ module Json = struct
           write_newline w;
           write_indent w ~nest);
         write_char w ']'
+      | Map { item; _ } ->
+        write_char w '{';
+        let written = ref false in
+        let inner = nest + indent_step w in
+        List.iter
+          (fun (k, v) ->
+             if !written then write_sep w;
+             written := true;
+             write_newline w;
+             write_indent w ~nest:inner;
+             write_json_string w k;
+             write_colon_sep w;
+             write_value w ~nest:inner item v)
+          a;
+        if !written
+        then begin
+          write_newline w;
+          write_indent w ~nest
+        end;
+        write_char w '}'
       | Object { members; _ } ->
         write_char w '{';
         let written = ref false in
@@ -923,6 +974,9 @@ module Json = struct
         | Option ta ->
           (match a with None -> Jsont.Json.null () | Some v -> to_json ta v)
         | List { item; _ } -> Jsont.Json.list (List.map (to_json item) a)
+        | Map { item; _ } ->
+          Jsont.Json.object'
+            (List.map (fun (k, v) -> Jsont.Json.name k, to_json item v) a)
         | Object { members; _ } ->
           let fields =
             Fc.prj @@ Free.run fc_applicative (object_member_nat a) members
@@ -1105,6 +1159,26 @@ module To_json_schema = struct
         { base with
           type_ = Json_type.array
         ; items = Some item_schema
+        ; description = (if doc <> "" then Some doc else None)
+        }
+    | Map { doc; item; constraint_ } ->
+      let item_schema = to_schema state item in
+      let base =
+        match constraint_ with
+        | Some c ->
+          let obj = Json_schema.Constraint.to_json_schema_obj c in
+          { obj with
+            min_items = None
+          ; max_items = None
+          ; min_properties = obj.min_items
+          ; max_properties = obj.max_items
+          }
+        | None -> Json_schema.empty
+      in
+      wrap
+        { base with
+          type_ = Json_type.object_
+        ; additional_properties = Some item_schema
         ; description = (if doc <> "" then Some doc else None)
         }
     | Object { doc; unknown; members; _ } ->

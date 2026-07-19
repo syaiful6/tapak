@@ -184,6 +184,23 @@ module Multipart_decoder = struct
         apply_constraint constraint_ ys
       | _ ->
         Sch.Validation.Error [ Sch.error "Expected multipart array for list" ])
+    | Map { item; constraint_; _ } ->
+      (match node with
+      | Form.Multipart.Part { body; content_type; _ }
+        when content_type_is_json content_type ->
+        Sch.Json.decode_reader codec (Bytesrw_util.reader_of_stream body)
+      | Form.Multipart.Object htbl ->
+        let entries = Hashtbl.fold (fun k v acc -> (k, v) :: acc) htbl [] in
+        let decode_one (k, v) =
+          match decode item v with
+          | Sch.Validation.Success a -> Sch.Validation.Success (k, a)
+          | Sch.Validation.Error errs ->
+            Sch.Validation.Error (Sch.in_field k errs)
+        in
+        let* kvs = Sch.Validation.traverse decode_one entries in
+        apply_constraint constraint_ kvs
+      | _ ->
+        Sch.Validation.Error [ Sch.error "Expected multipart object for map" ])
     | Object { members; unknown; _ } ->
       (match node with
       | Form.Multipart.Part { body; content_type; _ }
