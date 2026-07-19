@@ -53,6 +53,12 @@ and _ t =
       ; constraint_ : 'a list Constraint.t option
       }
       -> 'a list t
+  | Map :
+      { doc : string
+      ; item : 'a t
+      ; constraint_ : (string * 'a) list Constraint.t option
+      }
+      -> (string * 'a) list t
   | Object :
       { kind : string
       ; doc : string
@@ -114,6 +120,12 @@ val custom :
   -> 'a t
 
 val list : ?doc:string -> ?constraint_:'a list Constraint.t -> 'a t -> 'a list t
+
+val map :
+   ?doc:string
+  -> ?constraint_:(string * 'a) list Constraint.t
+  -> 'a t
+  -> (string * 'a) list t
 
 module Object : sig
   include module type of Free.Syntax

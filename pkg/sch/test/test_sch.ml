@@ -817,6 +817,260 @@ let test_to_json_schema_rec () =
   in
   Alcotest.(check bool) "has tree in $defs" true has_tree_def
 
+(** {1 Map / dynamic-key schema tests} *)
+
+type user =
+  { name : string
+  ; age : int
+  }
+
+let user_schema =
+  Sch.Object.(
+    define
+    @@ let+ name = mem "name" ~enc:(fun u -> u.name) Sch.string
+       and+ age = mem "age" ~enc:(fun u -> u.age) Sch.int in
+       { name; age })
+
+let test_decoder_map_of_users () =
+  let schema = Sch.map user_schema in
+  let json =
+    {|{"alice":{"name":"Alice","age":30},"bob":{"name":"Bob","age":25}}|}
+  in
+  match decode_str_result schema json with
+  | Ok kvs ->
+    Alcotest.(check int) "two users decoded" 2 (List.length kvs);
+    (match List.assoc_opt "alice" kvs with
+    | Some u ->
+      Alcotest.(check string) "alice name" "Alice" u.name;
+      Alcotest.(check int) "alice age" 30 u.age
+    | None -> Alcotest.fail "alice missing");
+    (match List.assoc_opt "bob" kvs with
+    | Some u ->
+      Alcotest.(check string) "bob name" "Bob" u.name;
+      Alcotest.(check int) "bob age" 25 u.age
+    | None -> Alcotest.fail "bob missing")
+  | Error errs ->
+    Alcotest.failf
+      "Unexpected errors: %a"
+      Fmt.(list (pair ~sep:comma string string))
+      errs
+
+let test_decoder_map_empty () =
+  let schema = Sch.map Sch.int in
+  match decode_str_result schema {|{}|} with
+  | Ok [] -> ()
+  | Ok _ -> Alcotest.fail "Expected empty map"
+  | Error errs ->
+    Alcotest.failf
+      "Unexpected errors: %a"
+      Fmt.(list (pair ~sep:comma string string))
+      errs
+
+let test_decoder_map_expects_object () =
+  let schema = Sch.map Sch.int in
+  match decode_str_result schema {|[1,2,3]|} with
+  | Error [ (_, msg) ] ->
+    Alcotest.(check string) "expects object" "Expected object" msg
+  | _ -> Alcotest.fail "Expected 'Expected object' error"
+
+let test_decoder_map_propagates_item_errors () =
+  let schema = Sch.map Sch.int in
+  match decode_str_result schema {|{"a":1,"b":"not-an-int"}|} with
+  | Error [ (field, _) ] -> Alcotest.(check string) "error field path" "b" field
+  | Error errs ->
+    Alcotest.failf
+      "Expected single error under 'b', got: %a"
+      Fmt.(list (pair ~sep:comma string string))
+      errs
+  | Ok _ -> Alcotest.fail "Expected decode error for invalid item"
+
+let test_decoder_map_min_items () =
+  let schema =
+    Sch.with_ ~constraint_:(Sch.Constraint.min_items 2) (Sch.map Sch.int)
+  in
+  match decode_str_result schema {|{"a":1}|} with
+  | Error _ -> ()
+  | Ok _ -> Alcotest.fail "Expected min_items constraint error"
+
+(* Real-world example: a Vite build manifest is a JSON object keyed by arbitrary
+   source module paths, each mapping to a chunk descriptor - exactly the
+   "dynamic structure with a known value type" shape [Sch.map] is meant for. *)
+type vite_chunk =
+  { file : string
+  ; src : string option
+  ; is_entry : bool
+  ; imports : string list
+  ; css : string list
+  }
+
+let vite_chunk_schema =
+  Sch.Object.(
+    define
+    @@ let+ file = mem "file" Sch.string
+       and+ src = mem_opt "src" Sch.string
+       and+ is_entry = mem "isEntry" ~default:false Sch.bool
+       and+ imports = mem "imports" ~default:[] (Sch.list Sch.string)
+       and+ css = mem "css" ~default:[] (Sch.list Sch.string) in
+       { file; src; is_entry; imports; css })
+
+let vite_manifest_json =
+  {|
+{
+  "_shared-B7fZdgOh.js": {
+    "file": "assets/shared-B7fZdgOh.js",
+    "css": ["assets/shared-ChJ_j-JJ.css"]
+  },
+  "index.html": {
+    "file": "assets/index-CDfvpk1b.js",
+    "src": "index.html",
+    "isEntry": true,
+    "imports": ["_shared-B7fZdgOh.js"],
+    "css": ["assets/index-DiwrgTda.css"]
+  }
+}
+|}
+
+let test_decoder_vite_manifest () =
+  let schema = Sch.map vite_chunk_schema in
+  match decode_str_result schema vite_manifest_json with
+  | Ok kvs ->
+    Alcotest.(check int) "two manifest entries" 2 (List.length kvs);
+    (match List.assoc_opt "index.html" kvs with
+    | Some entry ->
+      Alcotest.(check string) "entry file" "assets/index-CDfvpk1b.js" entry.file;
+      Alcotest.(check (option string)) "entry src" (Some "index.html") entry.src;
+      Alcotest.(check bool) "entry is_entry" true entry.is_entry;
+      Alcotest.(check (list string))
+        "entry imports"
+        [ "_shared-B7fZdgOh.js" ]
+        entry.imports;
+      Alcotest.(check (list string))
+        "entry css"
+        [ "assets/index-DiwrgTda.css" ]
+        entry.css
+    | None -> Alcotest.fail "index.html entry missing");
+    (match List.assoc_opt "_shared-B7fZdgOh.js" kvs with
+    | Some entry ->
+      Alcotest.(check (option string)) "shared chunk src" None entry.src;
+      Alcotest.(check bool)
+        "shared chunk defaults to non-entry"
+        false
+        entry.is_entry;
+      Alcotest.(check (list string))
+        "shared chunk imports default"
+        []
+        entry.imports
+    | None -> Alcotest.fail "shared chunk missing")
+  | Error errs ->
+    Alcotest.failf
+      "Unexpected errors: %a"
+      Fmt.(list (pair ~sep:comma string string))
+      errs
+
+let test_encoder_map () =
+  let result = Sch.Json.encode_string (Sch.map Sch.int) [ "a", 1; "b", 2 ] in
+  Alcotest.(check string) "encode map" {|{"a":1,"b":2}|} result
+
+let test_encoder_map_empty () =
+  let result = Sch.Json.encode_string (Sch.map Sch.int) [] in
+  Alcotest.(check string) "encode empty map" "{}" result
+
+let test_encoder_map_indented () =
+  let result =
+    Sch.Json.encode_string
+      ~format:(Indent 2)
+      (Sch.map Sch.int)
+      [ "a", 1; "b", 2 ]
+  in
+  let expected = "{\n  \"a\": 1,\n  \"b\": 2\n}" in
+  Alcotest.(check string) "encode map indented" expected result
+
+let test_encoder_map_of_objects_indented () =
+  let result =
+    Sch.Json.encode_string
+      ~format:(Indent 2)
+      (Sch.map user_schema)
+      [ "alice", { name = "Alice"; age = 30 } ]
+  in
+  let expected =
+    "{\n  \"alice\": {\n    \"name\": \"Alice\",\n    \"age\": 30\n  }\n}"
+  in
+  Alcotest.(check string) "map of objects indented" expected result
+
+let test_to_json_schema_map () =
+  let codec = Sch.map Sch.int in
+  let schema = Sch.to_json_schema codec in
+  Alcotest.(check bool)
+    "object type"
+    true
+    (Json_schema.Json_type.contains schema.type_ Object);
+  match schema.additional_properties with
+  | Some (Json_schema.Or_bool.Schema (Json_schema.Or_ref.Value obj)) ->
+    Alcotest.(check bool)
+      "additionalProperties is item schema (integer)"
+      true
+      (Json_schema.Json_type.contains obj.type_ Integer)
+  | _ -> Alcotest.fail "Expected additionalProperties schema for map items"
+
+let test_to_json_schema_map_constraint_uses_properties () =
+  let codec =
+    Sch.with_ ~constraint_:(Sch.Constraint.min_items 2) (Sch.map Sch.int)
+  in
+  let schema = Sch.to_json_schema codec in
+  Alcotest.(check (option int))
+    "min_items constraint surfaces as minProperties"
+    (Some 2)
+    schema.min_properties;
+  Alcotest.(check (option int))
+    "not leaked as the array-only minItems keyword"
+    None
+    schema.min_items
+
+let test_encode_to_json_map () =
+  Alcotest.(check (result (list (pair string int)) (list (pair string string))))
+    "map roundtrip"
+    (Ok [ "a", 1; "b", 2 ])
+    (encode_roundtrip (Sch.map Sch.int) [ "a", 1; "b", 2 ])
+
+let test_encode_to_json_map_of_users () =
+  let users = [ "alice", { name = "Alice"; age = 30 } ] in
+  match encode_roundtrip (Sch.map user_schema) users with
+  | Ok [ (key, u) ] ->
+    Alcotest.(check string) "key roundtrip" "alice" key;
+    Alcotest.(check string) "name roundtrip" "Alice" u.name;
+    Alcotest.(check int) "age roundtrip" 30 u.age
+  | Ok _ -> Alcotest.fail "Expected exactly one entry"
+  | Error errs ->
+    Alcotest.failf
+      "Unexpected errors: %a"
+      Fmt.(list (pair ~sep:comma string string))
+      errs
+
+let map_tests =
+  [ "decode map of users", `Quick, test_decoder_map_of_users
+  ; "decode empty map", `Quick, test_decoder_map_empty
+  ; "decode map expects object", `Quick, test_decoder_map_expects_object
+  ; ( "decode map propagates item errors"
+    , `Quick
+    , test_decoder_map_propagates_item_errors )
+  ; "decode map min_items constraint", `Quick, test_decoder_map_min_items
+  ; "decode vite manifest", `Quick, test_decoder_vite_manifest
+  ; "encode map", `Quick, test_encoder_map
+  ; "encode empty map", `Quick, test_encoder_map_empty
+  ; "encode map indented", `Quick, test_encoder_map_indented
+  ; ( "encode map of objects indented"
+    , `Quick
+    , test_encoder_map_of_objects_indented )
+  ; "to_json_schema map", `Quick, test_to_json_schema_map
+  ; ( "to_json_schema map constraint uses minProperties"
+    , `Quick
+    , test_to_json_schema_map_constraint_uses_properties )
+  ; "encode/decode map roundtrip", `Quick, test_encode_to_json_map
+  ; ( "encode/decode map of users roundtrip"
+    , `Quick
+    , test_encode_to_json_map_of_users )
+  ]
+
 (** { 1 Schema Decoder Test Suites } *)
 let schema_decoder_tests =
   [ "schema single field", `Quick, test_decoder_schema_single_field
@@ -1116,4 +1370,5 @@ let () =
     ; "Encoder", encoder_tests
     ; "To_json_schema", to_json_schema_tests
     ; "Encode_to_json", encode_to_json_tests
+    ; "Map", map_tests
     ]
