@@ -188,9 +188,7 @@ module Multipart = struct
       fields
 
   let get_field key fields =
-    match get_part key fields with
-    | None -> None
-    | Some { body; _ } -> Some (body_to_string body)
+    Option.map (fun { body; _ } -> body_to_string body) (get_part key fields)
 
   let get_all_fields key fields =
     let parts = get_all_parts key fields in

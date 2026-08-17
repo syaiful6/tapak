@@ -764,6 +764,9 @@ module Trie = struct
       routes'
 
   let rec match_trie cursor method_ trie =
+    let first_some option fallback =
+      match option with Some _ -> option | None -> fallback ()
+    in
     let try_splat () =
       match trie.splat with
       | Some splat_child ->
@@ -772,29 +775,21 @@ module Trie = struct
     in
     match Path_cursor.next cursor with
     | None ->
-      (match Method_map.find_opt method_ trie.handlers with
-      | Some route -> Some route
-      | None ->
+      first_some (Method_map.find_opt method_ trie.handlers) (fun () ->
         (* Fall back to "any" method handler *)
-        (match Method_map.find_opt (`Other "*") trie.handlers with
-        | Some route -> Some route
-        | None -> try_splat ()))
+        first_some (Method_map.find_opt (`Other "*") trie.handlers) try_splat)
     | Some (span, rest_cursor) ->
       let try_capture () =
         match trie.capture with
         | Some capt_child ->
-          (match match_trie rest_cursor method_ capt_child with
-          | Some r -> Some r
-          | None -> try_splat ())
+          first_some (match_trie rest_cursor method_ capt_child) try_splat
         | None -> try_splat ()
       in
       let off = Span.off span in
       let len = Span.len span in
       (match find_by_span ~path:rest_cursor.path ~off ~len trie.literals with
       | Some child ->
-        (match match_trie rest_cursor method_ child with
-        | Some r -> Some r
-        | None -> try_capture ())
+        first_some (match_trie rest_cursor method_ child) try_capture
       | None -> try_capture ())
 
   let route_filter next request =

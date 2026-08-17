@@ -64,6 +64,15 @@ let send_response_body_writer (response : Http.Response.t) stream _ic oc =
   stream writer (fun () -> Eio.Buf_write.flush oc);
   Eio.Buf_write.flush oc
 
+let respond_string ~request ~response ~body =
+  let headers = Response.headers response |> add_connection_header request in
+  `Response
+    (Cohttp_eio.Server.respond_string
+       ~headers
+       ~status:(Response.status response)
+       ~body
+       ())
+
 let make :
    ?conn_closed:(Cohttp_eio.Server.conn -> unit)
   -> Handler.t
@@ -79,30 +88,11 @@ let make :
         Response.plain ~status:`Internal_server_error "Internal Server Error"
     in
     let body = Response.body response in
-    let is_head =
-      match Request.meth request with `HEAD -> true | _ -> false
-    in
+    let is_head = Request.meth request = `HEAD in
     match body with
-    | `Empty ->
-      let headers =
-        Response.headers response |> add_connection_header request
-      in
-      `Response
-        (Cohttp_eio.Server.respond_string
-           ~headers
-           ~status:(Response.status response)
-           ~body:""
-           ())
+    | `Empty -> respond_string ~request ~response ~body:""
     | `String s ->
-      let headers =
-        Response.headers response |> add_connection_header request
-      in
-      `Response
-        (Cohttp_eio.Server.respond_string
-           ~headers
-           ~status:(Response.status response)
-           ~body:(if is_head then "" else s)
-           ())
+      respond_string ~request ~response ~body:(if is_head then "" else s)
     | `Raw callback ->
       let response = response_to_cohttp request response in
       `Expert (response, callback)

@@ -284,10 +284,7 @@ end = struct
     match String.get ir 0 with
     | '"' | 'W' ->
       (match ETag.parse ir with Some etag -> Some (`ETag etag) | None -> None)
-    | _ ->
-      (match parse_http_date ir with
-      | Some date -> Some (`Date date)
-      | None -> None)
+    | _ -> Option.map (fun date -> `Date date) (parse_http_date ir)
 
   let check_range range size =
     match range with

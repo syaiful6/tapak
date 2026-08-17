@@ -53,17 +53,15 @@ let client_ip ?trusted_proxies t =
   | _ -> Option.value direct_client_ip ~default:""
 
 let is_secure ?trusted_proxies t =
-  if t.is_secure
-  then true
-  else
-    match trusted_proxies with
-    | None -> false
-    | Some trusted_proxies ->
-      is_trusted_proxy ~trusted_proxies t.client_addr
-      &&
-        (match header "X-Forwarded-Proto" t with
-        | Some proto -> String.lowercase_ascii proto = "https"
-        | None -> false)
+  t.is_secure
+  ||
+  match trusted_proxies with
+  | None -> false
+  | Some trusted_proxies ->
+    is_trusted_proxy ~trusted_proxies t.client_addr
+    && header "X-Forwarded-Proto" t
+       |> Option.map (fun proto -> String.lowercase_ascii proto = "https")
+       |> Option.value ~default:false
 
 let make
       ?(version = `HTTP_1_1)
