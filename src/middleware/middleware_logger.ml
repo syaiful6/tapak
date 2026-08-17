@@ -79,6 +79,7 @@ let call args next request =
   let start_time = args.now () in
   let response = next request in
   let duration_seconds = args.now () -. start_time in
-  let log_info = build_log_info ~args ~duration_seconds request response in
-  Log.info (fun m -> m "%s" (args.formatter log_info));
+  Log.info (fun m ->
+    let log_info = build_log_info ~args ~duration_seconds request response in
+    m "%s" (args.formatter log_info));
   response
