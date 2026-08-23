@@ -1,51 +1,31 @@
 module Fmt : sig
   type t =
-    [ `Custom of string
-    | `Date
-    | `Date_time
-    | `Duration
-    | `Email
-    | `Hostname
+    [ `Email
     | `Idn_email
-    | `Ipv4
-    | `Ipv6
-    | `Time
+    | `Hostname
     | `Uri
     | `Uuid
+    | `Date
+    | `Date_time
+    | `Time
+    | `Duration
+    | `Ipv4
+    | `Ipv6
+    | `Custom of string
     ]
 
-  val pattern : string -> string -> (string, string list) result
   val validate : t -> string -> (string, string list) result
-  val to_string : t -> string
+  (** [validate fmt str] validates [str] against the format [fmt].
+        Returns [Ok str] if valid, or [Error errors] if invalid. *)
+
+  val pattern : string -> string -> (string, string list) result
+  (** [pattern pat str] validates [str] against the regex pattern [pat].
+        Returns [Ok str] if valid, or [Error errors] if invalid. *)
 end
 
-type _ num =
-  | Int_ty : int num
-  | Int32_ty : int32 num
-  | Int64_ty : int64 num
-  | Float_ty : float num
+type 'a t
 
-type _ num_constraint =
-  | Min : 'a -> 'a num_constraint
-  | Max : 'a -> 'a num_constraint
-  | Exclusive_min : 'a -> 'a num_constraint
-  | Exclusive_max : 'a -> 'a num_constraint
-  | Multiple_of : 'a -> 'a num_constraint
-
-type _ t =
-  | Min_length : int -> string t
-  | Max_length : int -> string t
-  | Pattern : string -> string t
-  | Format : Fmt.t -> string t
-  | Numeric : ('a num * 'a num_constraint list) -> 'a t
-  | Min_items : int -> 'a list t
-  | Max_items : int -> 'a list t
-  | Unique_items : 'a list t
-  | Any_of : 'a t list -> 'a t
-  | All_of : 'a t list -> 'a t
-  | One_of : 'a t list -> 'a t
-  | Not : 'a t -> 'a t
-
+val string_format : string t -> string option
 val int_min : int -> int t
 val int_max : int -> int t
 val int_range : int -> int -> int t
@@ -81,3 +61,5 @@ val one_of : 'a t list -> 'a t
 val not : 'a t -> 'a t
 val apply_all : 'a t list -> 'a -> ('a, string list) result
 val apply : 'a t option -> 'a -> ('a, string list) result
+val to_json_schema_obj : 'a t -> Sch_json_schema.schema_obj
+val to_json_schema : 'a t -> Sch_json_schema.schema

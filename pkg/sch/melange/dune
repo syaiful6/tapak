@@ -1,0 +1,14 @@
+(dirs :standard __tests__)
+
+(library
+ (name sch_melange)
+ (public_name sch-melange)
+ (wrapped false)
+ (modes melange)
+ (libraries melange.js melange.belt)
+ (preprocess
+  (pps melange.ppx)))
+
+(copy_files
+ (mode fallback)
+ (files "../src/common/*.ml{,i}"))

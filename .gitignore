@@ -7,8 +7,9 @@ _build
 # Mac OS
 .DS_Store
 
-# Nix
+# Nix, node modules, and other package managers
 result*
+node_modules/
 
 .envrc.local
 .direnv

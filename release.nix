@@ -49,6 +49,7 @@ let
     "tapak"
     "tapak-compressions"
     "sch"
+    "sch-melange"
   ];
   outputs = pkgs.lib.genAttrs ocamlPackageSets (
     ocamlPackages: pkgs.lib.genAttrs packageNames (package: pkgs.ocaml-ng.${ocamlPackages}.${package})
@@ -63,6 +64,7 @@ outputs
     tapak
     tapak-compressions
     sch
+    sch-melange
     ;
   inherit (pkgs.tapak)
     dev-shell

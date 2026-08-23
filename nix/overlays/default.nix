@@ -14,6 +14,9 @@ let
     sch = final'.callPackage ../packages/sch.nix {
       inherit (final.tapak) doCheck;
     };
+    sch-melange = final'.callPackage ../packages/sch-melange.nix {
+      inherit (final.tapak) doCheck;
+    };
     tapak = final'.callPackage ../packages/tapak.nix {
       inherit (final.tapak) doCheck;
     };

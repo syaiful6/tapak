@@ -21,7 +21,8 @@ buildDunePackage {
     fs.toSource {
       root = ../..;
       fileset = fs.unions [
-        ../../pkg/sch
+        ../../pkg/sch/src
+        ../../pkg/sch/test
         ../../sch.opam
         ../../dune-project
       ];
