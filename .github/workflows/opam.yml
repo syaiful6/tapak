@@ -50,4 +50,4 @@ jobs:
         run: |
           opam pin add cows git+https://github.com/syaiful6/cows
           opam install cows
-          opam pin add . --with-test -y
+          opam install . --deps-only --with-test --with-dev-setup -y
