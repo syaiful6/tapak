@@ -49,7 +49,7 @@
  (depends
   ocaml
   (melange
-   (>= "4.0.0"))
+   (>= "5.0.0"))
   (melange-jest :with-test)))
 
 (package

@@ -143,8 +143,15 @@ let validate_date str =
     | e -> Error [ Printexc.to_string e ]
   else Error [ "Invalid date format (expected YYYY-MM-DD)" ]
 
+let array_index ~index xs =
+  if index < 0 || index >= Js.Array.length xs
+  then None
+  else Some (Js.Array.unsafe_get xs index)
+
 let match_at ~index captures =
-  Js.Array.at ~index captures |> fun opt -> Option.bind opt Js.Nullable.toOption
+  if index < 0 || index >= Js.Array.length captures
+  then None
+  else Js.Array.unsafe_get captures index |> Js.Nullable.toOption
 
 let validate_time str =
   match Js.Re.exec ~str time_re with
@@ -235,10 +242,10 @@ let validate_datetime str =
       ]
   else
     let date_part =
-      Js.Array.at ~index:0 date_time |> Option.join |> Option.value ~default:""
+      array_index ~index:0 date_time |> Option.join |> Option.value ~default:""
     in
     let time_part =
-      Js.Array.at ~index:1 date_time |> Option.join |> Option.value ~default:""
+      array_index ~index:1 date_time |> Option.join |> Option.value ~default:""
     in
     match validate_date date_part with
     | Error e -> Error e
