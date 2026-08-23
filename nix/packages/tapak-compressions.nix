@@ -4,7 +4,6 @@
   tapak,
   dune-configurator,
   pkg-config,
-  piaf,
   alcotest,
   brotli,
   zstd,
@@ -43,7 +42,6 @@ buildDunePackage {
 
   propagatedBuildInputs = [
     tapak
-    piaf
     bytesrw
   ];
 

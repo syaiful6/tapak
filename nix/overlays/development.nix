@@ -28,6 +28,7 @@ in
           odoc
           tapak
           sch
+          sch-melange
           tapak-compressions
         ];
         buildPhase = ''
