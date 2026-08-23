@@ -53,6 +53,7 @@
             tapak
             tapak-compressions
             sch
+            sch-melange
             ;
         }
       );

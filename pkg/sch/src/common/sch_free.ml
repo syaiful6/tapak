@@ -6,13 +6,13 @@
     that sequence to. *)
 type (_, _) aseq =
   | ANil : ('f, unit) aseq
-  | ACons : ('a, 'f) Sig.app * ('f, 'u) aseq -> ('f, 'a * 'u) aseq
+  | ACons : ('a, 'f) Sch_sig.app * ('f, 'u) aseq -> ('f, 'a * 'u) aseq
 
 type ('f, 'y, 'z) continue = { cont : 'x. ('x -> 'y) -> ('f, 'x) aseq -> 'z }
 (** the continuation for the free applicative structure *)
 
 let rec reduce_aseq : type f u.
-  f Sig.applicative -> (f, u) aseq -> (u, f) Sig.app
+  f Sch_sig.applicative -> (f, u) aseq -> (u, f) Sch_sig.app
   =
  fun app aseq ->
   match aseq with
@@ -22,7 +22,7 @@ let rec reduce_aseq : type f u.
 
 (** Hoist a natural transformation over the applicative sequence *)
 let[@tail_mod_cons] rec hoist_aseq : type f g a.
-  (f, g) Sig.nat -> (f, a) aseq -> (g, a) aseq
+  (f, g) Sch_sig.nat -> (f, a) aseq -> (g, a) aseq
   =
  fun nat aseq ->
   match aseq with
@@ -67,11 +67,11 @@ let apply : type f a b. (f, a -> b) t -> (f, a) t -> (f, b) t =
   }
 
 (** Lift a single effect into the free applicative structure *)
-let lift : type f a. (a, f) Sig.app -> (f, a) t =
+let lift : type f a. (a, f) Sch_sig.app -> (f, a) t =
  fun a ->
   { fold = (fun k f s -> k.cont (fun (a', s') -> f s' a') (ACons (a, s))) }
 
-let hoist : type f g a. (f, g) Sig.nat -> (f, a) t -> (g, a) t =
+let hoist : type f g a. (f, g) Sch_sig.nat -> (f, a) t -> (g, a) t =
  fun nat xa ->
   { fold =
       (fun k f s ->
@@ -84,7 +84,7 @@ let hoist : type f g a. (f, g) Sig.nat -> (f, a) t -> (g, a) t =
           ANil)
   }
 
-let retract : type f a. f Sig.applicative -> (f, a) t -> (a, f) Sig.app =
+let retract : type f a. f Sch_sig.applicative -> (f, a) t -> (a, f) Sch_sig.app =
  fun app xa ->
   xa.fold
     { cont = (fun f s -> reduce_aseq app s |> app.map f) }
@@ -92,7 +92,7 @@ let retract : type f a. f Sig.applicative -> (f, a) t -> (a, f) Sig.app =
     ANil
 
 let run : type f g a.
-  g Sig.applicative -> (f, g) Sig.nat -> (f, a) t -> (a, g) Sig.app
+  g Sch_sig.applicative -> (f, g) Sch_sig.nat -> (f, a) t -> (a, g) Sch_sig.app
   =
  fun app nat xa -> retract app (hoist nat xa)
 

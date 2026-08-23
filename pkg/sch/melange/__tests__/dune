@@ -1,0 +1,6 @@
+(melange.emit
+ (target test)
+ (alias test)
+ (libraries sch-melange melange-jest.jest)
+ (preprocess
+  (pps melange.ppx)))

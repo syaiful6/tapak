@@ -1362,6 +1362,69 @@ let encode_to_json_tests =
   ; "rec codec", `Quick, test_encode_to_json_rec
   ]
 
+let test_time_valid () =
+  Alcotest.(check bool)
+    "valid time"
+    true
+    (Result.is_ok (Sch.Constraint.Fmt.validate `Time "12:34:56"))
+
+let test_time_valid_with_offset () =
+  Alcotest.(check bool)
+    "valid time with offset"
+    true
+    (Result.is_ok (Sch.Constraint.Fmt.validate `Time "12:34:56+01:00"))
+
+let test_time_hour_out_of_range () =
+  Alcotest.(check bool)
+    "hour out of range"
+    true
+    (Result.is_error (Sch.Constraint.Fmt.validate `Time "24:00:00"))
+
+let test_time_tz_hour_out_of_range () =
+  Alcotest.(check bool)
+    "tz hour out of range"
+    true
+    (Result.is_error (Sch.Constraint.Fmt.validate `Time "12:34:56+24:00"))
+
+let test_time_tz_minute_out_of_range () =
+  Alcotest.(check bool)
+    "tz minute out of range"
+    true
+    (Result.is_error (Sch.Constraint.Fmt.validate `Time "12:34:56+01:60"))
+
+let test_time_leap_second_at_utc_midnight () =
+  Alcotest.(check bool)
+    "leap second at 23:59:60 UTC is valid"
+    true
+    (Result.is_ok (Sch.Constraint.Fmt.validate `Time "23:59:60"))
+
+let test_time_leap_second_via_offset () =
+  Alcotest.(check bool)
+    "leap second matching 23:59:60 UTC via offset is valid"
+    true
+    (Result.is_ok (Sch.Constraint.Fmt.validate `Time "00:59:60+01:00"))
+
+let test_time_leap_second_elsewhere_invalid () =
+  Alcotest.(check bool)
+    "leap second elsewhere is invalid"
+    true
+    (Result.is_error (Sch.Constraint.Fmt.validate `Time "12:34:60"))
+
+let format_tests =
+  [ "time valid", `Quick, test_time_valid
+  ; "time valid with offset", `Quick, test_time_valid_with_offset
+  ; "time hour out of range", `Quick, test_time_hour_out_of_range
+  ; "time tz hour out of range", `Quick, test_time_tz_hour_out_of_range
+  ; "time tz minute out of range", `Quick, test_time_tz_minute_out_of_range
+  ; ( "time leap second at UTC midnight"
+    , `Quick
+    , test_time_leap_second_at_utc_midnight )
+  ; "time leap second via offset", `Quick, test_time_leap_second_via_offset
+  ; ( "time leap second elsewhere invalid"
+    , `Quick
+    , test_time_leap_second_elsewhere_invalid )
+  ]
+
 let () =
   Alcotest.run
     "Sch"
@@ -1371,4 +1434,5 @@ let () =
     ; "To_json_schema", to_json_schema_tests
     ; "Encode_to_json", encode_to_json_tests
     ; "Map", map_tests
+    ; "Format", format_tests
     ]

@@ -1,5 +1,6 @@
 (library
  (name sch)
+ (wrapped false)
  (public_name sch)
  (libraries bytesrw jsont jsont.bytesrw re uri ipaddr))
 

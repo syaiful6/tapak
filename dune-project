@@ -1,5 +1,7 @@
 (lang dune 3.19)
 
+(using melange 0.1)
+
 (name tapak)
 
 (generate_opam_files true)
@@ -32,10 +34,23 @@
   jsont
   (re
    (>= 1.7.2))
-  (uri (>= 2.0.0))
+  (uri
+   (>= 2.0.0))
   ipaddr
   (alcotest :with-test)
   (odoc :with-doc)))
+
+(package
+ (name sch-melange)
+ (synopsis
+  "Sch schema validation implementation for melange, see main sch library for more information")
+ (description
+  "Sch is schema validation, serialization and deserialization OCaml data structure\n")
+ (depends
+  ocaml
+  (melange
+   (>= "5.0.0"))
+  (melange-jest :with-test)))
 
 (package
  (name tapak)
@@ -45,15 +60,19 @@
  (depends
   (ocaml
    (>= 5.2.0))
-  (dune (>= 3.0.0))
-  (angstrom (>= 0.15.0))
-  (multipart_form (>= 0.7.0))
+  (dune
+   (>= 3.0.0))
+  (angstrom
+   (>= 0.15.0))
+  (multipart_form
+   (>= 0.7.0))
   cows
   hmap
   ptime
   ipaddr
   logs
-  (re (>= 1.7.2))
+  (re
+   (>= 1.7.2))
   (eio
    (>= 1.3))
   (cohttp-eio
@@ -62,11 +81,14 @@
    (>= 0.3.0))
   (uri
    (>= 2.0.0))
-  (saturn (>= 1.0.0))
-  (sch (= :version))
+  (saturn
+   (>= 1.0.0))
+  (sch
+   (= :version))
   magic-mime
   mirage-crypto
-  (mirage-crypto-rng (>= 1.2.0))
+  (mirage-crypto-rng
+   (>= 1.2.0))
   (reason
    (and
     (>= 3.12)
@@ -91,7 +113,8 @@
  (depends
   (ocaml
    (>= 5.2.0))
-  (dune (>= 3.0.0))
+  (dune
+   (>= 3.0.0))
   bytesrw
   conf-zlib
   conf-zstd

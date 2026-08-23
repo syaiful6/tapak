@@ -1,11 +1,15 @@
 type (_, _) aseq =
   | ANil : ('f, unit) aseq
-  | ACons : ('a, 'f) Sig.app * ('f, 'u) aseq -> ('f, 'a * 'u) aseq
+  | ACons : ('a, 'f) Sch_sig.app * ('f, 'u) aseq -> ('f, 'a * 'u) aseq
 
 type ('f, 'y, 'z) continue = { cont : 'x. ('x -> 'y) -> ('f, 'x) aseq -> 'z }
 
-val reduce_aseq : 'f Sig.applicative -> ('f, 'u) aseq -> ('u, 'f) Sig.app
-val hoist_aseq : ('f, 'g) Sig.nat -> ('f, 'a) aseq -> ('g, 'a) aseq
+val reduce_aseq :
+   'f Sch_sig.applicative
+  -> ('f, 'u) aseq
+  -> ('u, 'f) Sch_sig.app
+
+val hoist_aseq : ('f, 'g) Sch_sig.nat -> ('f, 'a) aseq -> ('g, 'a) aseq
 
 val rebase_aseq :
    ('f, 'u) aseq
@@ -22,15 +26,15 @@ type ('f, 'a) t =
 val pure : 'a -> ('f, 'a) t
 val map : ('a -> 'b) -> ('f, 'a) t -> ('f, 'b) t
 val apply : ('f, 'a -> 'b) t -> ('f, 'a) t -> ('f, 'b) t
-val lift : ('a, 'f) Sig.app -> ('f, 'a) t
-val hoist : ('f, 'g) Sig.nat -> ('f, 'a) t -> ('g, 'a) t
-val retract : 'f Sig.applicative -> ('f, 'a) t -> ('a, 'f) Sig.app
+val lift : ('a, 'f) Sch_sig.app -> ('f, 'a) t
+val hoist : ('f, 'g) Sch_sig.nat -> ('f, 'a) t -> ('g, 'a) t
+val retract : 'f Sch_sig.applicative -> ('f, 'a) t -> ('a, 'f) Sch_sig.app
 
 val run :
-   'g Sig.applicative
-  -> ('f, 'g) Sig.nat
+   'g Sch_sig.applicative
+  -> ('f, 'g) Sch_sig.nat
   -> ('f, 'a) t
-  -> ('a, 'g) Sig.app
+  -> ('a, 'g) Sch_sig.app
 
 module Syntax : sig
   val ( <*> ) : ('a, 'b -> 'c) t -> ('a, 'b) t -> ('a, 'c) t

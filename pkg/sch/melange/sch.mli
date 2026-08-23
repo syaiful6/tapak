@@ -1,4 +1,3 @@
-module Json_schema = Sch_json_schema
 module Constraint = Sch_constraint
 module Free = Sch_free
 module Sig = Sch_sig
@@ -33,8 +32,6 @@ and 'a union_case = 'a Sch_dsl.union_case =
       ; project : 'a -> 'b option
       }
       -> 'a union_case
-  (** a prism like structure for union cases, the inject and project functions are
-   used to convert between the case payload and the union type *)
 
 and 'a t = 'a Sch_dsl.t =
   | Str : string base_map -> string t
@@ -80,6 +77,19 @@ and 'a t = 'a Sch_dsl.t =
       }
       -> 'a t
 
+val case_tags : 'a union_case list -> string list
+val find_case_by_tag : String.t -> 'a union_case list -> 'a union_case option
+
+type 'a projected_case = 'a Sch_dsl.projected_case =
+  | Projected :
+      { tag : string
+      ; codec : 'b t
+      ; payload : 'b
+      }
+      -> 'a projected_case
+
+val find_case_for_value : 'a -> 'a union_case list -> 'b projected_case option
+
 type decode_error = Sch_dsl.decode_error =
   { path : string list
   ; message : string
@@ -92,6 +102,13 @@ val error_to_pair : decode_error -> string * string
 val type_name : 'a t -> string
 val format_name : 'a t -> string option
 val doc : 'a t -> string
+val is_object_codec : 'a t -> bool
+
+val with_basemap :
+   ?constraint_:'a Constraint.t
+  -> ?doc:string
+  -> 'a base_map
+  -> 'a base_map
 
 val with_ :
    ?constraint_:'a Constraint.t
@@ -100,7 +117,6 @@ val with_ :
   -> 'a t
   -> 'a t
 
-val is_object_codec : 'a t -> bool
 val string : string t
 val password : string t
 val bool : bool t
@@ -157,20 +173,6 @@ module Object : sig
     -> 'a t
 end
 
-module Union : sig
-  type 'a case
-
-  val case :
-     ?doc:string
-    -> tag:string
-    -> inj:('b -> 'a)
-    -> proj:('a -> 'b option)
-    -> 'b t
-    -> 'a case
-
-  val define : ?doc:string -> ?discriminator:string -> 'a case list -> 'a t
-end
-
 module Validation : sig
   type 'a t =
     | Success of 'a
@@ -183,39 +185,34 @@ module Validation : sig
   val traverse : ('a -> 'b t) -> 'a list -> 'b list t
 end
 
-type mem_lookup = string -> Jsont.object' -> Jsont.json option
+module Union : sig
+  type 'a case = 'a union_case
 
-val mem_exact : mem_lookup
-val mem_ci : mem_lookup
-val mem_is_known_exact : (string, 'a) Hashtbl.t -> Jsont.name -> bool
-val mem_is_known_ci : (string, 'a) Hashtbl.t -> Jsont.name -> bool
+  val case :
+     ?doc:string
+    -> tag:string
+    -> inj:('a -> 'b)
+    -> proj:('b -> 'a option)
+    -> 'a t
+    -> 'b union_case
+
+  val ensure_unique_tags : 'a union_case list -> unit
+
+  val define :
+     ?doc:string
+    -> ?discriminator:String.t
+    -> 'a union_case list
+    -> 'a t
+end
 
 module Json : sig
-  val coerce_string : 'a t -> string -> 'a Validation.t
-  val decode : ?lookup:mem_lookup -> 'a t -> Jsont.json -> 'a Validation.t
-  val decode_string : ?lookup:mem_lookup -> 'a t -> string -> 'a Validation.t
-
-  val decode_reader :
-     ?lookup:mem_lookup
-    -> 'a t
-    -> Bytesrw.Bytes.Reader.t
-    -> 'a Validation.t
-
   type format =
     | Minify
     | Indent of int
 
-  val encode_writer :
-     ?buf:Bytesrw.Bytes.t
-    -> ?eod:bool
-    -> ?format:format
-    -> 'a t
-    -> 'a
-    -> Bytesrw.Bytes.Writer.t
-    -> unit
-
+  val decode : 'a t -> Js.Json.t -> 'a Validation.t
+  val decode_string : 'a t -> string -> 'a Validation.t
+  val coerce_string : 'a t -> string -> 'a Validation.t
+  val encode : 'a t -> 'a -> Js.Json.t
   val encode_string : ?format:format -> 'a t -> 'a -> string
-  val encode : 'a t -> 'a -> Jsont.json
 end
-
-val to_json_schema : ?draft:Json_schema.Draft.t -> 'a t -> Json_schema.t
