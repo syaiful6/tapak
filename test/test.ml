@@ -12,4 +12,5 @@ let () =
        ; Test_middleware_cors.tests
        ; Test_channel.tests
        ; Test_cookies.tests
+       ; Test_sch_ext.tests
        ])

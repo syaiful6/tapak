@@ -69,6 +69,11 @@ and 'a t = 'a Sch_dsl.t =
       ; cases : 'a union_case list
       }
       -> 'a t
+  | Tagless_union :
+      { doc : string
+      ; cases : 'a union_case list
+      }
+      -> 'a t
   | Rec : 'a t Lazy.t -> 'a t
   | Iso :
       { fwd : 'b -> ('a, string list) result
@@ -89,6 +94,14 @@ type 'a projected_case = 'a Sch_dsl.projected_case =
       -> 'a projected_case
 
 val find_case_for_value : 'a -> 'a union_case list -> 'b projected_case option
+
+val find_all_cases_for_value :
+   'a
+  -> 'a union_case list
+  -> 'b projected_case list
+
+val ensure_nonempty_cases : string -> 'a union_case list -> unit
+val ensure_unique_tags : string -> 'a union_case list -> unit
 
 type decode_error = Sch_dsl.decode_error =
   { path : string list
@@ -196,13 +209,13 @@ module Union : sig
     -> 'a t
     -> 'b union_case
 
-  val ensure_unique_tags : 'a union_case list -> unit
-
   val define :
      ?doc:string
     -> ?discriminator:String.t
     -> 'a union_case list
     -> 'a t
+
+  val tagless : ?doc:string -> 'a union_case list -> 'a t
 end
 
 module Json : sig

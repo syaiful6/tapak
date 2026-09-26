@@ -75,6 +75,11 @@ and _ t =
       ; cases : 'a union_case list
       }
       -> 'a t
+  | Tagless_union :
+      { doc : string
+      ; cases : 'a union_case list
+      }
+      -> 'a t
   | Rec : 'a t Lazy.t -> 'a t
   | Iso :
       { fwd : 'b -> ('a, string list) result
@@ -104,6 +109,25 @@ let rec find_case_for_value value (cases : 'a union_case list) =
     (match c.project value with
     | Some payload -> Some (Projected { tag = c.tag; codec = c.codec; payload })
     | None -> find_case_for_value value rest)
+
+let find_all_cases_for_value value (cases : 'a union_case list) =
+  List.filter_map
+    (fun (Case c) ->
+       match c.project value with
+       | Some payload ->
+         Some (Projected { tag = c.tag; codec = c.codec; payload })
+       | None -> None)
+    cases
+
+let ensure_nonempty_cases msg (cases : 'a union_case list) =
+  match cases with [] -> invalid_arg msg | _ -> ()
+
+let ensure_unique_tags msg (cases : 'a union_case list) =
+  let rec loop = function
+    | [] -> ()
+    | tag :: rest -> if List.mem tag rest then invalid_arg msg else loop rest
+  in
+  loop (case_tags cases)
 
 type decode_error =
   { path : string list  (** Field path, e.g., ["user"; "address"; "city"] *)
@@ -142,6 +166,7 @@ let rec type_name : type a. a t -> string = function
   | Map _ -> "object"
   | Object _ -> "object"
   | Union _ -> "object"
+  | Tagless_union _ -> "union"
   | Rec t -> type_name (Lazy.force t)
   | Iso { repr; _ } -> type_name repr
 
@@ -161,6 +186,7 @@ let rec format_name : type a. a t -> string option = function
   | Map _ -> None
   | Object _ -> None
   | Union _ -> None
+  | Tagless_union _ -> None
   | Rec t -> format_name (Lazy.force t)
   | Iso { repr; _ } -> format_name repr
 
@@ -179,12 +205,14 @@ let rec doc : type a. a t -> string = function
   | Map { doc; _ } -> doc
   | Object { doc; _ } -> doc
   | Union { doc; _ } -> doc
+  | Tagless_union { doc; _ } -> doc
   | Rec t -> doc (Lazy.force t)
   | Iso { repr; _ } -> doc repr
 
 let rec is_object_codec : type a. a t -> bool = function
   | Object _ -> true
   | Union _ -> true
+  | Tagless_union _ -> false
   | Rec t -> is_object_codec (Lazy.force t)
   | Iso { repr; _ } -> is_object_codec repr
   | _ -> false
@@ -230,6 +258,8 @@ let rec with_ : type a.
         doc = Option.value doc ~default:u.doc
       ; discriminator = Option.value discriminator ~default:u.discriminator
       }
+  | Tagless_union u ->
+    Tagless_union { u with doc = Option.value doc ~default:u.doc }
   | Rec t -> Rec (lazy (with_ ?constraint_ ?doc ?discriminator (Lazy.force t)))
   | Iso _ -> codec
 

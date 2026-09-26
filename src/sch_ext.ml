@@ -246,6 +246,16 @@ module Multipart_decoder = struct
         Sch.Json.decode_reader codec (Bytesrw_util.reader_of_stream body)
       | Form.Multipart.Object htbl -> decode_union discriminator cases htbl
       | _ -> Sch.Validation.Error [ Sch.error "Expected object" ])
+    | Tagless_union _ ->
+      (match node with
+      | Form.Multipart.Part { body; content_type; _ }
+        when content_type_is_json content_type ->
+        Sch.Json.decode_reader codec (Bytesrw_util.reader_of_stream body)
+      | _ ->
+        Sch.Validation.Error
+          [ Sch.error
+              "Multipart tagless unions require an application/json part"
+          ])
     | Rec t -> decode (Lazy.force t) node
     | Iso { fwd; repr; _ } ->
       (match decode repr node with

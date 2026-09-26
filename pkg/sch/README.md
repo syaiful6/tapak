@@ -123,6 +123,100 @@ Sch.(with_ ~constraint_:(Constraint.unique_items) (list int))
 Sch.(with_ ~constraint_:(Constraint.all_of [min_length 8; max_length 64]) string)
 ```
 
+## Unions
+
+`Sch.Union` defines schemas for sum types. Each `Sch.Union.case` maps one
+constructor to its payload schema:
+
+```ocaml
+type shape =
+  | Circle of float
+  | Rectangle of float * float
+
+let circle_schema = Sch.Object.(define @@ mem "radius" Sch.float)
+
+let rectangle_schema =
+  Sch.Object.(
+    define
+    @@ let+ width = mem "width" Sch.float
+       and+ height = mem "height" Sch.float in
+       width, height)
+
+let shape_schema =
+  Sch.Union.(
+    define
+      ~discriminator:"type"
+      [ case
+          ~tag:"circle"
+          ~inj:(fun r -> Circle r)
+          ~proj:(function Circle r -> Some r | _ -> None)
+          circle_schema
+      ; case
+          ~tag:"rectangle"
+          ~inj:(fun (w, h) -> Rectangle (w, h))
+          ~proj:(function Rectangle (w, h) -> Some (w, h) | _ -> None)
+          rectangle_schema
+      ])
+```
+
+`Sch.Union.define` writes a discriminator field (`"type"` above) alongside the
+case payload:
+
+```json
+{ "type": "rectangle", "width": 3, "height": 4 }
+```
+
+### Tagless unions
+
+Use `Sch.Union.tagless` when the JSON shape identifies the alternative. For
+example, a value may be either a string or a list of strings. The `~tag` names
+appear in errors but not in the encoded JSON:
+
+```ocaml
+type payload =
+  | Text of string
+  | Items of string list
+
+let payload_schema =
+  Sch.Union.(
+    tagless
+      [ case
+          ~tag:"text"
+          ~inj:(fun s -> Text s)
+          ~proj:(function Text s -> Some s | _ -> None)
+          Sch.string
+      ; case
+          ~tag:"items"
+          ~inj:(fun xs -> Items xs)
+          ~proj:(function Items xs -> Some xs | _ -> None)
+          Sch.(list string)
+      ])
+```
+
+```ocaml
+Sch.Json.encode_string payload_schema (Text "hello")        (* "hello" *)
+Sch.Json.encode_string payload_schema (Items [ "a"; "b" ])   (* ["a","b"] *)
+```
+
+The decoder tries every case and accepts one match, following JSON Schema and
+OpenAPI `oneOf` semantics. When no case matches, it reports each case's errors
+under that case's tag. Multiple matches produce an ambiguity error such as
+`Ambiguous tagless union: matched cases user, admin`. The encoder also requires
+one matching projection. Like `Sch.Union.define`, `Sch.Union.tagless` rejects
+empty case lists and duplicate tags.
+
+The generated JSON Schema contains `oneOf` without a discriminator or top-level
+`type`:
+
+```json
+{
+  "oneOf": [
+    { "type": "string" },
+    { "type": "array", "items": { "type": "string" } }
+  ]
+}
+```
+
 ## Custom codecs
 
 Use `Sch.custom` to adapt any schema to a different OCaml type:

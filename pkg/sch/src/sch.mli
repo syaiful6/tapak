@@ -72,6 +72,11 @@ and 'a t = 'a Sch_dsl.t =
       ; cases : 'a union_case list
       }
       -> 'a t
+  | Tagless_union :
+      { doc : string
+      ; cases : 'a union_case list
+      }
+      -> 'a t
   | Rec : 'a t Lazy.t -> 'a t
   | Iso :
       { fwd : 'b -> ('a, string list) result
@@ -169,6 +174,7 @@ module Union : sig
     -> 'a case
 
   val define : ?doc:string -> ?discriminator:string -> 'a case list -> 'a t
+  val tagless : ?doc:string -> 'a case list -> 'a t
 end
 
 module Validation : sig
