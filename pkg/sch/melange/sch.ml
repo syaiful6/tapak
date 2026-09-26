@@ -8,23 +8,17 @@ module Union = struct
     then invalid_arg "Sch.Union.case: tag cannot be empty"
     else Case { tag; doc; codec; inject = inj; project = proj }
 
-  let ensure_unique_tags cases =
-    let seen = Js.Set.make () in
-    let check (Case c) =
-      if Js.Set.has ~value:c.tag seen
-      then invalid_arg "Sch.Union.define: duplicate case tag"
-      else Js.Set.add ~value:c.tag seen |> ignore
-    in
-    List.iter check cases
-
   let define ?(doc = "") ?(discriminator = "type") cases =
-    match cases with
-    | [] -> invalid_arg "Sch.Union.define: at least one case required"
-    | _ when String.equal discriminator "" ->
-      invalid_arg "Sch.Union.define: discriminator cannot be empty"
-    | _ ->
-      ensure_unique_tags cases;
-      Union { doc; discriminator; cases }
+    ensure_nonempty_cases "Sch.Union.define: at least one case required" cases;
+    if String.equal discriminator ""
+    then invalid_arg "Sch.Union.define: discriminator cannot be empty";
+    ensure_unique_tags "Sch.Union.define: duplicate case tag" cases;
+    Union { doc; discriminator; cases }
+
+  let tagless ?(doc = "") cases =
+    ensure_nonempty_cases "Sch.Union.tagless: at least one case required" cases;
+    ensure_unique_tags "Sch.Union.tagless: duplicate case tag" cases;
+    Tagless_union { doc; cases }
 end
 
 module Json = struct
@@ -183,6 +177,7 @@ module Json = struct
         | _ -> Validation.Error [ error "Expected an object" ])
       | Union { discriminator; cases; _ } ->
         decode_union discriminator cases json
+      | Tagless_union { cases; _ } -> decode_tagless_union cases json
       | Rec t -> decode (Lazy.force t) json
       | Iso { fwd; repr; _ } ->
         (match decode repr json with
@@ -236,6 +231,42 @@ module Json = struct
                discriminator
                [ error "Discriminator field must be a string" ]))
       | _ -> Validation.Error [ error "Expected an object for union type" ]
+
+    and decode_tagless_union : type a.
+      a union_case list -> Sch_json_classify.t -> a Validation.t
+      =
+     fun cases json ->
+      let attempts =
+        List.map
+          (fun (Case c) ->
+             match decode c.codec json with
+             | Validation.Success v -> Either.Left (c.tag, c.inject v)
+             | Validation.Error errs -> Either.Right (c.tag, errs))
+          cases
+      in
+      let matches =
+        List.filter_map
+          (function Either.Left m -> Some m | _ -> None)
+          attempts
+      in
+      match matches with
+      | [ (_, v) ] -> Validation.Success v
+      | [] ->
+        let errs =
+          List.concat_map
+            (function
+              | Either.Right (tag, errs) -> in_field tag errs
+              | Either.Left _ -> [])
+            attempts
+        in
+        Validation.Error errs
+      | many ->
+        Validation.Error
+          [ error
+              (Printf.sprintf
+                 "Ambiguous tagless union: matched cases %s"
+                 (String.concat ", " (List.map fst many)))
+          ]
 
     and object_nat : type a.
       (string * Sch_json_classify.t) list
@@ -322,6 +353,17 @@ module Json = struct
         `Assoc (Fc.prj @@ Free.run fc_applicative (object_member_nat a) members)
       | Union { discriminator; cases; _ } ->
         `Assoc (union_to_fields a discriminator cases)
+      | Tagless_union { cases; _ } ->
+        (match find_all_cases_for_value a cases with
+        | [ Projected { codec; payload; _ } ] -> to_json codec payload
+        | [] ->
+          invalid_arg "Sch.Json.encode: value does not match any union case"
+        | many ->
+          let tags = List.map (fun (Projected { tag; _ }) -> tag) many in
+          invalid_arg
+            (Printf.sprintf
+               "Ambiguous tagless union: matched cases %s"
+               (String.concat ", " tags)))
       | Rec t -> to_json (Lazy.force t) a
       | Iso { bwd; repr; _ } -> to_json repr (bwd a)
 

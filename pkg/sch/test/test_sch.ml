@@ -378,6 +378,342 @@ let test_union_to_json_schema () =
   | Some cases -> Alcotest.(check int) "oneOf length" 2 (List.length cases)
   | None -> Alcotest.fail "Expected oneOf definitions"
 
+type tagless_payload =
+  | Tagless_text of string
+  | Tagless_items of string list
+
+let tagless_payload_schema =
+  Sch.Union.(
+    tagless
+      [ case
+          ~tag:"text"
+          ~inj:(fun s -> Tagless_text s)
+          ~proj:(function Tagless_text s -> Some s | _ -> None)
+          Sch.string
+      ; case
+          ~tag:"items"
+          ~inj:(fun xs -> Tagless_items xs)
+          ~proj:(function Tagless_items xs -> Some xs | _ -> None)
+          Sch.(list string)
+      ])
+
+let tagless_payload_testable =
+  Alcotest.testable
+    (fun ppf -> function
+       | Tagless_text s -> Format.fprintf ppf "Tagless_text(%s)" s
+       | Tagless_items xs ->
+         Format.fprintf ppf "Tagless_items(%a)" Fmt.(list string) xs)
+    (fun a b ->
+       match a, b with
+       | Tagless_text s1, Tagless_text s2 -> String.equal s1 s2
+       | Tagless_items xs1, Tagless_items xs2 -> List.equal String.equal xs1 xs2
+       | _ -> false)
+
+type point =
+  { px : float
+  ; py : float
+  }
+
+type tagless_widget =
+  | Widget_label of string
+  | Widget_point of point
+
+let point_schema =
+  Sch.Object.(
+    define ~unknown:Error_on_unknown
+    @@ let+ px = mem ~enc:(fun p -> p.px) "x" Sch.float
+       and+ py = mem ~enc:(fun p -> p.py) "y" Sch.float in
+       { px; py })
+
+let tagless_widget_schema =
+  Sch.Union.(
+    tagless
+      [ case
+          ~tag:"label"
+          ~inj:(fun s -> Widget_label s)
+          ~proj:(function Widget_label s -> Some s | _ -> None)
+          Sch.string
+      ; case
+          ~tag:"point"
+          ~inj:(fun p -> Widget_point p)
+          ~proj:(function Widget_point p -> Some p | _ -> None)
+          point_schema
+      ])
+
+let test_tagless_union_decode () =
+  (match decode_str_result tagless_payload_schema {|"hello"|} with
+  | Ok (Tagless_text s) -> Alcotest.(check string) "text case" "hello" s
+  | Ok _ -> Alcotest.fail "Expected Tagless_text"
+  | Error errs ->
+    Alcotest.failf
+      "Unexpected errors: %a"
+      Fmt.(list (pair ~sep:comma string string))
+      errs);
+  match decode_str_result tagless_payload_schema {|["a","b"]|} with
+  | Ok (Tagless_items xs) ->
+    Alcotest.(check (list string)) "items case" [ "a"; "b" ] xs
+  | Ok _ -> Alcotest.fail "Expected Tagless_items"
+  | Error errs ->
+    Alcotest.failf
+      "Unexpected errors: %a"
+      Fmt.(list (pair ~sep:comma string string))
+      errs
+
+let test_tagless_union_decode_object_case () =
+  match decode_str_result tagless_widget_schema {|{"x":1.5,"y":2.5}|} with
+  | Ok (Widget_point { px; py }) ->
+    Alcotest.(check (float 1e-9)) "x" 1.5 px;
+    Alcotest.(check (float 1e-9)) "y" 2.5 py
+  | Ok _ -> Alcotest.fail "Expected Widget_point"
+  | Error errs ->
+    Alcotest.failf
+      "Unexpected errors: %a"
+      Fmt.(list (pair ~sep:comma string string))
+      errs
+
+let test_tagless_union_decode_no_match () =
+  match decode_str_result tagless_payload_schema {|42|} with
+  | Error errs ->
+    let has_tag_prefix tag =
+      List.exists (fun (field, _) -> String.equal field tag) errs
+    in
+    Alcotest.(check bool) "text case reported" true (has_tag_prefix "text");
+    Alcotest.(check bool) "items case reported" true (has_tag_prefix "items")
+  | Ok _ -> Alcotest.fail "Expected decode failure"
+
+type dual = Dual of int
+
+let dual_tagless_schema =
+  Sch.Union.(
+    tagless
+      [ case
+          ~tag:"even"
+          ~inj:(fun n -> Dual n)
+          ~proj:(function Dual n when n mod 2 = 0 -> Some n | _ -> None)
+          Sch.int
+      ; case
+          ~tag:"any"
+          ~inj:(fun n -> Dual n)
+          ~proj:(function Dual n -> Some n)
+          Sch.int
+      ])
+
+let test_tagless_union_decode_ambiguous () =
+  match decode_str_result dual_tagless_schema {|4|} with
+  | Error [ (_, msg) ] ->
+    Alcotest.(check string)
+      "ambiguity message"
+      "Ambiguous tagless union: matched cases even, any"
+      msg
+  | Error errs ->
+    Alcotest.failf
+      "Expected single ambiguity error, got: %a"
+      Fmt.(list (pair ~sep:comma string string))
+      errs
+  | Ok _ -> Alcotest.fail "Expected ambiguity error"
+
+let test_tagless_union_encode () =
+  Alcotest.(check string)
+    "encode scalar case"
+    {|"hello"|}
+    (Sch.Json.encode_string tagless_payload_schema (Tagless_text "hello"));
+  Alcotest.(check string)
+    "encode array case"
+    {|["a","b"]|}
+    (Sch.Json.encode_string tagless_payload_schema (Tagless_items [ "a"; "b" ]))
+
+let test_tagless_union_roundtrip () =
+  let values =
+    [ Tagless_text "hello"; Tagless_items [ "a"; "b"; "c" ]; Tagless_items [] ]
+  in
+  List.iter
+    (fun v ->
+       let json = Sch.Json.encode_string tagless_payload_schema v in
+       match decode_str_result tagless_payload_schema json with
+       | Ok v' -> Alcotest.(check tagless_payload_testable) "roundtrip" v v'
+       | Error errs ->
+         Alcotest.failf
+           "Roundtrip error: %a"
+           Fmt.(list (pair ~sep:comma string string))
+           errs)
+    values
+
+let test_tagless_union_encode_ambiguous () =
+  Alcotest.check_raises
+    "ambiguous encode raises"
+    (Invalid_argument "Ambiguous tagless union: matched cases even, any")
+    (fun () -> ignore (Sch.Json.encode_string dual_tagless_schema (Dual 4)));
+  Alcotest.(check string)
+    "unambiguous encode succeeds"
+    "3"
+    (Sch.Json.encode_string dual_tagless_schema (Dual 3))
+
+type loose =
+  | Loose_text of string
+  | Loose_other
+
+let loose_tagless_schema =
+  Sch.Union.(
+    tagless
+      [ case
+          ~tag:"text"
+          ~inj:(fun s -> Loose_text s)
+          ~proj:(function Loose_text s -> Some s | _ -> None)
+          Sch.string
+      ])
+
+let test_tagless_union_encode_no_match () =
+  Alcotest.check_raises
+    "encode with no matching case raises"
+    (Invalid_argument "Sch.Json_encoder: value does not match any union case")
+    (fun () -> ignore (Sch.Json.encode_string loose_tagless_schema Loose_other))
+
+let test_tagless_union_rejects_empty_cases () =
+  Alcotest.check_raises
+    "empty case list rejected"
+    (Invalid_argument "Sch.Union.tagless: at least one case required")
+    (fun () -> ignore (Sch.Union.tagless []))
+
+let test_tagless_union_rejects_duplicate_tags () =
+  Alcotest.check_raises
+    "duplicate tags rejected"
+    (Invalid_argument "Sch.Union.tagless: duplicate case tag")
+    (fun () ->
+       ignore
+         Sch.Union.(
+           tagless
+             [ case
+                 ~tag:"dup"
+                 ~inj:(fun s -> Tagless_text s)
+                 ~proj:(function Tagless_text s -> Some s | _ -> None)
+                 Sch.string
+             ; case
+                 ~tag:"dup"
+                 ~inj:(fun xs -> Tagless_items xs)
+                 ~proj:(function Tagless_items xs -> Some xs | _ -> None)
+                 Sch.(list string)
+             ]))
+
+let test_tagless_union_introspection () =
+  Alcotest.(check string)
+    "type_name"
+    "union"
+    (Sch.type_name tagless_payload_schema);
+  Alcotest.(check (option string))
+    "format_name"
+    None
+    (Sch.format_name tagless_payload_schema);
+  Alcotest.(check bool)
+    "is_object_codec"
+    false
+    (Sch.is_object_codec tagless_payload_schema);
+  Alcotest.(check string)
+    "with_ updates doc"
+    "updated doc"
+    (Sch.doc (Sch.with_ ~doc:"updated doc" tagless_payload_schema))
+
+type wrapper =
+  | Simple of int
+  | Wrapped of tagless_payload
+
+let wrapper_schema =
+  Sch.Union.(
+    define
+      ~discriminator:"kind"
+      [ case
+          ~tag:"simple"
+          ~inj:(fun n -> Simple n)
+          ~proj:(function Simple n -> Some n | _ -> None)
+          Sch.int
+      ; case
+          ~tag:"wrapped"
+          ~inj:(fun p -> Wrapped p)
+          ~proj:(function Wrapped p -> Some p | _ -> None)
+          tagless_payload_schema
+      ])
+
+let test_tagless_union_as_discriminated_case () =
+  Alcotest.(check string)
+    "tagless case nested under value"
+    {|{"kind":"wrapped","value":"hi"}|}
+    (Sch.Json.encode_string wrapper_schema (Wrapped (Tagless_text "hi")))
+
+let test_tagless_union_to_json_schema () =
+  let schema = Sch.to_json_schema tagless_widget_schema in
+  Alcotest.(check bool)
+    "no top-level type"
+    true
+    (Json_schema.Json_type.is_empty schema.Json_schema.type_);
+  Alcotest.(check (option (list string)))
+    "no required"
+    None
+    schema.Json_schema.required;
+  Alcotest.(check (option (list (pair string Alcotest.unit))))
+    "no properties"
+    None
+    (Option.map (List.map (fun (k, _) -> k, ())) schema.Json_schema.properties);
+  match schema.Json_schema.one_of with
+  | Some cases -> Alcotest.(check int) "oneOf length" 2 (List.length cases)
+  | None -> Alcotest.fail "Expected oneOf definitions"
+
+let test_tagless_union_to_json_schema_shapes () =
+  let schema =
+    Sch.to_json_schema
+      (Sch.with_ ~doc:"A text value or a list of values" tagless_payload_schema)
+  in
+  Alcotest.(check (option string))
+    "description"
+    (Some "A text value or a list of values")
+    schema.Json_schema.description;
+  Alcotest.(check bool)
+    "no top-level type"
+    true
+    (Json_schema.Json_type.is_empty schema.Json_schema.type_);
+  match schema.Json_schema.one_of with
+  | Some [ string_case; array_case ] ->
+    let type_of (case : Json_schema.schema) =
+      match case with
+      | Json_schema.Or_bool.Schema (Json_schema.Or_ref.Value obj) ->
+        obj.Json_schema.type_
+      | _ -> Alcotest.fail "Expected an inline schema"
+    in
+    Alcotest.(check bool)
+      "string case"
+      true
+      (Json_schema.Json_type.contains (type_of string_case) String);
+    Alcotest.(check bool)
+      "array case"
+      true
+      (Json_schema.Json_type.contains (type_of array_case) Array)
+  | _ -> Alcotest.fail "Expected exactly two oneOf alternatives"
+
+let tagless_union_tests =
+  [ "decode scalar and array cases", `Quick, test_tagless_union_decode
+  ; "decode object case", `Quick, test_tagless_union_decode_object_case
+  ; ( "decode no match reports tagged errors"
+    , `Quick
+    , test_tagless_union_decode_no_match )
+  ; ( "decode ambiguous reports matching tags"
+    , `Quick
+    , test_tagless_union_decode_ambiguous )
+  ; "encode scalar and array cases", `Quick, test_tagless_union_encode
+  ; "roundtrip through streaming encoder", `Quick, test_tagless_union_roundtrip
+  ; "encode ambiguous raises", `Quick, test_tagless_union_encode_ambiguous
+  ; "encode no match raises", `Quick, test_tagless_union_encode_no_match
+  ; "rejects empty case list", `Quick, test_tagless_union_rejects_empty_cases
+  ; "rejects duplicate tags", `Quick, test_tagless_union_rejects_duplicate_tags
+  ; "generic introspection", `Quick, test_tagless_union_introspection
+  ; ( "used as case inside discriminated union"
+    , `Quick
+    , test_tagless_union_as_discriminated_case )
+  ; ( "to_json_schema oneOf, no discriminator"
+    , `Quick
+    , test_tagless_union_to_json_schema )
+  ; ( "to_json_schema oneOf shapes and description"
+    , `Quick
+    , test_tagless_union_to_json_schema_shapes )
+  ]
+
 (* json schema *)
 let test_json_type () =
   let value = Json_schema.Json_type.(union string number) in
@@ -784,6 +1120,12 @@ let test_to_json_schema_roundtrip () =
   let reparsed = Json_schema.of_string json in
   Alcotest.(check bool) "roundtrip succeeds" true (Result.is_ok reparsed)
 
+let test_tagless_union_to_json_schema_roundtrip () =
+  let schema = Sch.to_json_schema tagless_widget_schema in
+  let json = schema_to_json schema in
+  let reparsed = Json_schema.of_string json in
+  Alcotest.(check bool) "roundtrip succeeds" true (Result.is_ok reparsed)
+
 type tree =
   { value : int
   ; children : tree list
@@ -1142,6 +1484,9 @@ let to_json_schema_tests =
   ; "roundtrip", `Quick, test_to_json_schema_roundtrip
   ; "recursive schema", `Quick, test_to_json_schema_rec
   ; "union schema", `Quick, test_union_to_json_schema
+  ; ( "tagless union schema roundtrip"
+    , `Quick
+    , test_tagless_union_to_json_schema_roundtrip )
   ]
 
 let errs_t = Alcotest.(list (pair string string))
@@ -1282,6 +1627,16 @@ let test_encode_to_json_union_scalar_case () =
   check "text roundtrip" (Text "hello");
   check "count roundtrip" (Count 42)
 
+let test_encode_to_json_tagless_union () =
+  let check label v =
+    Alcotest.(check (result tagless_payload_testable errs_t))
+      label
+      (Ok v)
+      (encode_roundtrip tagless_payload_schema v)
+  in
+  check "text roundtrip" (Tagless_text "hello");
+  check "items roundtrip" (Tagless_items [ "a"; "b" ])
+
 let test_encode_to_json_iso () =
   let bool_str =
     Sch.custom
@@ -1358,6 +1713,7 @@ let encode_to_json_tests =
   ; "omit field", `Quick, test_encode_to_json_omit
   ; "union object case", `Quick, test_encode_to_json_union_object_case
   ; "union scalar case", `Quick, test_encode_to_json_union_scalar_case
+  ; "tagless union roundtrip", `Quick, test_encode_to_json_tagless_union
   ; "iso codec", `Quick, test_encode_to_json_iso
   ; "rec codec", `Quick, test_encode_to_json_rec
   ]
@@ -1435,4 +1791,5 @@ let () =
     ; "Encode_to_json", encode_to_json_tests
     ; "Map", map_tests
     ; "Format", format_tests
+    ; "Tagless_union", tagless_union_tests
     ]

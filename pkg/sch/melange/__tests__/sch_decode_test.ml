@@ -4,6 +4,42 @@ open Expect
 let decode_str_result schema str =
   Sch.Json.decode_string schema str |> Sch.Validation.to_result
 
+type tagless_payload =
+  | Text of string
+  | Items of string list
+
+let tagless_payload_schema =
+  Sch.Union.(
+    tagless
+      [ case
+          ~tag:"text"
+          ~inj:(fun s -> Text s)
+          ~proj:(function Text s -> Some s | _ -> None)
+          Sch.string
+      ; case
+          ~tag:"items"
+          ~inj:(fun xs -> Items xs)
+          ~proj:(function Items xs -> Some xs | _ -> None)
+          Sch.(list string)
+      ])
+
+type dual = Dual of int
+
+let dual_tagless_schema =
+  Sch.Union.(
+    tagless
+      [ case
+          ~tag:"even"
+          ~inj:(fun n -> Dual n)
+          ~proj:(function Dual n when n mod 2 = 0 -> Some n | _ -> None)
+          Sch.int
+      ; case
+          ~tag:"any"
+          ~inj:(fun n -> Dual n)
+          ~proj:(function Dual n -> Some n)
+          Sch.int
+      ])
+
 let () =
   describe "decode string" (fun () ->
     test "single field" (fun () ->
@@ -252,4 +288,26 @@ let () =
 
     test "leap second elsewhere is invalid" (fun () ->
       let result = Sch.Constraint.Fmt.validate `Time "12:34:60" in
-      expect (Result.is_error result) |> toBe true))
+      expect (Result.is_error result) |> toBe true));
+
+  describe "decode tagless union" (fun () ->
+    test "decodes the scalar case" (fun () ->
+      expect (decode_str_result tagless_payload_schema {|"hello"|})
+      |> toEqual (Ok (Text "hello")));
+
+    test "decodes the array case" (fun () ->
+      expect (decode_str_result tagless_payload_schema {|["a","b"]|})
+      |> toEqual (Ok (Items [ "a"; "b" ])));
+
+    test "reports tagged errors when no case matches" (fun () ->
+      match decode_str_result tagless_payload_schema {|42|} with
+      | Error errs ->
+        let has_tag tag = List.exists (fun (f, _) -> f = tag) errs in
+        expect (has_tag "text" && has_tag "items") |> toBe true
+      | Ok _ -> expect false |> toBe true);
+
+    test "reports ambiguity when multiple cases match" (fun () ->
+      match decode_str_result dual_tagless_schema {|4|} with
+      | Error [ (_, msg) ] ->
+        expect msg |> toEqual "Ambiguous tagless union: matched cases even, any"
+      | _ -> expect false |> toBe true))

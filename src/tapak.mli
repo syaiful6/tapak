@@ -8,6 +8,7 @@ module Middleware = Middleware
 module Handler = Handler
 module Service = Service
 module Form = Form
+module Sch_ext = Sch_ext
 module Cookies = Cookies
 module Csrf = Csrf
 module Static = Static

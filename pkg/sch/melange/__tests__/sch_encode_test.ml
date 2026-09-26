@@ -40,6 +40,56 @@ let shape_union_schema =
           rectangle_schema
       ])
 
+type tagless_payload =
+  | Text of string
+  | Items of string list
+
+let tagless_payload_schema =
+  Sch.Union.(
+    tagless
+      [ case
+          ~tag:"text"
+          ~inj:(fun s -> Text s)
+          ~proj:(function Text s -> Some s | _ -> None)
+          Sch.string
+      ; case
+          ~tag:"items"
+          ~inj:(fun xs -> Items xs)
+          ~proj:(function Items xs -> Some xs | _ -> None)
+          Sch.(list string)
+      ])
+
+type dual = Dual of int
+
+let dual_tagless_schema =
+  Sch.Union.(
+    tagless
+      [ case
+          ~tag:"even"
+          ~inj:(fun n -> Dual n)
+          ~proj:(function Dual n when n mod 2 = 0 -> Some n | _ -> None)
+          Sch.int
+      ; case
+          ~tag:"any"
+          ~inj:(fun n -> Dual n)
+          ~proj:(function Dual n -> Some n)
+          Sch.int
+      ])
+
+type loose =
+  | Loose_text of string
+  | Loose_other
+
+let loose_tagless_schema =
+  Sch.Union.(
+    tagless
+      [ case
+          ~tag:"text"
+          ~inj:(fun s -> Loose_text s)
+          ~proj:(function Loose_text s -> Some s | _ -> None)
+          Sch.string
+      ])
+
 type tree =
   { value : int
   ; children : tree list
@@ -132,6 +182,55 @@ let () =
         List.map (encode_roundtrip shape_union_schema) shapes
       in
       expect roundtripped |> toEqual (List.map Result.ok shapes)));
+
+  describe "encode tagless union" (fun () ->
+    test "encodes the scalar case with no wrapper" (fun () ->
+      expect (encode_str tagless_payload_schema (Text "hello"))
+      |> toEqual {|"hello"|});
+
+    test "encodes the array case with no wrapper" (fun () ->
+      expect (encode_str tagless_payload_schema (Items [ "a"; "b" ]))
+      |> toEqual {|["a","b"]|});
+
+    test "roundtrip through decode" (fun () ->
+      let values = [ Text "hello"; Items [ "a"; "b"; "c" ]; Items [] ] in
+      let roundtripped =
+        List.map (encode_roundtrip tagless_payload_schema) values
+      in
+      expect roundtripped |> toEqual (List.map Result.ok values));
+
+    test "raises on ambiguous projection match" (fun () ->
+      expect (fun () -> ignore (encode_str dual_tagless_schema (Dual 4)))
+      |> toThrow);
+
+    test "encodes the unambiguous case" (fun () ->
+      expect (encode_str dual_tagless_schema (Dual 3)) |> toEqual "3");
+
+    test "raises when no case's projection matches" (fun () ->
+      expect (fun () -> ignore (encode_str loose_tagless_schema Loose_other))
+      |> toThrow));
+
+  describe "tagless union constructor validation" (fun () ->
+    test "rejects an empty case list" (fun () ->
+      expect (fun () -> ignore (Sch.Union.tagless [])) |> toThrow);
+
+    test "rejects duplicate tags" (fun () ->
+      expect (fun () ->
+        ignore
+          Sch.Union.(
+            tagless
+              [ case
+                  ~tag:"dup"
+                  ~inj:(fun s -> Text s)
+                  ~proj:(function Text s -> Some s | _ -> None)
+                  Sch.string
+              ; case
+                  ~tag:"dup"
+                  ~inj:(fun xs -> Items xs)
+                  ~proj:(function Items xs -> Some xs | _ -> None)
+                  Sch.(list string)
+              ]))
+      |> toThrow));
 
   describe "encode Iso" (fun () ->
     let bool_str =
