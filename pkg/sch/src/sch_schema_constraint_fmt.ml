@@ -39,21 +39,35 @@ let datetime_re =
   Re.(
     compile
       (Perl.re
-         "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})?$"))
-(* Format: YYYY-MM-DDTHH:MM:SS[.ffffff][Z|(+|-)HH:MM] *)
+         "^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})?$"))
+(* Format: YYYY-MM-DDTHH:MM:SS[.ffffff][Z|(+|-)HH:MM], T and Z are
+   case-insensitive (RFC 3339 section 5.6) *)
 
 let extended_iso_8601_duration_re =
   Re.(
     compile
       (Perl.re
-         "^P(?:(?:[0-9]+Y)?(?:[0-9]+M)?(?:[0-9]+D)?)(?:T(?:[0-9]+H)?(?:[0-9]+M)?(?:[0-9]+S)?)?$"))
-(* Format: PnYnMnDTnHnMnS *)
+         "^P(?:[0-9]+W|(?:[0-9]+Y)?(?:[0-9]+M)?(?:[0-9]+D)?(?:T(?:[0-9]+H)?(?:[0-9]+M)?(?:[0-9]+S)?)?)$"))
+(* Format: PnYnMnDTnHnMnS or PnW. The regex also admits "P", "PT" and a trailing
+   "T"; those are rejected in [validate_duration]. *)
 
 let uuid_re =
   Re.compile
     (Re.Perl.re
        "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 (* Format: 8-4-4-4-12 hexadecimal characters with hyphens *)
+
+(* Number of Unicode code points, as JSON Schema counts string length. Malformed
+   UTF-8 bytes count as one code point each. *)
+let string_length str =
+  let len = String.length str in
+  let rec loop i n =
+    if i >= len
+    then n
+    else
+      loop (i + Uchar.utf_decode_length (String.get_utf_8_uchar str i)) (n + 1)
+  in
+  loop 0 0
 
 let validate_regex pattern =
   try
@@ -224,12 +238,16 @@ let validate_datetime str =
       ]
 
 let validate_duration str =
-  if Re.execp extended_iso_8601_duration_re str
+  let len = String.length str in
+  if
+    Re.execp extended_iso_8601_duration_re str
+    && len > 1
+    && str.[len - 1] <> 'T'
   then Ok str
   else
     Error
       [ "Invalid duration format (expected extended ISO 8601 duration format \
-         PnYnMnDTnHnMnS)"
+         PnYnMnDTnHnMnS or PnW)"
       ]
 
 let validate_uri str =

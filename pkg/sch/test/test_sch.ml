@@ -184,6 +184,77 @@ let test_union_decode_unknown_tag () =
       msg
   | _ -> Alcotest.fail "Expected unknown tag error"
 
+let test_constraint_decode_duration () =
+  let suites =
+    [ "P1Y2M3DT4H5M6S"; "P1Y"; "P2M"; "P3W"; "P4D"; "PT5H"; "PT6M" ]
+  in
+  let schema =
+    Sch.Object.(
+      define
+      @@ mem
+           "duration"
+           Sch.(with_ ~constraint_:(Constraint.format `Duration) string))
+  in
+  List.iter
+    (fun d ->
+       match
+         decode_str_result schema (Printf.sprintf {|{"duration": "%s"}|} d)
+       with
+       | Ok duration -> Alcotest.(check string) "duration constraint" d duration
+       | Error errs ->
+         Alcotest.failf
+           "Unexpected errors: %a"
+           Fmt.(list (pair ~sep:comma string string))
+           errs)
+    suites
+
+let test_constraint_decode_date () =
+  let suites =
+    [ "standard valid date", "2023-01-25", `valid
+    ; "leap year", "1900-02-29", `invalid
+    ; "leap year valid", "2000-02-29", `valid
+    ; "earliest possible date", "0001-01-01", `valid
+    ; "latest possible date", "9999-12-31", `valid
+    ; "december, single digit day", "2023-12-01", `valid
+    ; "month with 30 days", "2023-09-30", `valid
+    ; "empty string should invalid", "", `invalid
+    ; "invalid month 13 return error", "2023-13-01", `invalid
+    ; "invalid day for february", "2023-02-30", `invalid
+    ; "missing day", "2023-01", `invalid
+    ; "completely invalid string return error", "invalid-date", `invalid
+    ]
+  in
+  List.iter
+    (fun (desc, data, expected) ->
+       let result = Sch.Constraint.Fmt.validate `Date data in
+       let expect = match expected with `invalid -> false | `valid -> true in
+       Alcotest.(check bool) desc expect (Result.is_ok result))
+    suites
+
+let test_constraint_decode_duration_invalid () =
+  let suites =
+    [ "P"; "PT"; "P1YT"; "PT1D"; "P2D1Y"; "P1D2H"; "P2S"; "P1Y2W"; "1D"; "" ]
+  in
+  let schema =
+    Sch.Object.(
+      define
+      @@ mem
+           "duration"
+           Sch.(with_ ~constraint_:(Constraint.format `Duration) string))
+  in
+  List.iter
+    (fun d ->
+       match
+         decode_str_result schema (Printf.sprintf {|{"duration": "%s"}|} d)
+       with
+       | Ok _ -> Alcotest.failf "Expected %S to be rejected" d
+       | Error errs ->
+         Alcotest.(check bool)
+           "error on duration field"
+           true
+           (List.exists (fun (f, _) -> f = "duration") errs))
+    suites
+
 let test_union_encode () =
   let result = Sch.Json.encode_string shape_union_schema (Rectangle (2., 4.)) in
   Alcotest.(check string)
@@ -1431,6 +1502,11 @@ let schema_decoder_tests =
   ; ( "union error_on_unknown rejects extra"
     , `Quick
     , test_union_error_on_unknown_rejects_extra )
+  ; "Duration constraint", `Quick, test_constraint_decode_duration
+  ; "Date constraint", `Quick, test_constraint_decode_date
+  ; ( "Duration constraint rejects invalid"
+    , `Quick
+    , test_constraint_decode_duration_invalid )
   ]
 
 (** { 1 Test Suites } *)
@@ -1781,6 +1857,342 @@ let format_tests =
     , test_time_leap_second_elsewhere_invalid )
   ]
 
+(** { 1 Constraint tests } *)
+
+let check_cases ~pp desc validate cases =
+  List.iter
+    (fun (input, expected) ->
+       Alcotest.(check bool)
+         (Format.asprintf "%s %a" desc pp input)
+         expected
+         (Result.is_ok (validate input)))
+    cases
+
+let check_format fmt cases =
+  check_cases
+    ~pp:(fun ppf s -> Format.fprintf ppf "%S" s)
+    "format"
+    (Sch.Constraint.Fmt.validate fmt)
+    cases
+
+let check_constraint ~pp c cases =
+  check_cases ~pp "constraint" (Sch.Constraint.apply (Some c)) cases
+
+let pp_int_list = Fmt.(brackets (list ~sep:semi int))
+
+let test_format_date_time () =
+  check_format
+    `Date_time
+    [ "1963-06-19T08:30:06.283185Z", true
+    ; "1963-06-19T08:30:06Z", true
+    ; "1963-06-19t08:30:06z", true
+    ; "1963-06-19T08:30:06+05:30", true
+    ; "1963-06-19T08:30:06", true
+    ; "1998-12-31T23:59:60Z", true
+    ; "1990-12-31T15:59:60-08:00", true
+    ; "1998-12-31T23:58:60Z", false
+    ; "1963-06-19 08:30:06Z", false
+    ; "1963-06-19", false
+    ; "1963-02-30T08:30:06Z", false
+    ; "1963-06-19T24:00:00Z", false
+    ; "1963-06-19T08:30:06+24:00", false
+    ; "06/19/1963 08:30:06 PST", false
+    ; "", false
+    ]
+
+let test_format_email () =
+  check_format
+    `Email
+    [ "joe.bloggs@example.com", true
+    ; "te+st@example.co.uk", true
+    ; "2962", false
+    ; "joe@", false
+    ; "@example.com", false
+    ; "joe@example", false
+    ; "", false
+    ]
+
+let test_format_hostname () =
+  check_format
+    `Hostname
+    [ "www.example.com", true
+    ; "localhost", true
+    ; "xn--4gbwdl.xn--wgbh1c", true
+    ; "a-b.example", true
+    ; "-a.example", false
+    ; "a-.example", false
+    ; "a_b.example", false
+    ; "a..example", false
+    ; String.make 64 'a' ^ ".com", false
+    ; String.concat "." (List.init 64 (fun _ -> "abc")), false
+    ; "", false
+    ]
+
+let test_format_uri () =
+  check_format
+    `Uri
+    [ "http://foo.bar/?baz=qux#quux", true
+    ; "mailto:joe@example.com", true
+    ; "urn:isbn:0451450523", true
+    ; "//foo.bar/?baz=qux", false
+    ; "/abc", false
+    ; "abc", false
+    ]
+
+let test_format_uuid () =
+  check_format
+    `Uuid
+    [ "2EB8AA08-AA98-11EA-B4AA-73B441D16380", true
+    ; "2eb8aa08-aa98-11ea-b4aa-73b441d16380", true
+    ; "00000000-0000-0000-0000-000000000000", true
+    ; "2eb8aa08aa9811eab4aa73b441d16380", false
+    ; "2eb8aa08-aa98-11ea-b4aa-73b441d1638", false
+    ; "2eb8aa08-aa98-11ea-b4aa-73b441d16380a", false
+    ; "2eb8aa08-aa98-11ea-b4aa-73b441d1638g", false
+    ; "", false
+    ]
+
+let test_format_ipv4 () =
+  check_format
+    `Ipv4
+    [ "192.168.0.1", true
+    ; "0.0.0.0", true
+    ; "255.255.255.255", true
+    ; "256.256.256.256", false
+    ; "127.0", false
+    ; "0x7f000001", false
+    ; "1.2.3.4/24", false
+    ; "", false
+    ]
+
+let test_format_ipv6 () =
+  check_format
+    `Ipv6
+    [ "::1", true
+    ; "::", true
+    ; "2001:db8::ff00:42:8329", true
+    ; "::ffff:192.168.0.1", true
+    ; "12345::", false
+    ; "1:1:1:1:1:1:1:1:1", false
+    ; "::laptop", false
+    ; "", false
+    ]
+
+let test_format_custom () =
+  check_format
+    (`Custom "^[A-Z]{3}-[0-9]+$")
+    [ "ABC-1", true; "XYZ-12345", true; "AB-1", false; "abc-1", false ];
+  Alcotest.(check bool)
+    "invalid regex is an error"
+    true
+    (Result.is_error (Sch.Constraint.Fmt.validate (`Custom "(") "anything"))
+
+let test_constraint_string_length () =
+  let pp ppf s = Format.fprintf ppf "%S" s in
+  check_constraint ~pp (Sch.Constraint.min_length 2) [ "ab", true; "a", false ];
+  check_constraint
+    ~pp
+    (Sch.Constraint.max_length 3)
+    [ "", true; "abc", true; "abcd", false ];
+  check_constraint
+    ~pp
+    (Sch.Constraint.length_range 2 3)
+    [ "a", false; "ab", true; "abc", true; "abcd", false ];
+  (* lengths are counted in code points, not bytes *)
+  check_constraint ~pp (Sch.Constraint.max_length 1) [ "é", true; "日", true ];
+  check_constraint
+    ~pp
+    (Sch.Constraint.min_length 2)
+    [ "\u{1F600}", false; "\u{1F600}\u{1F600}", true ]
+
+let test_constraint_pattern () =
+  check_constraint
+    ~pp:(fun ppf s -> Format.fprintf ppf "%S" s)
+    (Sch.Constraint.pattern "^[a-z]+$")
+    [ "abc", true; "abc1", false; "", false ]
+
+let test_constraint_int () =
+  let pp = Format.pp_print_int in
+  check_constraint ~pp (Sch.Constraint.int_min 5) [ 5, true; 4, false ];
+  check_constraint ~pp (Sch.Constraint.int_max 5) [ 5, true; 6, false ];
+  check_constraint
+    ~pp
+    (Sch.Constraint.int_range 1 3)
+    [ 0, false; 1, true; 3, true; 4, false ];
+  check_constraint
+    ~pp
+    (Sch.Constraint.int_exclusive_min 5)
+    [ 5, false; 6, true ];
+  check_constraint
+    ~pp
+    (Sch.Constraint.int_exclusive_max 5)
+    [ 5, false; 4, true ];
+  check_constraint
+    ~pp
+    (Sch.Constraint.int_multiple_of 3)
+    [ 0, true; 9, true; -6, true; 10, false ];
+  List.iter
+    (fun n ->
+       match Sch.Constraint.int_multiple_of n with
+       | _ -> Alcotest.failf "int_multiple_of %d should be rejected" n
+       | exception Invalid_argument _ -> ())
+    [ 0; -3 ]
+
+let test_constraint_int32 () =
+  let pp ppf n = Format.fprintf ppf "%ld" n in
+  check_constraint ~pp (Sch.Constraint.int32_min 5l) [ 5l, true; 4l, false ];
+  check_constraint ~pp (Sch.Constraint.int32_max 5l) [ 5l, true; 6l, false ];
+  check_constraint
+    ~pp
+    (Sch.Constraint.int32_range Int32.min_int 0l)
+    [ Int32.min_int, true; 0l, true; 1l, false ];
+  check_constraint
+    ~pp
+    (Sch.Constraint.int32_exclusive_min 5l)
+    [ 5l, false; 6l, true ];
+  check_constraint
+    ~pp
+    (Sch.Constraint.int32_exclusive_max 5l)
+    [ 5l, false; 4l, true ]
+
+let test_constraint_int64 () =
+  let pp ppf n = Format.fprintf ppf "%Ld" n in
+  check_constraint ~pp (Sch.Constraint.int64_min 5L) [ 5L, true; 4L, false ];
+  check_constraint ~pp (Sch.Constraint.int64_max 5L) [ 5L, true; 6L, false ];
+  check_constraint
+    ~pp
+    (Sch.Constraint.int64_range 0L Int64.max_int)
+    [ -1L, false; 0L, true; Int64.max_int, true ];
+  check_constraint
+    ~pp
+    (Sch.Constraint.int64_exclusive_min 5L)
+    [ 5L, false; 6L, true ];
+  check_constraint
+    ~pp
+    (Sch.Constraint.int64_exclusive_max 5L)
+    [ 5L, false; 4L, true ]
+
+let test_constraint_float () =
+  let pp = Format.pp_print_float in
+  check_constraint ~pp (Sch.Constraint.float_min 1.5) [ 1.5, true; 1.4, false ];
+  check_constraint ~pp (Sch.Constraint.float_max 1.5) [ 1.5, true; 1.6, false ];
+  check_constraint
+    ~pp
+    (Sch.Constraint.float_range 0. 1.)
+    [ -0.1, false; 0., true; 1., true; 1.1, false ];
+  check_constraint
+    ~pp
+    (Sch.Constraint.float_exclusive_min 0.)
+    [ 0., false; 0.1, true ];
+  check_constraint
+    ~pp
+    (Sch.Constraint.float_exclusive_max 1.)
+    [ 1., false; 0.9, true ]
+
+let test_constraint_list () =
+  let pp = pp_int_list in
+  check_constraint
+    ~pp
+    (Sch.Constraint.min_items 2)
+    [ [ 1; 2 ], true; [ 1 ], false; [], false ];
+  check_constraint
+    ~pp
+    (Sch.Constraint.max_items 2)
+    [ [], true; [ 1; 2 ], true; [ 1; 2; 3 ], false ];
+  check_constraint
+    ~pp
+    Sch.Constraint.unique_items
+    [ [], true; [ 1; 2; 3 ], true; [ 1; 2; 1 ], false ]
+
+let test_constraint_combinators () =
+  let open Sch.Constraint in
+  let pp = Format.pp_print_int in
+  check_constraint
+    ~pp
+    (any_of [ int_max 0; int_min 10 ])
+    [ -1, true; 10, true; 5, false ];
+  check_constraint
+    ~pp
+    (all_of [ int_min 0; int_max 10; int_multiple_of 2 ])
+    [ 4, true; 5, false; 12, false; -2, false ];
+  (* exactly one: multiples of 2 xor multiples of 3 *)
+  check_constraint
+    ~pp
+    (one_of [ int_multiple_of 2; int_multiple_of 3 ])
+    [ 4, true; 9, true; 6, false; 7, false ];
+  check_constraint ~pp (not (int_range 1 5)) [ 0, true; 3, false; 6, true ];
+  check_constraint
+    ~pp:(fun ppf s -> Format.fprintf ppf "%S" s)
+    (all_of [ min_length 3; not (format `Email) ])
+    [ "abc", true; "ab", false; "a@example.com", false ]
+
+let test_constraint_apply_all () =
+  let open Sch.Constraint in
+  Alcotest.(check (result int (list string)))
+    "all pass"
+    (Ok 5)
+    (apply_all [ int_min 0; int_max 10 ] 5);
+  match apply_all [ int_min 10; int_max 0 ] 5 with
+  | Ok _ -> Alcotest.fail "Expected errors"
+  | Error errs -> Alcotest.(check int) "errors accumulated" 2 (List.length errs)
+
+let test_constraint_decode_through_schema () =
+  let schema =
+    Sch.Object.(
+      define
+      @@ let+ tags =
+           mem
+             "tags"
+             (Sch.list
+                ~constraint_:
+                  Sch.Constraint.(all_of [ min_items 1; unique_items ])
+                Sch.string)
+         and+ ratio =
+           mem
+             "ratio"
+             Sch.(with_ ~constraint_:(Constraint.float_range 0. 1.) float)
+         and+ id =
+           mem "id" Sch.(with_ ~constraint_:(Constraint.format `Uuid) string)
+         in
+         tags, ratio, id)
+  in
+  let fields json =
+    match decode_str_result schema json with
+    | Ok _ -> []
+    | Error errs -> List.map fst errs |> List.sort_uniq String.compare
+  in
+  Alcotest.(check (list string))
+    "valid document"
+    []
+    (fields
+       {|{"tags": ["a", "b"], "ratio": 0.5,
+          "id": "2eb8aa08-aa98-11ea-b4aa-73b441d16380"}|});
+  Alcotest.(check (list string))
+    "every invalid field reported"
+    [ "id"; "ratio"; "tags" ]
+    (fields {|{"tags": ["a", "a"], "ratio": 1.5, "id": "nope"}|})
+
+let constraint_tests =
+  [ "format date-time", `Quick, test_format_date_time
+  ; "format email", `Quick, test_format_email
+  ; "format hostname", `Quick, test_format_hostname
+  ; "format uri", `Quick, test_format_uri
+  ; "format uuid", `Quick, test_format_uuid
+  ; "format ipv4", `Quick, test_format_ipv4
+  ; "format ipv6", `Quick, test_format_ipv6
+  ; "format custom", `Quick, test_format_custom
+  ; "string length", `Quick, test_constraint_string_length
+  ; "pattern", `Quick, test_constraint_pattern
+  ; "int", `Quick, test_constraint_int
+  ; "int32", `Quick, test_constraint_int32
+  ; "int64", `Quick, test_constraint_int64
+  ; "float", `Quick, test_constraint_float
+  ; "list", `Quick, test_constraint_list
+  ; "combinators", `Quick, test_constraint_combinators
+  ; "apply_all", `Quick, test_constraint_apply_all
+  ; "decode through schema", `Quick, test_constraint_decode_through_schema
+  ]
+
 let () =
   Alcotest.run
     "Sch"
@@ -1791,5 +2203,6 @@ let () =
     ; "Encode_to_json", encode_to_json_tests
     ; "Map", map_tests
     ; "Format", format_tests
+    ; "Constraint", constraint_tests
     ; "Tagless_union", tagless_union_tests
     ]

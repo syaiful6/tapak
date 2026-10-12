@@ -28,7 +28,11 @@ type _ t =
 let int_min n = Numeric (Int_ty, [ Min n ])
 let int_max n = Numeric (Int_ty, [ Max n ])
 let int_range min max = Numeric (Int_ty, [ Min min; Max max ])
-let int_multiple_of n = Numeric (Int_ty, [ Multiple_of n ])
+
+let int_multiple_of n =
+  if n <= 0 then invalid_arg "Constraint.int_multiple_of: divisor must be > 0";
+  Numeric (Int_ty, [ Multiple_of n ])
+
 let int32_min n = Numeric (Int32_ty, [ Min n ])
 let int32_max n = Numeric (Int32_ty, [ Max n ])
 let int32_range min max = Numeric (Int32_ty, [ Min min; Max max ])
@@ -198,7 +202,7 @@ let rec eval : type a. a t -> a -> (a, string list) result =
  fun constraint_ value ->
   match constraint_ with
   | Min_length min_len ->
-    let len = String.length value in
+    let len = Sch_schema_constraint_fmt.string_length value in
     if len < min_len
     then
       Error
@@ -206,7 +210,7 @@ let rec eval : type a. a t -> a -> (a, string list) result =
         ]
     else Ok value
   | Max_length max_len ->
-    let len = String.length value in
+    let len = Sch_schema_constraint_fmt.string_length value in
     if len > max_len
     then
       Error [ Printf.sprintf "String length %d exceeds maximum %d" len max_len ]

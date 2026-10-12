@@ -164,6 +164,39 @@ let () =
               ; "name", "String length 2 is less than minimum 3"
               ])));
 
+  describe "date-time constraint" (fun () ->
+    test "decodes to the full date-time string" (fun () ->
+      let schema =
+        Sch.(with_ ~constraint_:(Constraint.format `Date_time) string)
+      in
+      expect (decode_str_result schema {|"1963-06-19T08:30:06Z"|})
+      |> toEqual (Ok "1963-06-19T08:30:06Z"));
+
+    test "lowercase t and z are valid" (fun () ->
+      let result =
+        Sch.Constraint.Fmt.validate `Date_time "1963-06-19t08:30:06z"
+      in
+      expect (Result.is_ok result) |> toBe true);
+
+    test "invalid date part is rejected" (fun () ->
+      let result =
+        Sch.Constraint.Fmt.validate `Date_time "1963-02-30T08:30:06Z"
+      in
+      expect (Result.is_error result) |> toBe true));
+
+  describe "string length constraint" (fun () ->
+    test "counts code points, not code units" (fun () ->
+      let check c s = Result.is_ok (Sch.Constraint.apply (Some c) s) in
+      expect
+        ( check (Sch.Constraint.max_length 1) {js|😀|js}
+        , check (Sch.Constraint.max_length 1) {js|é|js}
+        , check (Sch.Constraint.min_length 2) {js|😀|js} )
+      |> toEqual (true, true, false)));
+
+  describe "multiple_of constraint" (fun () ->
+    test "rejects non-positive divisor" (fun () ->
+      expect (fun () -> Sch.Constraint.int_multiple_of 0) |> toThrow));
+
   describe "date constraint" (fun () ->
     test "standard valid date" (fun () ->
       let result = Sch.Constraint.Fmt.validate `Date "2023-01-25" in

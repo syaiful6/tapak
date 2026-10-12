@@ -42,6 +42,12 @@ let uuid_re =
     "/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/"]
 (* Format: 8-4-4-4-12 hexadecimal characters with hyphens *)
 
+(* Number of Unicode code points, as JSON Schema counts string length. JS
+   strings are UTF-16, so iterating with for-of walks code points rather than
+   code units. *)
+let string_length : string -> int =
+  [%mel.raw {|function (s) { var n = 0; for (var _ of s) { n++; } return n; }|}]
+
 let validate_regex pattern =
   try
     Js.Re.fromString pattern |> ignore;
@@ -249,7 +255,7 @@ let validate_datetime str =
     in
     match validate_date date_part with
     | Error e -> Error e
-    | Ok _ -> validate_time time_part
+    | Ok _ -> validate_time time_part |> Result.map (fun _ -> str)
 
 let validate_duration str =
   if Js.Re.test ~str extended_iso_8601_duration_re
