@@ -51,7 +51,7 @@ let echo_handler req =
 
   match method_ with
   | `POST | `PUT ->
-    let body_content = Eio.Flow.read_all (Request.body req) in
+    let body_content = Bytesrw.Bytes.Reader.to_string (Request.body req) in
     let encoding_header = Request.header "Content-Encoding" req in
     let encoding_status =
       match encoding_header with
@@ -210,7 +210,7 @@ let update_user_schema =
     message, data)
 
 let api_update_user_handler req id =
-  let body_content = Eio.Flow.read_all (Tapak.Request.body req) in
+  let body_content = Bytesrw.Bytes.Reader.to_string (Tapak.Request.body req) in
   let message = Printf.sprintf "User %Ld updated" id, body_content in
   Tapak.json ~status:`OK (Sch.Json.encode_string update_user_schema message)
 

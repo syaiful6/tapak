@@ -28,7 +28,7 @@ let make_request
     ~version:`HTTP_1_1
     ~meth
     ~headers:(Tapak.Headers.of_list hdrs)
-    ~body:(Cohttp_eio.Body.of_string "")
+    ~body:(Bytesrw.Bytes.Reader.of_string "")
     "/"
 
 let test_no_origin_header_passes_through () =

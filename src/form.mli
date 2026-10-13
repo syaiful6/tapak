@@ -104,7 +104,7 @@ module Urlencoded : sig
   type t = (string * string list) list
 
   val of_string : string -> t
-  val of_body : _ Eio.Flow.source -> t
+  val of_body : Bytesrw.Bytes.Reader.t -> t
   val of_query : Request.t -> t
 
   val normalize : t -> t

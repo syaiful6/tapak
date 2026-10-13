@@ -17,17 +17,9 @@ module Multipart = struct
     content_disposition h
     |> Fun.flip Option.bind Multipart_form.Content_disposition.name
 
-  let stream
-        ~sw
-        ?(bounds = 10)
-        ?(buffer_size = 8192)
-        ~identify
-        flow
-        content_type
-    =
+  let stream ~sw ?(bounds = 10) ~identify reader content_type =
     let output = Eio.Stream.create max_int in
     let q = Queue.create () in
-    let buf = Cstruct.create buffer_size in
     let fresh_id =
       let r = ref 0 in
       fun () ->
@@ -63,11 +55,10 @@ module Multipart = struct
         go ()
       | exception Queue.Empty ->
         let data =
-          try
-            let n = Eio.Flow.single_read flow buf in
-            `String (Cstruct.to_string (Cstruct.sub buf 0 n))
-          with
-          | End_of_file -> `Eof
+          let slice = Bytesrw.Bytes.Reader.read reader in
+          if Bytesrw.Bytes.Slice.is_eod slice
+          then `Eof
+          else `String (Bytesrw.Bytes.Slice.to_string slice)
         in
         (match parser data with
         | `Continue -> go ()
@@ -246,7 +237,7 @@ module Urlencoded = struct
   type t = (string * string list) list
 
   let of_string s = if s = "" then [] else s |> Uri.query_of_encoded
-  let of_body body = Eio.Flow.read_all body |> of_string
+  let of_body body = Bytesrw.Bytes.Reader.to_string body |> of_string
 
   let of_query request =
     let target = Request.target request in

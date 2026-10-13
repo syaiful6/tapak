@@ -5,7 +5,7 @@ type t =
   ; meth : Http.Method.t
   ; target : string
   ; version : Http.Version.t
-  ; body : Eio.Flow.source_ty Eio.Resource.t
+  ; body : Bytesrw.Bytes.Reader.t
   ; client_addr : string option
     (* ip addr of the client, if none it connected from unix socket *)
   ; is_secure : bool
@@ -27,7 +27,7 @@ let meth t = t.meth
 let target t = t.target
 let version t = t.version
 let body t = t.body
-let empty_body = Cohttp_eio.Body.of_string ""
+let empty_body = Bytesrw.Bytes.Reader.empty ()
 
 let is_trusted_proxy ~trusted_proxies ip =
   match ip with

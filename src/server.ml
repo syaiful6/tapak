@@ -18,7 +18,13 @@ let request_from_cohttp :
   let meth = Http.Request.meth req in
   let target = Http.Request.resource req in
   let version = Http.Request.version req in
-  Request.make ?client_addr ~version ~headers ~meth ~body target
+  Request.make
+    ?client_addr
+    ~version
+    ~headers
+    ~meth
+    ~body:(Bytesrw_util.reader_of_flow body)
+    target
 
 let add_connection_header request headers =
   match Headers.connection headers with

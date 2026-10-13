@@ -5,4 +5,4 @@
  (enabled_if
   (= %{profile} dev))
  (modules route_bench)
- (libraries tapak benchmark))
+ (libraries tapak bytesrw benchmark))

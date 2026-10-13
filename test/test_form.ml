@@ -98,7 +98,7 @@ let test_of_string_complex () =
 
 let test_of_body_success () =
   let body_content = "name=value&foo=bar" in
-  let body = Cohttp_eio.Body.of_string body_content in
+  let body = Bytesrw.Bytes.Reader.of_string body_content in
   let result = Form.Urlencoded.of_body body in
   Alcotest.(check urlencoded_testable)
     "Parse body successfully"
@@ -106,13 +106,13 @@ let test_of_body_success () =
     result
 
 let test_of_body_empty () =
-  let body = Cohttp_eio.Body.of_string "" in
+  let body = Bytesrw.Bytes.Reader.empty () in
   let result = Form.Urlencoded.of_body body in
   Alcotest.(check urlencoded_testable) "Parse empty body" [] result
 
 let make_test_request_with_query query =
   let target = "/test" ^ query in
-  Request.make ~body:(Cohttp_eio.Body.of_string "") target
+  Request.make ~body:(Bytesrw.Bytes.Reader.empty ()) target
 
 let test_of_query_empty () =
   let request = make_test_request_with_query "" in
@@ -426,7 +426,7 @@ let test_multipart_parsing () =
   let request =
     Request.make
       ~headers
-      ~body:(Cohttp_eio.Body.of_string multipart_content)
+      ~body:(Bytesrw.Bytes.Reader.of_string multipart_content)
       "/upload"
   in
   let result = Form.Multipart.parse request in
@@ -442,7 +442,8 @@ let test_multipart_parsing_invalid () =
   let request =
     Request.make
       ~headers
-      ~body:(Cohttp_eio.Body.of_string "this is not valid multipart content")
+      ~body:
+        (Bytesrw.Bytes.Reader.of_string "this is not valid multipart content")
       "/upload"
   in
   let result = Form.Multipart.parse request in
