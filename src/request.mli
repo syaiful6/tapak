@@ -5,14 +5,14 @@ include Headers.S with type t := t
 val meth : t -> Http.Method.t
 val target : t -> string
 val version : t -> Http.Version.t
-val body : t -> Eio.Flow.source_ty Eio.Resource.t
+val body : t -> Bytesrw.Bytes.Reader.t
 val is_secure : ?trusted_proxies:Ipaddr.Prefix.t list -> t -> bool
 val client_ip : ?trusted_proxies:Ipaddr.Prefix.t list -> t -> string
 val is_keep_alive : t -> bool
 
 val make :
    ?version:Http.Version.t
-  -> ?body:Eio.Flow.source_ty Eio.Resource.t
+  -> ?body:Bytesrw.Bytes.Reader.t
   -> ?client_addr:string
   -> ?headers:Headers.t
   -> ?meth:Http.Method.t
@@ -25,7 +25,7 @@ val with_ :
   -> ?target:string
   -> ?version:Http.Version.t
   -> ?headers:Http.Header.t
-  -> ?body:Eio.Flow.source_ty Eio.Resource.t
+  -> ?body:Bytesrw.Bytes.Reader.t
   -> ?client_addr:string option
   -> ?is_secure:bool
   -> t

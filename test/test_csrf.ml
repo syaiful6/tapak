@@ -12,7 +12,7 @@ let make_request ?cookie () =
   Tapak.Request.make
     ~version:`HTTP_1_1
     ~headers
-    ~body:(Cohttp_eio.Body.of_string "")
+    ~body:(Bytesrw.Bytes.Reader.empty ())
     "/test"
 
 let make_response () = Tapak.html "<h1>Test</h1>"

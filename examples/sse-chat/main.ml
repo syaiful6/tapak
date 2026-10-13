@@ -298,7 +298,9 @@ let chat_stream_handler room () =
 
 let post_message_handler room user_id req =
   let open Tapak in
-  let body_str = Request.body req |> Eio.Flow.read_all |> String.trim in
+  let body_str =
+    Request.body req |> Bytesrw.Bytes.Reader.to_string |> String.trim
+  in
   if String.length body_str = 0
   then Response.of_string ~status:`Bad_request "Message cannot be empty"
   else if String.length body_str > 500

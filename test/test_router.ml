@@ -4,7 +4,7 @@ let make_request ?(meth = `GET) target =
   Request.make
     ~version:`HTTP_1_1
     ~meth
-    ~body:(Cohttp_eio.Body.of_string "")
+    ~body:(Bytesrw.Bytes.Reader.empty ())
     target
 
 let is_hex_color ~off ~len s =
@@ -629,7 +629,7 @@ let test_response_model () =
     Request.make
       ~headers:(Headers.of_list [ "user-agent", "alcotest" ])
       ~meth:`GET
-      ~body:(Cohttp_eio.Body.of_string "")
+      ~body:(Bytesrw.Bytes.Reader.empty ())
       "/users/100"
   in
   match match' [ route ] request with
@@ -656,7 +656,7 @@ let test_route_with_header () =
     Request.make
       ~headers:(Headers.of_list [ "x-api-key", "secret123" ])
       ~meth:`GET
-      ~body:(Cohttp_eio.Body.of_string "")
+      ~body:(Bytesrw.Bytes.Reader.empty ())
       "/api/data"
   in
   match match' [ route ] request with
@@ -682,7 +682,7 @@ let test_route_header_case_insensitive () =
     Request.make
       ~headers:(Headers.of_list [ "CONTENT-TYPE", "application/json" ])
       ~meth:`POST
-      ~body:(Cohttp_eio.Body.of_string "")
+      ~body:(Bytesrw.Bytes.Reader.empty ())
       "/api/upload"
   in
   match match' [ route ] request with
@@ -732,7 +732,7 @@ let test_route_multiple_headers () =
       ~headers:
         (Headers.of_list [ "x-api-key", "secret123"; "x-user-id", "user42" ])
       ~meth:`GET
-      ~body:(Cohttp_eio.Body.of_string "")
+      ~body:(Bytesrw.Bytes.Reader.empty ())
       "/api/user-data"
   in
   match match' [ route ] request with
@@ -764,7 +764,7 @@ let test_route_optional_header () =
     Request.make
       ~headers:(Headers.of_list [ "x-request-id", "req-123" ])
       ~meth:`GET
-      ~body:(Cohttp_eio.Body.of_string "")
+      ~body:(Bytesrw.Bytes.Reader.empty ())
       "/api/endpoint"
   in
   let request_without = make_request "/api/endpoint" in
@@ -802,14 +802,14 @@ let test_route_header_validation () =
     Request.make
       ~headers:(Headers.of_list [ "authorization", "Bearer token123" ])
       ~meth:`GET
-      ~body:(Cohttp_eio.Body.of_string "")
+      ~body:(Bytesrw.Bytes.Reader.empty ())
       "/api/secure"
   in
   let invalid_request =
     Request.make
       ~headers:(Headers.of_list [ "authorization", "Basic token123" ])
       ~meth:`GET
-      ~body:(Cohttp_eio.Body.of_string "")
+      ~body:(Bytesrw.Bytes.Reader.empty ())
       "/api/secure"
   in
   (match match' [ route ] valid_request with
@@ -1005,7 +1005,7 @@ let test_recover_validation_failed () =
     Request.make
       ~headers:(Headers.of_list [ "content-type", "application/json" ])
       ~meth:`POST
-      ~body:(Cohttp_eio.Body.of_string {|{"age": 15}|})
+      ~body:(Bytesrw.Bytes.Reader.of_string {|{"age": 15}|})
       "/users"
   in
   match match' [ route ] request with
@@ -1035,7 +1035,7 @@ let test_recover_bad_request () =
     Request.make
       ~headers:(Headers.of_list [ "content-type", "text/plain" ])
       ~meth:`POST
-      ~body:(Cohttp_eio.Body.of_string "invalid")
+      ~body:(Bytesrw.Bytes.Reader.of_string "invalid")
       "/data"
   in
   match match' [ route ] request with
@@ -1067,7 +1067,7 @@ let test_recover_reraises_when_none () =
     Request.make
       ~headers:(Headers.of_list [ "content-type", "application/json" ])
       ~meth:`POST
-      ~body:(Cohttp_eio.Body.of_string {|{"num": 99}|})
+      ~body:(Bytesrw.Bytes.Reader.of_string {|{"num": 99}|})
       "/test"
   in
   try
@@ -1094,7 +1094,7 @@ let test_recover_has_request_access () =
     Request.make
       ~headers:(Headers.of_list [ "content-type", "application/json" ])
       ~meth:`POST
-      ~body:(Cohttp_eio.Body.of_string {|{"value": "invalid"}|})
+      ~body:(Bytesrw.Bytes.Reader.of_string {|{"value": "invalid"}|})
       "/api/data"
   in
   (match match' [ route ] request with
@@ -1130,7 +1130,7 @@ let test_recover_on_scope () =
     Request.make
       ~headers:(Headers.of_list [ "content-type", "application/json" ])
       ~meth:`POST
-      ~body:(Cohttp_eio.Body.of_string {|{"age": 150}|})
+      ~body:(Bytesrw.Bytes.Reader.of_string {|{"age": 150}|})
       "/api/users"
   in
   match match' [ route ] request with
@@ -1158,7 +1158,7 @@ let test_recover_success_path () =
     Request.make
       ~headers:(Headers.of_list [ "content-type", "application/json" ])
       ~meth:`POST
-      ~body:(Cohttp_eio.Body.of_string {|{"value": 42}|})
+      ~body:(Bytesrw.Bytes.Reader.of_string {|{"value": 42}|})
       "/data"
   in
   match match' [ route ] request with

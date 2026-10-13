@@ -26,7 +26,7 @@ let call (decoder : decoder) next request =
   match content_encodings request with
   | None -> next request
   | Some encodings ->
-    let reader = Request.body request |> Bytesrw_util.reader_of_flow in
+    let reader = Request.body request in
     let rec aux algorithms cr =
       match algorithms with
       | [] -> Ok cr
@@ -42,7 +42,7 @@ let call (decoder : decoder) next request =
     | Ok reader ->
       let new_request =
         request
-        |> Request.with_ ~body:(Bytesrw_util.source_of_reader reader)
+        |> Request.with_ ~body:reader
         |> Request.remove_header "Content-Encoding"
         |> Request.remove_header "Content-Length"
       in

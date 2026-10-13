@@ -453,12 +453,10 @@ module MockFile = struct
     | Folder _ -> Error `Not_found
 end
 
-let body_empty = Cohttp_eio.Body.of_string ""
-
 let make_request ?(headers = []) ?(meth = `GET) segments =
   let path = "/" ^ String.concat "/" segments in
   let headers = Headers.of_list headers in
-  Request.make ~headers ~meth ~body:body_empty path
+  Request.make ~headers ~meth ~body:(Bytesrw.Bytes.Reader.empty ()) path
 
 let test_serve_simple_file () =
   MockFile.reset ();

@@ -558,7 +558,7 @@ let evaluate_body_schema : type a.
  fun input schema request ->
   match input with
   | Json ->
-    Sch.Json.decode_string schema (Eio.Flow.read_all (Request.body request))
+    Sch.Json.decode_reader schema (Request.body request)
     |> Sch.Validation.to_result
   | Urlencoded ->
     Sch.Json.decode

@@ -4,7 +4,7 @@ let create_mock_request ~meth ~path =
   Request.make
     ~version:`HTTP_1_1
     ~meth
-    ~body:(Cohttp_eio.Body.of_string "")
+    ~body:(Bytesrw.Bytes.Reader.empty ())
     path
 
 let ok body = Response.of_string ~status:`OK body
