@@ -54,14 +54,14 @@ let reader_of_flow
       (flow : _ Eio.Flow.source)
   =
   let buf_size = Bytes.Slice.check_length slice_length in
+  let cstruct = Cstruct.create buf_size in
+  let bytes = Stdlib.Bytes.create buf_size in
   let read () =
-    let cstruct = Cstruct.create buf_size in
     match Eio.Flow.single_read flow cstruct with
     | 0 -> Bytes.Slice.eod
     | count ->
-      let data = Cstruct.sub cstruct 0 count in
-      let buf = Cstruct.to_bytes data in
-      Bytes.Slice.make buf ~first:0 ~length:count
+      Cstruct.blit_to_bytes cstruct 0 bytes 0 count;
+      Bytes.Slice.make bytes ~first:0 ~length:count
     | exception End_of_file -> Bytes.Slice.eod
   in
   Bytes.Reader.make read
