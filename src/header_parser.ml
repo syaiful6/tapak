@@ -25,7 +25,7 @@ module Accept = struct
       false
     | _ -> true
 
-  let ows = skip is_space <|> return ()
+  let ows = skip_while is_space
   let token = take_while1 is_token
 
   let sep_by1_comma value_parser =
@@ -110,7 +110,7 @@ module Media_type = struct
 
   let is_space = function ' ' | '\t' -> true | _ -> false
   let is_token = Accept.is_token
-  let ows = skip is_space <|> return ()
+  let ows = skip_while is_space
   let token = take_while1 is_token
 
   let media_range_parser =
@@ -214,21 +214,29 @@ module Range = struct
     Format.sprintf "bytes=%s" (String.concat ~sep:"," (List.map to_string xs))
 
   let is_space = function ' ' | '\t' -> true | _ -> false
-  let ows = skip is_space <|> return ()
+  let ows = skip_while is_space
 
   let int64_parser =
-    take_while1 (function '0' .. '9' -> true | _ -> false) >>| Int64.of_string
+    take_while1 (function '0' .. '9' -> true | _ -> false) >>= fun digits ->
+    match Int64.of_string_opt digits with
+    | Some n -> return n
+    | None -> fail "range value out of int64 range"
 
-  let range_parser =
-    ows
-    *> (lift2
-          (fun start end_opt ->
-             match end_opt with
-             | Some end_ -> From_to (start, end_)
-             | None -> From start)
-          int64_parser
-          (char '-' *> option None (int64_parser >>| Option.some))
-       <|> char '-' *> lift (fun len -> Suffix len) int64_parser)
+  (* RFC 7233 section 2.1: a byte-range-spec is invalid if last-byte-pos is less
+     than first-byte-pos. *)
+  let from_to start end_ =
+    if Int64.compare end_ start < 0
+    then fail "range end precedes range start"
+    else return (From_to (start, end_))
+
+  let start_range =
+    int64_parser >>= fun start ->
+    char '-' *> option None (int64_parser >>| Option.some) >>= function
+    | Some end_ -> from_to start end_
+    | None -> return (From start)
+
+  let suffix_range = char '-' *> lift (fun len -> Suffix len) int64_parser
+  let range_parser = ows *> (start_range <|> suffix_range)
 
   let ranges_parser =
     string "bytes=" *> sep_by1 (ows *> char ',' *> ows) range_parser

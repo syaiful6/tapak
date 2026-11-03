@@ -70,3 +70,10 @@ let static ~env ?config ?(follow = false) ?ttl_seconds path () =
 
 let openapi = Openapi.generate_string
 let run = Server.run
+
+module Private = struct
+  module Header_parser = Header_parser
+  module Http_date = Http_date
+  module Openapi = Openapi
+  module Socket_protocol = Socket_protocol
+end
