@@ -13,4 +13,5 @@ let () =
        ; Test_channel.tests
        ; Test_cookies.tests
        ; Test_sch_ext.tests
+       ; Test_header_parser.tests
        ])

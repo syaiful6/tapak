@@ -140,3 +140,14 @@ val run :
   -> _ Eio.Net.listening_socket
   -> Handler.t
   -> 'a
+
+(** Unstable implementation details exposed for tests and advanced integrations.
+
+    Anything under [Private] may change or disappear without notice and is not
+    covered by Tapak's public API compatibility guarantees. *)
+module Private : sig
+  module Header_parser = Header_parser
+  module Http_date = Http_date
+  module Openapi = Openapi
+  module Socket_protocol = Socket_protocol
+end
