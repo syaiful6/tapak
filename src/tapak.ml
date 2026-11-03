@@ -75,5 +75,4 @@ module Private = struct
   module Header_parser = Header_parser
   module Http_date = Http_date
   module Openapi = Openapi
-  module Socket_protocol = Socket_protocol
 end
