@@ -282,13 +282,15 @@ let rec get_method_and_path : type a b.
 type operation_parts =
   { parameters : Spec.Parameter.t list
   ; body : (Router.media_type * Spec.Json_schema.t) option
+  ; body_required : bool
   ; response : (Http.Status.t * Spec.Json_schema.t) option
   }
 
 let rec extract_parts : type a b. (a, b) Router.schema -> operation_parts =
  fun schema ->
   match schema with
-  | Router.Method _ -> { parameters = []; body = None; response = None }
+  | Router.Method _ ->
+    { parameters = []; body = None; body_required = true; response = None }
   | Router.Query { schema; rest } ->
     let parts = extract_parts rest in
     let params = To_parameter.convert Spec.Location.Query schema in
@@ -325,12 +327,12 @@ let make_media_type json_schema =
     ; encoding = []
     }
 
-let make_request_body description input_type json_schema =
+let make_request_body description input_type json_schema required =
   Spec.Request_body.
     { description
     ; content =
         [ content_type_of_media_type input_type, make_media_type json_schema ]
-    ; required = Some true
+    ; required = Some required
     }
 
 let make_responses status json_schema =
@@ -367,7 +369,8 @@ let build_operation all_param_refs parts metadata =
            (make_request_body
               metadata.Router.body_description
               input_type
-              json_schema))
+              json_schema
+              parts.body_required))
       parts.body
   in
   let responses =
@@ -442,6 +445,7 @@ let assemble ~title ~version ~description operations =
   let path_map : (string, Spec.Path_item.t) Hashtbl.t = Hashtbl.create 16 in
   List.iter
     (fun (full_path, meth, operation) ->
+       let full_path = if String.equal full_path "" then "/" else full_path in
        let item =
          Option.value
            ~default:empty_path_item
@@ -508,20 +512,29 @@ module Of_router2 = struct
   type parts =
     { parameters : Spec.Parameter.t Diflist.t
     ; body : (Router.media_type * Spec.Json_schema.t) option
+    ; body_optional : bool
+    ; never : bool
     }
 
   module Pc = Sch.Sig.Make (struct
       type 'a t = parts
     end)
 
-  let empty = { parameters = Diflist.empty; body = None }
+  let empty =
+    { parameters = Diflist.empty
+    ; body = None
+    ; body_optional = false
+    ; never = false
+    }
 
   (* A body can only be consumed once, so the first one declared is the one that
      gets the data. *)
   let combine first second =
+    let with_body = match first.body with Some _ -> first | None -> second in
     { parameters = Diflist.concat first.parameters second.parameters
-    ; body =
-        (match first.body with Some _ -> first.body | None -> second.body)
+    ; body = with_body.body
+    ; body_optional = with_body.body_optional
+    ; never = first.never || second.never
     }
 
   let pc_applicative : Pc.t Sch.Sig.applicative =
@@ -538,6 +551,61 @@ module Of_router2 = struct
           params
           Diflist.empty
     }
+
+  (* Gates and the block can read the same parameter, but OpenAPI forbids
+     repeating a name and location in one operation. The request fails if any
+     reader requires the parameter, so required wins. *)
+  let same_parameter (a : Spec.Parameter.t) (b : Spec.Parameter.t) =
+    a.in_ = b.in_
+    &&
+    match a.in_ with
+    | Spec.Location.Header -> Sch_ext.CI.equal a.name b.name
+    | _ -> String.equal a.name b.name
+
+  let merge_duplicates params =
+    List.fold_left
+      (fun acc (p : Spec.Parameter.t) ->
+         if List.exists (same_parameter p) acc
+         then
+           List.map
+             (fun (q : Spec.Parameter.t) ->
+                if same_parameter p q
+                then { q with required = q.required || p.required }
+                else q)
+             acc
+         else acc @ [ p ])
+      []
+      params
+
+  (* A parameter is only required by an alternative if every branch requires it.
+     A branch that can't succeed tells callers nothing, so it is ignored. [<|>]
+     allows a body in one branch only, so the other branch succeeds without
+     it. *)
+  let join left right =
+    if left.never
+    then right
+    else if right.never
+    then left
+    else
+      let lefts = merge_duplicates (Diflist.to_list left.parameters) in
+      let rights = merge_duplicates (Diflist.to_list right.parameters) in
+      let weaken others (p : Spec.Parameter.t) =
+        let required_by_others =
+          List.exists
+            (fun (q : Spec.Parameter.t) -> same_parameter p q && q.required)
+            others
+        in
+        { p with required = p.required && required_by_others }
+      in
+      let only_right =
+        List.filter (fun q -> not (List.exists (same_parameter q) lefts)) rights
+      in
+      { (of_parameters
+           (List.map (weaken rights) lefts @ List.map (weaken lefts) only_right))
+        with
+        body = (match left.body with Some _ -> left.body | None -> right.body)
+      ; body_optional = true
+      }
 
   (* Nothing here touches a request: [Extract] contributes nothing, and [Refine]
      only contributes what its source declares. *)
@@ -565,31 +633,8 @@ module Of_router2 = struct
     | Extract _ -> empty
     | Refine { source; _ } -> collect source
     | Memo { source; _ } -> collect source
-
-  (* Gates and the block can read the same parameter, but OpenAPI forbids
-     repeating a name and location in one operation. The request fails if any
-     reader requires the parameter, so required wins. *)
-  let same_parameter (a : Spec.Parameter.t) (b : Spec.Parameter.t) =
-    a.in_ = b.in_
-    &&
-    match a.in_ with
-    | Spec.Location.Header -> Sch_ext.CI.equal a.name b.name
-    | _ -> String.equal a.name b.name
-
-  let merge_duplicates params =
-    List.fold_left
-      (fun acc (p : Spec.Parameter.t) ->
-         if List.exists (same_parameter p) acc
-         then
-           List.map
-             (fun (q : Spec.Parameter.t) ->
-                if same_parameter p q
-                then { q with required = q.required || p.required }
-                else q)
-             acc
-         else acc @ [ p ])
-      []
-      params
+    | Fail _ -> { empty with never = true }
+    | Alt { left; right } -> join (collect left) (collect right)
 
   let rec flatten prefix prefix_params gates routes =
     List.concat_map
@@ -618,7 +663,11 @@ module Of_router2 = struct
                    (List.map
                       (fun p -> Spec.Json_schema.Or_ref.Value p)
                       parameters)
-                   { parameters; body = parts.body; response }
+                   { parameters
+                   ; body = parts.body
+                   ; body_required = not parts.body_optional
+                   ; response
+                   }
                    e.meta )
              ]
            end

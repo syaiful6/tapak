@@ -503,6 +503,155 @@ let test_memo_scope_value_reaches_routes () =
     "validation_failed"
     (run_outcome routes (make_request "/websites/ids"))
 
+let key_schema =
+  Sch.Object.(define ~kind:"Key" @@ mem ~enc:Fun.id "x-key" Sch.string)
+
+let token_schema =
+  Sch.Object.(define ~kind:"Token" @@ mem ~enc:Fun.id "x-token" Sch.string)
+
+let json_request ?(body = {|{"name":"x"}|}) target =
+  make_request ~meth:`POST ~content_type:"application/json" ~body target
+
+let test_alt_uses_first_success () =
+  let either =
+    map (fun _ -> "key") (query key_schema)
+    <|> map (fun _ -> "token") (query token_schema)
+  in
+  let routes = [ get (s "x") >-> map Response.of_string either ] in
+  check_body "left" "key" (dispatch routes (make_request "/x?x-key=a"));
+  check_body "right" "token" (dispatch routes (make_request "/x?x-token=a"));
+  check_body
+    "left wins when both match"
+    "key"
+    (dispatch routes (make_request "/x?x-key=a&x-token=b"))
+
+let test_alt_raises_right_error () =
+  let routes =
+    [ get (s "x")
+      >-> map
+            (fun _ -> Response.of_string "ok")
+            (fail Forbidden <|> fail Unauthorized)
+    ]
+  in
+  Alcotest.(check string)
+    "right error"
+    "unauthorized"
+    (run_outcome routes (make_request "/x"))
+
+let test_fail_replaces_validation_error () =
+  let routes =
+    [ get (s "x")
+      >-> map Response.of_string (query key_schema <|> fail Unauthorized)
+    ]
+  in
+  check_body "valid" "a" (dispatch routes (make_request "/x?x-key=a"));
+  Alcotest.(check string)
+    "custom error"
+    "unauthorized"
+    (run_outcome routes (make_request "/x"))
+
+let test_alt_keeps_other_exceptions () =
+  let routes =
+    [ get (s "x")
+      >-> map
+            Response.of_string
+            (extract (fun _ -> failwith "db down") <|> pure "fallback")
+    ]
+  in
+  Alcotest.check_raises "not caught" (Failure "db down") (fun () ->
+    ignore (dispatch routes (make_request "/x")))
+
+let test_alt_right_branch_is_not_run_on_success () =
+  let routes =
+    [ get (s "x")
+      >-> map (fun () -> Response.of_string "ok") (step "left" <|> step "right")
+    ]
+  in
+  ignore (run_outcome routes (make_request "/x"));
+  check_trace "only left" [ "left" ]
+
+let test_two_bodies_are_rejected () =
+  let rejected name schema =
+    match schema () with
+    | () -> Alcotest.failf "%s: expected the schema to be rejected" name
+    | exception Invalid_argument _ -> ()
+  in
+  let json = body Json name_schema in
+  rejected "same media type" (fun () -> ignore (json <|> json));
+  rejected "different media types" (fun () ->
+    ignore (json <|> body Urlencoded name_schema));
+  rejected "through memo" (fun () -> ignore (memo json <|> json));
+  rejected "through refine" (fun () ->
+    ignore (json <|> (json |> refine (fun v -> Ok v))));
+  rejected "inside let+" (fun () ->
+    ignore
+      ((let+ _ = request
+        and+ v = json in
+        v)
+      <|> json));
+  rejected "nested alternative" (fun () ->
+    ignore (json <|> (fail Forbidden <|> json)))
+
+let test_one_body_in_alt () =
+  let with_custom_error =
+    [ post (s "x")
+      >-> map Response.of_string (body Json name_schema <|> fail Unauthorized)
+    ]
+  in
+  check_body "valid" "x" (dispatch with_custom_error (json_request "/x"));
+  Alcotest.(check string)
+    "invalid body gets the custom error"
+    "unauthorized"
+    (run_outcome with_custom_error (json_request ~body:"{}" "/x"));
+  let body_on_right =
+    [ post (s "x")
+      >-> map Response.of_string (fail Forbidden <|> body Json name_schema)
+    ]
+  in
+  check_body
+    "body is unread when the left branch fails first"
+    "x"
+    (dispatch body_on_right (json_request "/x"))
+
+type shape =
+  | Circle of float
+  | Square of float
+
+(* The supported way to accept several body shapes *)
+let test_union_body () =
+  let side name =
+    Sch.Object.(define ~kind:name @@ mem ~enc:Fun.id "size" Sch.float)
+  in
+  let shape =
+    Sch.Union.(
+      define
+        ~discriminator:"type"
+        [ case
+            ~tag:"circle"
+            ~inj:(fun v -> Circle v)
+            ~proj:(function Circle v -> Some v | _ -> None)
+            (side "Circle")
+        ; case
+            ~tag:"square"
+            ~inj:(fun v -> Square v)
+            ~proj:(function Square v -> Some v | _ -> None)
+            (side "Square")
+        ])
+  in
+  let show = function
+    | Circle v -> Response.of_string (Printf.sprintf "circle %g" v)
+    | Square v -> Response.of_string (Printf.sprintf "square %g" v)
+  in
+  let routes = [ post (s "x") >-> map show (body Json shape) ] in
+  check_body
+    "first case"
+    "circle 2"
+    (dispatch routes (json_request ~body:{|{"type":"circle","size":2}|} "/x"));
+  check_body
+    "second case"
+    "square 3"
+    (dispatch routes (json_request ~body:{|{"type":"square","size":3}|} "/x"))
+
 let tests =
   [ "Gate is not passed to handler", `Quick, test_gate_not_passed_to_handler
   ; "Effects run in declared order", `Quick, test_effects_run_in_declared_order
@@ -520,6 +669,18 @@ let tests =
   ; "Recover catches gate failure", `Quick, test_recover_catches_gate_failure
   ; "match' returns None", `Quick, test_match_returns_none
   ; "Gated scope with recover", `Quick, test_gated_scope_with_recover
+  ; "<|> uses first success", `Quick, test_alt_uses_first_success
+  ; "<|> raises right error", `Quick, test_alt_raises_right_error
+  ; ( "fail replaces validation error"
+    , `Quick
+    , test_fail_replaces_validation_error )
+  ; "<|> keeps other exceptions", `Quick, test_alt_keeps_other_exceptions
+  ; ( "<|> skips right on success"
+    , `Quick
+    , test_alt_right_branch_is_not_run_on_success )
+  ; "Two bodies are rejected", `Quick, test_two_bodies_are_rejected
+  ; "One body in <|>", `Quick, test_one_body_in_alt
+  ; "Union body", `Quick, test_union_body
   ; "Memo runs once per request", `Quick, test_memo_runs_once_per_request
   ; "Without memo runs each time", `Quick, test_without_memo_runs_each_time
   ; "Memo instances are separate", `Quick, test_memo_instances_are_separate

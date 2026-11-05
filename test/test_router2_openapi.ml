@@ -28,6 +28,8 @@ let other_name =
 
 let ok = Response.of_string "ok"
 
+type Router.extractor_error += Denied
+
 let color_path () =
   Router.enum
     ~parse:(fun ~off ~len s -> Some (String.sub s off len))
@@ -261,6 +263,98 @@ let test_memo_documents_its_source_once () =
     [ "x-api-key" ]
     (names (operation "/api/x" get_op routes))
 
+let required_flags op =
+  List.map (fun (p : Spec.Parameter.t) -> p.name, p.required) (parameters op)
+
+let flags = Alcotest.(list (pair string bool))
+
+let test_fail_keeps_parameter_required () =
+  let open R2 in
+  let routes =
+    [ get (s "x") >-> map (fun _ -> ok) (header api_key <|> fail Denied) ]
+  in
+  Alcotest.check
+    flags
+    "required"
+    [ "x-api-key", true ]
+    (required_flags (operation "/x" get_op routes))
+
+let test_alt_makes_one_sided_parameter_optional () =
+  let open R2 in
+  let routes =
+    [ get (s "x")
+      >-> map
+            (fun _ -> ok)
+            (map ignore (header api_key) <|> map ignore (cookie session))
+    ]
+  in
+  Alcotest.check
+    flags
+    "both optional"
+    [ "x-api-key", false; "session", false ]
+    (required_flags (operation "/x" get_op routes))
+
+let test_alt_keeps_parameter_required_in_both () =
+  let open R2 in
+  let both =
+    (let+ _ = header api_key
+     and+ _ = cookie session in
+     ())
+    <|> map ignore (header api_key)
+  in
+  let routes = [ get (s "x") >-> map (fun () -> ok) both ] in
+  Alcotest.check
+    flags
+    "only the shared one"
+    [ "x-api-key", true; "session", false ]
+    (required_flags (operation "/x" get_op routes))
+
+let test_gate_requires_what_alt_leaves_optional () =
+  let open R2 in
+  let routes =
+    [ get (s "x")
+      |> gate (header api_key)
+      >-> map (fun _ -> ok) (map Option.some (header api_key) <|> pure None)
+    ]
+  in
+  Alcotest.check
+    flags
+    "required wins"
+    [ "x-api-key", true ]
+    (required_flags (operation "/x" get_op routes))
+
+let body_required op =
+  match op.Spec.Operation.request_body with
+  | Some (Spec.Json_schema.Or_ref.Value body) ->
+    Option.value body.Spec.Request_body.required ~default:false
+  | _ -> Alcotest.fail "expected an inline request body"
+
+let post_op item = item.Spec.Path_item.post
+
+let test_body_requirement_follows_alt () =
+  let open R2 in
+  let required =
+    [ post (s "x") >-> map (fun _ -> ok) (body Json name <|> fail Denied) ]
+  in
+  Alcotest.(check bool)
+    "with fail"
+    true
+    (body_required (operation "/x" post_op required));
+  let optional =
+    [ post (s "x")
+      >-> map (fun _ -> ok) (map Option.some (body Json name) <|> pure None)
+    ]
+  in
+  Alcotest.(check bool)
+    "with a fallback"
+    false
+    (body_required (operation "/x" post_op optional))
+
+let test_root_path_is_documented_as_slash () =
+  let open R2 in
+  let routes = [ get (s "") >-> pure ok ] in
+  ignore (operation "/" get_op routes)
+
 let tests =
   [ "Matches Router output", `Quick, test_matches_router_output
   ; "Gates documented in run order", `Quick, test_gates_documented_in_run_order
@@ -272,6 +366,20 @@ let tests =
     , `Quick
     , test_same_name_in_other_location_is_kept )
   ; "First body is documented", `Quick, test_first_body_is_documented
+  ; "fail keeps parameter required", `Quick, test_fail_keeps_parameter_required
+  ; ( "<|> makes one-sided parameter optional"
+    , `Quick
+    , test_alt_makes_one_sided_parameter_optional )
+  ; ( "<|> keeps parameter required in both"
+    , `Quick
+    , test_alt_keeps_parameter_required_in_both )
+  ; ( "Gate requires what <|> leaves optional"
+    , `Quick
+    , test_gate_requires_what_alt_leaves_optional )
+  ; "Body requirement follows <|>", `Quick, test_body_requirement_follows_alt
+  ; ( "Root path is documented as /"
+    , `Quick
+    , test_root_path_is_documented_as_slash )
   ; ( "Memo documents its source once"
     , `Quick
     , test_memo_documents_its_source_once )

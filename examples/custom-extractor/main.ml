@@ -61,14 +61,16 @@ let admin : user Router.schemaf =
 
 let api_key_schema =
   Sch.Object.(
-    define ~kind:"ApiKey" @@ mem_opt ~enc:Fun.id "x-api-key" Sch.string)
+    define ~kind:"ApiKey"
+    @@ mem
+         ~enc:Fun.id
+         "x-api-key"
+         Sch.(with_ ~constraint_:(Constraint.min_length 1) string))
 
-(** API key extractor example, built on a header schema so it is documented *)
+(** API key extractor example, built on a header schema so it is documented as
+    required. [fail] replaces the validation error with our own. *)
 let api_key : string Router.schemaf =
-  Router.header api_key_schema
-  |> Router.refine (function
-    | Some key when String.length key > 0 -> Ok key
-    | _ -> Error Invalid_api_key)
+  Router.(header api_key_schema <|> fail Invalid_api_key)
 
 let json_to_string json =
   Jsont_bytesrw.encode_string Jsont.json json |> Result.get_ok

@@ -47,6 +47,12 @@ module Schema = struct
         ; check : 'a -> ('b, extractor_error) result
         }
         -> 'b t
+    | Alt :
+        { left : 'a schemaf
+        ; right : 'a schemaf
+        }
+        -> 'a t
+    | Fail : extractor_error -> 'a t
     | Memo :
         { key : 'a Context.key
         ; source : 'a schemaf
@@ -77,6 +83,50 @@ let memo source =
   lift (Schema.Memo { key; source })
 
 let map = Sch.Free.map
+let fail e = lift (Schema.Fail e)
+
+module Body_scan = struct
+  type k
+
+  external inj : bool -> ('a, k) Sch.Sig.app = "%identity"
+  external prj : ('a, k) Sch.Sig.app -> bool = "%identity"
+
+  let applicative : k Sch.Sig.applicative =
+    { pure = (fun _ -> inj false)
+    ; map = (fun _ a -> inj (prj a))
+    ; apply = (fun f a -> inj (prj f || prj a))
+    }
+end
+
+let rec has_body : type a. a schemaf -> bool =
+ fun schema ->
+  Body_scan.prj
+    (Sch.Free.run
+       Body_scan.applicative
+       { run =
+           (fun effect_ -> Body_scan.inj (effect_has_body (Schema.prj effect_)))
+       }
+       schema)
+
+and effect_has_body : type a. a Schema.t -> bool = function
+  | Body _ -> true
+  | Query _ | Header _ | Cookie _ | Extract _ | Fail _ -> false
+  | Refine { source; _ } -> has_body source
+  | Memo { source; _ } -> has_body source
+  | Alt { left; right } -> has_body left || has_body right
+
+(* [left <|> right] runs [right] when [left] fails validation or extraction;
+   other exceptions propagate. If both fail, [right]'s error is raised. Effects
+   in a failed [left] aren't undone.
+
+   A body stream can't be re-read, so a body isn't retryable: only one branch
+   may declare one, and this raises [Invalid_argument] when the schema is built
+   otherwise. To accept several body shapes, use a union in a single [Sch.t]. *)
+let ( <|> ) left right =
+  if has_body left && has_body right
+  then invalid_arg "Router2.( <|> ): only one branch may read the body";
+  lift (Schema.Alt { left; right })
+
 let void source = Sch.Free.map ignore source
 
 type metadata = Router.metadata =
@@ -472,6 +522,14 @@ and compile_effect : type a. a Schema.t -> Reader.env -> a = function
       (match check (run env) with
       | Ok v -> v
       | Error e -> raise (Extraction_failed e))
+  | Fail e -> fun _ -> raise (Extraction_failed e)
+  | Alt { left; right } ->
+    let run_left = compile left in
+    let run_right = compile right in
+    fun env ->
+      (try run_left env with
+      | Extraction_failed _ | Validation_failed _ | Bad_request _ ->
+        run_right env)
   | Memo { key; source } ->
     let run = compile source in
     fun env ->
