@@ -11,7 +11,7 @@ let page =
     and+ q = mem_opt ~enc:snd "q" Sch.string in
     limit, q)
 
-let api_key =
+let api_key_schema =
   Sch.Object.(define ~kind:"Key" @@ mem ~enc:Fun.id "x-api-key" Sch.string)
 
 let api_key_opt =
@@ -43,7 +43,7 @@ let router_routes =
   let open Router in
   [ get (s "users" / p "id" int64 / s "posts" / int)
     |> query page
-    |> header api_key
+    |> header api_key_schema
     |> cookie session
     |> summary "summary"
     |> description "description"
@@ -75,7 +75,7 @@ let router2_routes =
     |> operation_id "getPost"
     >->
     let+ _ = query page
-    and+ _ = header api_key
+    and+ _ = header api_key_schema
     and+ _ = cookie session in
     fun _ _ -> ok)
   ; post (s "users")
@@ -138,7 +138,7 @@ let test_gates_documented_in_run_order () =
         ~gates:[ void (cookie session) ]
         (s "api")
         [ (get (s "x" / p "id" int)
-          |> gate (header api_key)
+          |> gate (header api_key_schema)
           >->
           let+ _ = query page in
           fun _ -> ok)
@@ -154,7 +154,7 @@ let test_refine_documents_its_source () =
   let open R2 in
   let routes =
     [ get (s "x")
-      |> gate (header api_key |> refine (fun key -> Ok key))
+      |> gate (header api_key_schema |> refine (fun key -> Ok key))
       >-> pure ok
     ]
   in
@@ -177,7 +177,7 @@ let test_generation_runs_nothing () =
   let routes =
     [ (get (s "x")
       |> gate (extract fail_if_run)
-      |> gate (header api_key |> refine fail_if_run)
+      |> gate (header api_key_schema |> refine fail_if_run)
       >->
       let+ _ = extract fail_if_run in
       ok)
@@ -193,9 +193,9 @@ let test_shared_parameter_is_merged () =
   let routes =
     [ (get (s "x")
       |> gate (header api_key_opt)
-      |> gate (header api_key)
+      |> gate (header api_key_schema)
       >->
-      let+ _ = header api_key
+      let+ _ = header api_key_schema
       and+ _ = cookie session in
       ok)
     ]
@@ -216,7 +216,7 @@ let test_same_name_in_other_location_is_kept () =
   let routes =
     [ (get (s "x")
       >->
-      let+ _ = header api_key
+      let+ _ = header api_key_schema
       and+ _ = query as_query in
       ok)
     ]
@@ -250,7 +250,7 @@ let test_first_body_is_documented () =
 
 let test_memo_documents_its_source_once () =
   let open R2 in
-  let key = memo (header api_key) in
+  let key = memo (header api_key_schema) in
   let routes =
     [ scope
         ~gates:[ void key ]
@@ -271,7 +271,8 @@ let flags = Alcotest.(list (pair string bool))
 let test_fail_keeps_parameter_required () =
   let open R2 in
   let routes =
-    [ get (s "x") >-> map (fun _ -> ok) (header api_key <|> fail Denied) ]
+    [ get (s "x") >-> map (fun _ -> ok) (header api_key_schema <|> fail Denied)
+    ]
   in
   Alcotest.check
     flags
@@ -285,7 +286,7 @@ let test_alt_makes_one_sided_parameter_optional () =
     [ get (s "x")
       >-> map
             (fun _ -> ok)
-            (map ignore (header api_key) <|> map ignore (cookie session))
+            (map ignore (header api_key_schema) <|> map ignore (cookie session))
     ]
   in
   Alcotest.check
@@ -297,10 +298,10 @@ let test_alt_makes_one_sided_parameter_optional () =
 let test_alt_keeps_parameter_required_in_both () =
   let open R2 in
   let both =
-    (let+ _ = header api_key
+    (let+ _ = header api_key_schema
      and+ _ = cookie session in
      ())
-    <|> map ignore (header api_key)
+    <|> map ignore (header api_key_schema)
   in
   let routes = [ get (s "x") >-> map (fun () -> ok) both ] in
   Alcotest.check
@@ -313,8 +314,10 @@ let test_gate_requires_what_alt_leaves_optional () =
   let open R2 in
   let routes =
     [ get (s "x")
-      |> gate (header api_key)
-      >-> map (fun _ -> ok) (map Option.some (header api_key) <|> pure None)
+      |> gate (header api_key_schema)
+      >-> map
+            (fun _ -> ok)
+            (map Option.some (header api_key_schema) <|> pure None)
     ]
   in
   Alcotest.check
@@ -359,11 +362,12 @@ let security_of path routes =
   (operation path get_op routes).Spec.Operation.security
 
 let requirements = Alcotest.(option (list (list (pair string (list string)))))
-let basic = R2.(secured Security.basic (fun _ -> Ok ()))
-let bearer = R2.(secured (Security.bearer ~format:"JWT" ()) (fun _ -> Ok ()))
+let no_login ~username:_ ~password:_ = Some ()
+let basic_auth = R2.(secured (basic no_login))
+let bearer_auth = R2.(void (secured (bearer ~format:"JWT" Option.some)))
 
 let api_key_auth =
-  R2.(secured (Security.api_key ~in_:`Header "x-api-key") (fun _ -> Ok ()))
+  R2.(void (secured (api_key ~in_:`Header "x-api-key" Option.some)))
 
 let test_no_security_by_default () =
   let open R2 in
@@ -384,46 +388,46 @@ let test_security_follows_schema_shape () =
       expected
       (security_of "/x" [ get (s "x") |> gates >-> pure ok ])
   in
-  check "single" (Some [ [ "basicAuth", [] ] ]) (gate basic);
+  check "single" (Some [ [ "basicAuth", [] ] ]) (gate basic_auth);
   check
     "sequence is AND"
     (Some [ [ "basicAuth", []; "bearerAuth", [] ] ])
-    (fun e -> e |> gate basic |> gate bearer);
+    (fun e -> e |> gate basic_auth |> gate bearer_auth);
   check
     "<|> is OR"
     (Some [ [ "basicAuth", [] ]; [ "bearerAuth", [] ] ])
-    (gate (basic <|> bearer));
+    (gate (basic_auth <|> bearer_auth));
   check
     "AND distributes over OR"
     (Some
        [ [ "basicAuth", []; "x-api-key", [] ]
        ; [ "bearerAuth", []; "x-api-key", [] ]
        ])
-    (fun e -> e |> gate (basic <|> bearer) |> gate api_key_auth);
+    (fun e -> e |> gate (basic_auth <|> bearer_auth) |> gate api_key_auth);
   check
     "a fallback makes it optional"
     (Some [ [ "basicAuth", [] ]; [] ])
-    (gate (basic <|> pure ()));
+    (gate (basic_auth <|> pure ()));
   check
     "fail adds nothing"
     (Some [ [ "basicAuth", [] ] ])
-    (gate (basic <|> fail Denied));
+    (gate (basic_auth <|> fail Denied));
   check
     "reading a scheme twice is one requirement"
     (Some [ [ "basicAuth", [] ] ])
-    (fun e -> e |> gate basic |> gate basic);
+    (fun e -> e |> gate basic_auth |> gate basic_auth);
   check
     "seen through refine and memo"
     (Some [ [ "basicAuth", [] ] ])
-    (gate (memo basic |> refine (fun () -> Ok ())))
+    (gate (memo basic_auth |> refine (fun () -> Ok ())))
 
 let test_scope_gate_secures_routes () =
   let open R2 in
   let routes =
     [ scope
-        ~gates:[ void basic ]
+        ~gates:[ void basic_auth ]
         (s "api")
-        [ get (s "x") >-> pure ok; get (s "y") |> gate bearer >-> pure ok ]
+        [ get (s "x") >-> pure ok; get (s "y") |> gate bearer_auth >-> pure ok ]
     ; get (s "public") >-> pure ok
     ]
   in
@@ -442,12 +446,12 @@ let test_scope_gate_secures_routes () =
 let test_security_schemes_are_documented () =
   let open R2 in
   let routes =
-    [ get (s "a") |> gate basic >-> pure ok
-    ; get (s "b") |> gate bearer >-> pure ok
+    [ get (s "a") |> gate basic_auth >-> pure ok
+    ; get (s "b") |> gate bearer_auth >-> pure ok
     ; get (s "c") |> gate api_key_auth >-> pure ok
-    ; get (s "d") |> gate basic >-> pure ok
+    ; get (s "d") |> gate basic_auth >-> pure ok
     ; get (s "hidden")
-      |> gate (secured ~name:"hidden" Security.basic (fun _ -> Ok ()))
+      |> gate (secured ~name:"hidden" (basic no_login))
       |> include_in_schema false
       >-> pure ok
     ]
@@ -483,11 +487,9 @@ let test_security_schemes_are_documented () =
 let test_conflicting_scheme_names_are_rejected () =
   let open R2 in
   let routes =
-    [ get (s "a")
-      |> gate (secured ~name:"auth" Security.basic (fun _ -> Ok ()))
-      >-> pure ok
+    [ get (s "a") |> gate (secured ~name:"auth" (basic no_login)) >-> pure ok
     ; get (s "b")
-      |> gate (secured ~name:"auth" (Security.bearer ()) (fun _ -> Ok ()))
+      |> gate (secured ~name:"auth" (bearer Option.some))
       >-> pure ok
     ]
   in
@@ -500,12 +502,26 @@ let test_generating_security_runs_no_extractor () =
   let routes =
     [ get (s "x")
       |> gate
-           (secured Security.basic (fun _ ->
-              Alcotest.fail "extractor ran during generation"))
+           (secured
+              (basic (fun ~username:_ ~password:_ ->
+                 Alcotest.fail "verify ran during generation")))
       >-> pure ok
     ]
   in
   ignore (Openapi.generate_router2 routes)
+
+let test_realm_is_not_a_conflict () =
+  let open R2 in
+  let routes =
+    [ get (s "a") |> gate (secured (basic ~realm:"One" no_login)) >-> pure ok
+    ; get (s "b") |> gate (secured (basic ~realm:"Two" no_login)) >-> pure ok
+    ]
+  in
+  let spec = Openapi.generate_router2 routes in
+  Alcotest.(check int)
+    "OpenAPI has no realm, so one scheme"
+    1
+    (List.length (Option.get spec.components).Spec.Component.security_schemes)
 
 let test_body_of_documents_each_content_type () =
   let open R2 in
@@ -554,6 +570,7 @@ let tests =
   ; ( "Generating security runs no extractor"
     , `Quick
     , test_generating_security_runs_no_extractor )
+  ; "Realm is not a conflict", `Quick, test_realm_is_not_a_conflict
   ; ( "body_of documents each content type"
     , `Quick
     , test_body_of_documents_each_content_type )

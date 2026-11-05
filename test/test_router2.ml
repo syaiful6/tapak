@@ -704,22 +704,213 @@ let test_body_of_rejects_misuse () =
   | _ -> Alcotest.fail "expected two bodies in <|> to be rejected"
   | exception Invalid_argument _ -> ()
 
-let test_secured_runs_like_extract () =
-  let bearer =
-    secured (Security.bearer ()) (fun req ->
-      match Request.header "authorization" req with
-      | Some "token" -> Ok "alice"
-      | _ -> Error Unauthorized)
+let check_unauthorized ?challenge name response =
+  Alcotest.(check int)
+    (name ^ " status")
+    401
+    (Http.Status.to_int (Response.status response));
+  Alcotest.(check (option string))
+    (name ^ " challenge")
+    challenge
+    (Response.header "WWW-Authenticate" response)
+
+let basic_auth ~username ~password =
+  match username, password with
+  | "alice", "secret" -> Some "alice"
+  | "colon", "a:b" -> Some "colon"
+  | _ -> None
+
+(* alice:secret, colon:a:b and wrong:wrong *)
+let alice = "Basic YWxpY2U6c2VjcmV0"
+let colon = "Basic Y29sb246YTpi"
+let wrong = "Basic d3Jvbmc6d3Jvbmc="
+let basic_challenge = {|Basic realm="Restricted"|}
+
+let test_basic_auth () =
+  let routes =
+    [ get (s "me") >-> map Response.of_string (secured (basic basic_auth)) ]
   in
-  let routes = [ get (s "me") >-> map Response.of_string bearer ] in
+  let call ?auth () = dispatch routes (make_request ?auth "/me") in
+  let rejected name ?auth () =
+    check_unauthorized ~challenge:basic_challenge name (call ?auth ())
+  in
+  check_body "valid" "alice" (call ~auth:alice ());
+  check_body "only the first colon splits" "colon" (call ~auth:colon ());
+  check_body "lowercase scheme" "alice" (call ~auth:"basic YWxpY2U6c2VjcmV0" ());
+  check_body "uppercase scheme" "alice" (call ~auth:"BASIC YWxpY2U6c2VjcmV0" ());
+  rejected "wrong password" ~auth:wrong ();
+  rejected "missing" ();
+  rejected "other scheme" ~auth:"Bearer token" ();
+  rejected "invalid base64" ~auth:"Basic !!!" ()
+
+let test_secured_as_gate_or_value () =
+  let runs = ref 0 in
+  let auth =
+    memo
+      (secured
+         (basic (fun ~username ~password ->
+            incr runs;
+            basic_auth ~username ~password)))
+  in
+  let routes =
+    [ scope
+        ~gates:[ void auth ]
+        (s "api")
+        [ (get (s "gate") >> fun _req -> Response.of_string "gated")
+        ; get (s "value") >-> map Response.of_string auth
+        ]
+    ]
+  in
+  check_body
+    "gate"
+    "gated"
+    (dispatch routes (make_request ~auth:alice "/api/gate"));
+  Alcotest.(check int) "verified once" 1 !runs;
   check_body
     "value"
     "alice"
-    (dispatch routes (make_request ~auth:"token" "/me"));
+    (dispatch routes (make_request ~auth:alice "/api/value"));
+  Alcotest.(check int) "gate and value share one run" 2 !runs;
+  check_unauthorized
+    ~challenge:basic_challenge
+    "gate rejects"
+    (dispatch routes (make_request "/api/gate"))
+
+let test_bearer_auth () =
+  let verify = function "token" -> Some "alice" | _ -> None in
+  let routes =
+    [ get (s "me") >-> map Response.of_string (secured (bearer verify)) ]
+  in
+  let call ?auth () = dispatch routes (make_request ?auth "/me") in
+  let rejected name ?auth () =
+    check_unauthorized ~challenge:"Bearer" name (call ?auth ())
+  in
+  check_body "valid" "alice" (call ~auth:"Bearer token" ());
+  check_body "scheme is case-insensitive" "alice" (call ~auth:"bearer token" ());
+  rejected "wrong token" ~auth:"Bearer nope" ();
+  rejected "missing" ();
+  rejected "other scheme" ~auth:alice ();
+  rejected "empty token" ~auth:"Bearer " ()
+
+let test_api_key_locations () =
+  let verify = function "k" -> Some "ok" | _ -> None in
+  let call in_ ?(headers = []) target =
+    let routes =
+      [ get (s "x")
+        >-> map Response.of_string (secured (api_key ~in_ "key" verify))
+      ]
+    in
+    dispatch
+      routes
+      (Request.make
+         ~version:`HTTP_1_1
+         ~meth:`GET
+         ~headers:(Headers.of_list headers)
+         ~body:(Bytesrw.Bytes.Reader.empty ())
+         target)
+  in
+  check_body "header" "ok" (call `Header ~headers:[ "key", "k" ] "/x");
+  check_body "query" "ok" (call `Query "/x?key=k");
+  check_body "cookie" "ok" (call `Cookie ~headers:[ "cookie", "key=k" ] "/x");
+  check_unauthorized "wrong key" (call `Query "/x?key=z");
+  check_unauthorized "missing" (call `Query "/x");
+  check_unauthorized "empty" (call `Query "/x?key=")
+
+let test_alternative_schemes () =
+  let auth =
+    secured (basic basic_auth)
+    <|> secured (bearer (function "token" -> Some "bob" | _ -> None))
+  in
+  let routes = [ get (s "me") >-> map Response.of_string auth ] in
+  let call auth = dispatch routes (make_request ~auth "/me") in
+  check_body "basic" "alice" (call alice);
+  check_body "bearer" "bob" (call "Bearer token")
+
+let test_challenges () =
+  let challenge t = Security.challenge (t : _ Security.t).scheme in
+  let verify _ = Some () in
+  let login ~username:_ ~password:_ = Some () in
+  Alcotest.(check (option string))
+    "default realm"
+    (Some basic_challenge)
+    (challenge (basic login));
+  Alcotest.(check (option string))
+    "custom realm"
+    (Some {|Basic realm="Admin"|})
+    (challenge (basic ~realm:"Admin" login));
+  Alcotest.(check (option string))
+    "bearer"
+    (Some "Bearer")
+    (challenge (bearer verify));
+  Alcotest.(check (option string))
+    "api key has none"
+    None
+    (challenge (api_key ~in_:`Header "k" verify))
+
+let protected = secured (basic basic_auth)
+let protected_routes = [ get (s "me") >-> map Response.of_string protected ]
+
+let test_custom_unauthorized_response () =
+  let reasons = ref [] in
+  let unauthorized _req _scheme (reason : Security.reason) =
+    reasons := reason :: !reasons;
+    Response.of_string ~status:`Unauthorized "Forbidden access"
+  in
+  let handler = of_list ~unauthorized protected_routes in
+  let call ?auth () = handler (make_request ?auth "/me") in
+  check_body "custom body" "Forbidden access" (call ());
+  check_unauthorized
+    ~challenge:basic_challenge
+    "challenge is added for us"
+    (call ());
+  ignore (call ~auth:"Bearer x" ());
+  ignore (call ~auth:wrong ());
+  Alcotest.(check bool)
+    "reason tells the cases apart"
+    true
+    (List.rev !reasons
+    = [ Security.Missing
+      ; Security.Missing
+      ; Security.Malformed
+      ; Security.Invalid
+      ])
+
+let test_handler_can_set_its_own_challenge () =
+  let unauthorized _req _scheme _reason =
+    Response.of_string
+      ~status:`Unauthorized
+      ~headers:(Headers.of_list [ "WWW-Authenticate", "Custom" ])
+      ""
+  in
+  check_unauthorized
+    ~challenge:"Custom"
+    "kept"
+    (of_list ~unauthorized protected_routes (make_request "/me"))
+
+let test_recover_runs_before_default_401 () =
+  let routes =
+    [ get (s "me")
+      >-> map Response.of_string protected
+      |> recover (fun _req -> function
+        | Extraction_failed (Security.Unauthorized _) ->
+          Some (Response.of_string ~status:`Unauthorized "from recover")
+        | _ -> None)
+    ]
+  in
+  check_body
+    "recover wins"
+    "from recover"
+    (dispatch routes (make_request "/me"))
+
+let test_authorization_stays_with_the_app () =
+  let not_alice =
+    protected |> refine (function "alice" -> Error Forbidden | who -> Ok who)
+  in
+  let routes = [ get (s "me") >-> map Response.of_string not_alice ] in
   Alcotest.(check string)
-    "error"
-    "unauthorized"
-    (run_outcome routes (make_request "/me"))
+    "refine errors aren't turned into a 401"
+    "forbidden"
+    (run_outcome routes (make_request ~auth:alice "/me"))
 
 let tests =
   [ "Gate is not passed to handler", `Quick, test_gate_not_passed_to_handler
@@ -754,7 +945,22 @@ let tests =
     , `Quick
     , test_body_of_selects_by_content_type )
   ; "body_of rejects misuse", `Quick, test_body_of_rejects_misuse
-  ; "secured runs like extract", `Quick, test_secured_runs_like_extract
+  ; "Basic auth", `Quick, test_basic_auth
+  ; "Secured as gate or value", `Quick, test_secured_as_gate_or_value
+  ; "Bearer auth", `Quick, test_bearer_auth
+  ; "API key locations", `Quick, test_api_key_locations
+  ; "Alternative schemes", `Quick, test_alternative_schemes
+  ; "Challenges", `Quick, test_challenges
+  ; "Custom unauthorized response", `Quick, test_custom_unauthorized_response
+  ; ( "Handler can set its own challenge"
+    , `Quick
+    , test_handler_can_set_its_own_challenge )
+  ; ( "recover runs before default 401"
+    , `Quick
+    , test_recover_runs_before_default_401 )
+  ; ( "Authorization stays with the app"
+    , `Quick
+    , test_authorization_stays_with_the_app )
   ; "Memo runs once per request", `Quick, test_memo_runs_once_per_request
   ; "Without memo runs each time", `Quick, test_without_memo_runs_each_time
   ; "Memo instances are separate", `Quick, test_memo_instances_are_separate

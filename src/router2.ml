@@ -30,22 +30,92 @@ let sprintf = Router.sprintf
 
 module Security = struct
   type scheme =
-    | Basic
+    | Basic of { realm : string }
     | Bearer of { format : string option }
     | Api_key of
         { name : string
-        ; in_ : [ `Header | `Query | `Cookie ]
+        ; in_ : Security_api_key.location
         }
 
-  let basic = Basic
-  let bearer ?format () = Bearer { format }
-  let api_key ~in_ name = Api_key { name; in_ }
+  type reason =
+    | Missing
+    | Malformed
+    | Invalid
+
+  type extractor_error += Unauthorized of scheme * reason
+
+  (* Parsing and documentation come from one value, so a route can't document a
+     scheme it doesn't check. *)
+  type 'a t =
+    { scheme : scheme
+    ; extractor : 'a extractor
+    }
+
+  let verified scheme = function
+    | Some v -> Ok v
+    | None -> Error (Unauthorized (scheme, Invalid))
+
+  (* Verify functions answer "who is this?": [None] is a 401. Rejecting a known
+     user is authorization, which belongs in [refine] with its own error. *)
+  let basic ?(realm = "Restricted") verify =
+    let scheme = Basic { realm } in
+    { scheme
+    ; extractor =
+        (fun req ->
+          match Security_basic.authorization req with
+          | None -> Error (Unauthorized (scheme, Missing))
+          | Some (Basic (username, password)) ->
+            verified scheme (verify ~username ~password)
+          | Some (Other _) -> Error (Unauthorized (scheme, Malformed)))
+    }
+
+  let bearer ?format verify =
+    let scheme = Bearer { format } in
+    { scheme
+    ; extractor =
+        (fun req ->
+          match Security_bearer.authorization req with
+          | None -> Error (Unauthorized (scheme, Missing))
+          | Some (Bearer token) -> verified scheme (verify token)
+          | Some (Other _) -> Error (Unauthorized (scheme, Malformed)))
+    }
+
+  let api_key ~in_ name verify =
+    let scheme = Api_key { name; in_ } in
+    { scheme
+    ; extractor =
+        (fun req ->
+          match Security_api_key.find ~in_ name req with
+          | None -> Error (Unauthorized (scheme, Missing))
+          | Some key -> verified scheme (verify key))
+    }
+
+  (* The WWW-Authenticate value for a 401 response, if the scheme has one *)
+  let challenge = function
+    | Basic { realm } ->
+      Some Security_basic.(string_of_challenge (Challenge.Basic realm))
+    | Bearer _ -> Some Security_bearer.challenge
+    | Api_key _ -> None
+
+  let default_unauthorized _req _scheme _reason =
+    Response.of_string ~status:`Unauthorized "Unauthorized"
+
+  (* A handler that sets its own WWW-Authenticate keeps it *)
+  let with_challenge scheme response =
+    match challenge scheme with
+    | Some value ->
+      Response.add_header_unless_exists "WWW-Authenticate" value response
+    | None -> response
 
   let default_name = function
-    | Basic -> "basicAuth"
+    | Basic _ -> "basicAuth"
     | Bearer _ -> "bearerAuth"
     | Api_key { name; _ } -> name
 end
+
+let basic = Security.basic
+let bearer = Security.bearer
+let api_key = Security.api_key
 
 module Schema = struct
   type schemak
@@ -109,8 +179,7 @@ let body media_type schema = body_of [ media_type ] schema
 let extract extractor = lift (Schema.Extract extractor)
 let request = extract Result.ok
 
-(* An extractor that is documented as a security requirement *)
-let secured ?name scheme extractor =
+let secured ?name { Security.scheme; extractor } =
   let name =
     match name with Some name -> name | None -> Security.default_name scheme
   in
@@ -773,7 +842,7 @@ module Trie = struct
         first_some (match_trie rest_cursor method_ child) try_capture
       | None -> try_capture ())
 
-  let router' trie request =
+  let router' ~unauthorized trie request =
     let target = Request.target request in
     match
       match_trie (Path_cursor.create target) (Request.meth request) trie
@@ -785,18 +854,26 @@ module Trie = struct
         | Some apply_captures -> finish (apply_captures (run request))
         | None -> raise Not_found
       in
-      Middleware.apply_all middlewares service request
+      (* Outside the route's middlewares, so [recover] gets the first chance *)
+      (try Middleware.apply_all middlewares service request with
+      | Extraction_failed (Security.Unauthorized (scheme, reason)) ->
+        Security.with_challenge scheme (unauthorized request scheme reason))
     | None -> raise Not_found
 
-  let router routes =
+  let router ~unauthorized routes =
     let trie = compile routes in
-    router' trie
+    router' ~unauthorized trie
 end
 
-let match' routes =
+let match' ?(unauthorized = Security.default_unauthorized) routes =
   let trie = Trie.compile routes in
-  fun request -> try Some (Trie.router' trie request) with Not_found -> None
+  fun request ->
+    try Some (Trie.router' ~unauthorized trie request) with Not_found -> None
 
-let of_list ?(not_found = Handler.not_found) route_list =
-  let matcher = Trie.router route_list in
+let of_list
+      ?(not_found = Handler.not_found)
+      ?(unauthorized = Security.default_unauthorized)
+      route_list
+  =
+  let matcher = Trie.router ~unauthorized route_list in
   fun req -> try matcher req with Not_found -> not_found req

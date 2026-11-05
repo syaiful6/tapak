@@ -17,6 +17,7 @@
   saturn,
   jsont,
   multipart_form,
+  base64,
   sch,
   mirage-crypto,
   mirage-crypto-rng,
@@ -58,6 +59,7 @@ buildDunePackage {
     saturn
     jsont
     multipart_form
+    base64
     sch
     mirage-crypto
     mirage-crypto-rng

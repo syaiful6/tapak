@@ -33,44 +33,24 @@ let user_schema =
     and+ role = mem ~enc:(fun u -> u.role) "role" Sch.string in
     { id; name; role })
 
-type Router.extractor_error +=
-  | Missing_auth_header
-  | Invalid_bearer_token
-  | Invalid_token
-  | Forbidden_not_admin
-  | Invalid_api_key
+type Router.extractor_error += Forbidden_not_admin
 
-let user : user Router.schemaf =
-  Router.(secured (Security.bearer ())) (fun req ->
-    match Tapak.Request.header "Authorization" req with
-    | Some auth when String.starts_with ~prefix:"Bearer " auth ->
-      let token = String.sub auth 7 (String.length auth - 7) in
-      (* In real app: validate JWT, query database, etc. *)
-      if token = "valid-token"
-      then Ok { id = 1; name = "Alice"; role = "admin" }
-      else if token = "user-token"
-      then Ok { id = 2; name = "Bob"; role = "user" }
-      else Error Invalid_token
-    | Some _ -> Error Invalid_bearer_token
-    | None -> Error Missing_auth_header)
+let verify_token = function
+  (* In real app: validate JWT, query database, etc. *)
+  | "valid-token" -> Some { id = 1; name = "Alice"; role = "admin" }
+  | "user-token" -> Some { id = 2; name = "Bob"; role = "user" }
+  | _ -> None
+
+let user : user Router.schemaf = Router.(secured (bearer verify_token))
 
 let admin : user Router.schemaf =
   user
   |> Router.refine (fun u ->
     if u.role = "admin" then Ok u else Error Forbidden_not_admin)
 
-let api_key_schema =
-  Sch.Object.(
-    define ~kind:"ApiKey"
-    @@ mem
-         ~enc:Fun.id
-         "x-api-key"
-         Sch.(with_ ~constraint_:(Constraint.min_length 1) string))
-
-(** API key extractor example, built on a header schema so it is documented as
-    required. [fail] replaces the validation error with our own. *)
-let api_key : string Router.schemaf =
-  Router.(header api_key_schema <|> fail Invalid_api_key)
+(** API key extractor example, documented as an apiKey security scheme *)
+let api_key_auth : string Router.schemaf =
+  Router.(secured (api_key ~in_:`Header "x-api-key" Option.some))
 
 let json_to_string json =
   Jsont_bytesrw.encode_string Jsont.json json |> Result.get_ok
@@ -166,10 +146,7 @@ curl -H "Authorization: Bearer valid-token" http://localhost:8080/users/123
 <h2>Error Handling</h2>
 <p>Extractors use extensible error variants for type-safe error handling:</p>
 <pre>
-type Router.extractor_error +=
-  | Missing_auth_header
-  | Invalid_token
-  | Forbidden_not_admin
+type Router.extractor_error += Forbidden_not_admin
 
 (* Caught by middleware *)
 try next req with
@@ -186,29 +163,25 @@ let not_found _req =
     ~status:`Not_found
     (Sch.Json.encode_string error_schema "Not found")
 
+(* The router returns a 401 by default and adds WWW-Authenticate for us, so this
+   only chooses the body. *)
+let unauthorized _req scheme reason =
+  let message =
+    match scheme, (reason : Router.Security.reason) with
+    | Router.Security.Api_key _, _ -> "Invalid or missing API key"
+    | _, Missing -> "Missing Authorization header"
+    | _, Malformed -> "Invalid Bearer token format"
+    | _, Invalid -> "Invalid token"
+  in
+  Tapak.json ~status:`Unauthorized (Sch.Json.encode_string error_schema message)
+
 let extractor_error_middleware : Tapak.middleware =
  fun next req ->
   try next req with
-  | Router.Extraction_failed Missing_auth_header ->
-    Tapak.json
-      ~status:`Unauthorized
-      (Sch.Json.encode_string error_schema "Missing Authorization header")
-  | Router.Extraction_failed Invalid_bearer_token ->
-    Tapak.json
-      ~status:`Unauthorized
-      (Sch.Json.encode_string error_schema "Invalid Bearer token format")
-  | Router.Extraction_failed Invalid_token ->
-    Tapak.json
-      ~status:`Unauthorized
-      (Sch.Json.encode_string error_schema "Invalid token")
   | Router.Extraction_failed Forbidden_not_admin ->
     Tapak.json
       ~status:`Forbidden
       (Sch.Json.encode_string error_schema "Admin access required")
-  | Router.Extraction_failed Invalid_api_key ->
-    Tapak.json
-      ~status:`Unauthorized
-      (Sch.Json.encode_string error_schema "Invalid or missing API key")
   | Router.Extraction_failed _ ->
     Tapak.json
       ~status:`Bad_request
@@ -217,7 +190,7 @@ let extractor_error_middleware : Tapak.middleware =
 let routes =
   Router.
     [ get (s "") >> home_handler
-    ; get (s "api-info") >-> map api_info_handler api_key
+    ; get (s "api-info") >-> map api_info_handler api_key_auth
     ; get (s "profile") >-> map profile_handler user
     ; get (s "admin" / s "dashboard") >-> map admin_dashboard_handler admin
     ; get (s "admin" / s "stats") |> gate admin >> admin_stats_handler
@@ -233,7 +206,7 @@ let openapi_route =
   Router.(get (s "openapi.json") >> fun _req -> Tapak.json document)
 
 let setup_app () =
-  Router.of_list ~not_found (openapi_route :: routes)
+  Router.of_list ~not_found ~unauthorized (openapi_route :: routes)
   |> extractor_error_middleware
 
 let setup_log level =

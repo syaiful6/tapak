@@ -743,7 +743,7 @@ module Of_router2 = struct
         }
     in
     match scheme with
-    | Basic -> { base with scheme = Some "basic" }
+    | Basic _ -> { base with scheme = Some "basic" }
     | Bearer { format } ->
       { base with scheme = Some "bearer"; bearer_format = format }
     | Api_key { name; in_ } ->
@@ -760,7 +760,10 @@ module Of_router2 = struct
 
   (* A security scheme name identifies one definition across the document *)
   let components schemes =
-    match unique schemes with
+    let schemes =
+      unique (List.map (fun (name, s) -> name, to_spec_scheme s) schemes)
+    in
+    match schemes with
     | [] -> None
     | schemes ->
       List.iter
@@ -787,7 +790,7 @@ module Of_router2 = struct
           ; security_schemes =
               List.map
                 (fun (name, scheme) ->
-                   name, Spec.Json_schema.Or_ref.Value (to_spec_scheme scheme))
+                   name, Spec.Json_schema.Or_ref.Value scheme)
                 schemes
           ; links = []
           ; callbacks = []

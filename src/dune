@@ -2,6 +2,7 @@
  (name tapak)
  (public_name tapak)
  (libraries
+  base64
   http
   cohttp-eio
   cows
