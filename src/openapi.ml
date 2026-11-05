@@ -438,37 +438,17 @@ let rec flatten prefix prefix_params routes =
          flatten (prefix ^ scope_path) (prefix_params @ scope_params) children)
     routes
 
-let generate
-      ?(title = "API")
-      ?(version = "0.0.0")
-      ?description
-      ?(base_path = "")
-      routes
-  =
-  let flat = flatten base_path [] routes in
+let assemble ~title ~version ~description operations =
   let path_map : (string, Spec.Path_item.t) Hashtbl.t = Hashtbl.create 16 in
   List.iter
-    (fun (prefix, prefix_params, Schema schema) ->
-       let metadata = extract_metadata schema in
-       if metadata.include_in_schema
-       then begin
-         let meth, path_str, path_params = get_method_and_path schema in
-         let parts = extract_parts schema in
-         let full_path = prefix ^ path_str in
-         let all_param_refs =
-           List.map
-             (fun p -> Spec.Json_schema.Or_ref.Value p)
-             (prefix_params @ path_params @ parts.parameters)
-         in
-         let operation = build_operation all_param_refs parts metadata in
-         let item =
-           Option.value
-             ~default:empty_path_item
-             (Hashtbl.find_opt path_map full_path)
-         in
-         Hashtbl.replace path_map full_path (add_operation meth operation item)
-       end)
-    flat;
+    (fun (full_path, meth, operation) ->
+       let item =
+         Option.value
+           ~default:empty_path_item
+           (Hashtbl.find_opt path_map full_path)
+       in
+       Hashtbl.replace path_map full_path (add_operation meth operation item))
+    operations;
   let paths =
     Hashtbl.fold
       (fun path item acc -> (path, Spec.Json_schema.Or_ref.Value item) :: acc)
@@ -495,6 +475,179 @@ let generate
   ; external_docs = None
   }
 
+let generate
+      ?(title = "API")
+      ?(version = "0.0.0")
+      ?description
+      ?(base_path = "")
+      routes
+  =
+  flatten base_path [] routes
+  |> List.filter_map (fun (prefix, prefix_params, Schema schema) ->
+    let metadata = extract_metadata schema in
+    if metadata.include_in_schema
+    then begin
+      let meth, path_str, path_params = get_method_and_path schema in
+      let parts = extract_parts schema in
+      let all_param_refs =
+        List.map
+          (fun p -> Spec.Json_schema.Or_ref.Value p)
+          (prefix_params @ path_params @ parts.parameters)
+      in
+      Some
+        (prefix ^ path_str, meth, build_operation all_param_refs parts metadata)
+    end
+    else None)
+  |> assemble ~title ~version ~description
+
 let generate_string ?title ?version ?description ?base_path routes =
   let spec = generate ?title ?version ?description ?base_path routes in
+  Spec.to_string spec |> Result.get_ok
+
+module Of_router2 = struct
+  type parts =
+    { parameters : Spec.Parameter.t Diflist.t
+    ; body : (Router.media_type * Spec.Json_schema.t) option
+    }
+
+  module Pc = Sch.Sig.Make (struct
+      type 'a t = parts
+    end)
+
+  let empty = { parameters = Diflist.empty; body = None }
+
+  (* A body can only be consumed once, so the first one declared is the one that
+     gets the data. *)
+  let combine first second =
+    { parameters = Diflist.concat first.parameters second.parameters
+    ; body =
+        (match first.body with Some _ -> first.body | None -> second.body)
+    }
+
+  let pc_applicative : Pc.t Sch.Sig.applicative =
+    { pure = (fun _ -> Pc.inj empty)
+    ; map = (fun _f va -> Pc.inj (Pc.prj va))
+    ; apply = (fun vf va -> Pc.inj (combine (Pc.prj va) (Pc.prj vf)))
+    }
+
+  let of_parameters params =
+    { empty with
+      parameters =
+        List.fold_right
+          (fun p acc -> Diflist.concat (Diflist.single p) acc)
+          params
+          Diflist.empty
+    }
+
+  (* Nothing here touches a request: [Extract] contributes nothing, and [Refine]
+     only contributes what its source declares. *)
+  let rec collect : type a. a Router2.schemaf -> parts =
+   fun schema -> Pc.prj (Sch.Free.run pc_applicative (effect_nat ()) schema)
+
+  and effect_nat : unit -> (Router2.Schema.schemak, Pc.t) Sch.Sig.nat =
+   fun () ->
+    { Sch.Sig.run =
+        (fun (type b) (fa : (b, Router2.Schema.schemak) Sch.Sig.app) ->
+          let effect_ : b Router2.Schema.t = Router2.Schema.prj fa in
+          let parts : parts = collect_effect effect_ in
+          (Pc.inj parts : (b, Pc.t) Sch.Sig.app))
+    }
+
+  and collect_effect : type a. a Router2.Schema.t -> parts = function
+    | Query schema ->
+      of_parameters (To_parameter.convert Spec.Location.Query schema)
+    | Header schema ->
+      of_parameters (To_parameter.convert Spec.Location.Header schema)
+    | Cookie schema ->
+      of_parameters (To_parameter.convert Spec.Location.Cookie schema)
+    | Body { media_type; schema } ->
+      { empty with body = Some (media_type, schema_to_openapi_schema schema) }
+    | Extract _ -> empty
+    | Refine { source; _ } -> collect source
+    | Memo { source; _ } -> collect source
+
+  (* Gates and the block can read the same parameter, but OpenAPI forbids
+     repeating a name and location in one operation. The request fails if any
+     reader requires the parameter, so required wins. *)
+  let same_parameter (a : Spec.Parameter.t) (b : Spec.Parameter.t) =
+    a.in_ = b.in_
+    &&
+    match a.in_ with
+    | Spec.Location.Header -> Sch_ext.CI.equal a.name b.name
+    | _ -> String.equal a.name b.name
+
+  let merge_duplicates params =
+    List.fold_left
+      (fun acc (p : Spec.Parameter.t) ->
+         if List.exists (same_parameter p) acc
+         then
+           List.map
+             (fun (q : Spec.Parameter.t) ->
+                if same_parameter p q
+                then { q with required = q.required || p.required }
+                else q)
+             acc
+         else acc @ [ p ])
+      []
+      params
+
+  let rec flatten prefix prefix_params gates routes =
+    List.concat_map
+      (fun route ->
+         match route with
+         | Router2.Route { endpoint = Endpoint e; schema; _ } ->
+           if e.meta.include_in_schema
+           then begin
+             let path_str, path_params = path_to_string e.path in
+             let parts =
+               collect (Router2.with_gates (gates @ e.gates) schema)
+             in
+             let parameters =
+               merge_duplicates
+                 (prefix_params @ path_params @ Diflist.to_list parts.parameters)
+             in
+             let response =
+               Option.map
+                 (fun (Router2.Response_doc { status; schema }) ->
+                    status, schema_to_openapi_schema schema)
+                 e.response
+             in
+             [ ( prefix ^ path_str
+               , e.method_
+               , build_operation
+                   (List.map
+                      (fun p -> Spec.Json_schema.Or_ref.Value p)
+                      parameters)
+                   { parameters; body = parts.body; response }
+                   e.meta )
+             ]
+           end
+           else []
+         | Router2.Scope
+             { prefix = scope_prefix
+             ; routes = children
+             ; gates = scope_gates
+             ; _
+             } ->
+           let scope_path, scope_params = path_to_string scope_prefix in
+           flatten
+             (prefix ^ scope_path)
+             (prefix_params @ scope_params)
+             (gates @ scope_gates)
+             children)
+      routes
+end
+
+let generate_router2
+      ?(title = "API")
+      ?(version = "0.0.0")
+      ?description
+      ?(base_path = "")
+      routes
+  =
+  Of_router2.flatten base_path [] [] routes
+  |> assemble ~title ~version ~description
+
+let generate_router2_string ?title ?version ?description ?base_path routes =
+  let spec = generate_router2 ?title ?version ?description ?base_path routes in
   Spec.to_string spec |> Result.get_ok
