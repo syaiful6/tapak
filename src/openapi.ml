@@ -526,6 +526,7 @@ module Of_router2 = struct
     ; never : bool
     ; security : string list list
     ; schemes : (string * Router2.Security.scheme) list
+    ; unauthorized : Router2.Security.scheme list
     }
 
   module Pc = Sch.Sig.Make (struct
@@ -539,6 +540,7 @@ module Of_router2 = struct
     ; never = false
     ; security = [ [] ]
     ; schemes = []
+    ; unauthorized = []
     }
 
   let unique items =
@@ -567,6 +569,7 @@ module Of_router2 = struct
     ; never = first.never || second.never
     ; security = all_of first.security second.security
     ; schemes = first.schemes @ second.schemes
+    ; unauthorized = first.unauthorized @ second.unauthorized
     }
 
   let pc_applicative : Pc.t Sch.Sig.applicative =
@@ -611,13 +614,14 @@ module Of_router2 = struct
 
   (* A parameter is only required by an alternative if every branch requires it.
      A branch that can't succeed tells callers nothing, so it is ignored. [<|>]
-     allows a body in one branch only, so the other branch succeeds without
-     it. *)
+     allows a body in one branch only, so the other branch succeeds without it.
+     When both branches fail the right error is the one raised, so only the
+     right branch can answer 401. *)
   let join left right =
     if left.never
     then right
     else if right.never
-    then left
+    then { left with unauthorized = right.unauthorized }
     else
       let lefts = merge_duplicates (Diflist.to_list left.parameters) in
       let rights = merge_duplicates (Diflist.to_list right.parameters) in
@@ -639,6 +643,7 @@ module Of_router2 = struct
       ; body_optional = true
       ; security = unique (left.security @ right.security)
       ; schemes = left.schemes @ right.schemes
+      ; unauthorized = right.unauthorized
       }
 
   (* Nothing here touches a request: [Extract] contributes nothing, and [Refine]
@@ -666,7 +671,11 @@ module Of_router2 = struct
       { empty with body = Some (media_types, schema_to_openapi_schema schema) }
     | Extract _ -> empty
     | Secured { name; scheme; _ } ->
-      { empty with security = [ [ name ] ]; schemes = [ name, scheme ] }
+      { empty with
+        security = [ [ name ] ]
+      ; schemes = [ name, scheme ]
+      ; unauthorized = [ scheme ]
+      }
     | Refine { source; _ } -> collect source
     | Memo { source; _ } -> collect source
     | Fail _ -> { empty with never = true }
@@ -675,6 +684,54 @@ module Of_router2 = struct
   let operation_security = function
     | [ [] ] -> None
     | security -> Some (List.map (List.map (fun name -> name, [])) security)
+
+  let www_authenticate challenges ~required =
+    Spec.Header.
+      { description = Some (String.concat ~sep:" or " (unique challenges))
+      ; required = Some required
+      ; deprecated = None
+      ; style = None
+      ; explode = None
+      ; schema =
+          Some
+            (wrap_schema
+               (Spec.Json_schema.of_base
+                  { Json_schema.empty with
+                    type_ = Json_schema.Json_type.string
+                  }))
+      }
+
+  (* The response the router sends when a scheme rejects the request. A declared
+     401 is kept. *)
+  let add_unauthorized schemes (operation : Spec.Operation.t) =
+    let responses = operation.responses in
+    if schemes = [] || List.mem_assoc "401" responses.responses
+    then operation
+    else
+      let challenges = List.filter_map Router2.Security.challenge schemes in
+      let headers =
+        match challenges with
+        | [] -> []
+        | challenges ->
+          [ ( "WWW-Authenticate"
+            , Spec.Json_schema.Or_ref.Value
+                (www_authenticate
+                   challenges
+                   ~required:(List.length challenges = List.length schemes)) )
+          ]
+      in
+      let response =
+        Spec.Response.
+          { description = "Unauthorized"; headers; content = []; links = [] }
+      in
+      { operation with
+        responses =
+          { responses with
+            responses =
+              responses.responses
+              @ [ "401", Spec.Json_schema.Or_ref.Value response ]
+          }
+      }
 
   let rec flatten prefix prefix_params gates routes =
     List.concat_map
@@ -710,6 +767,7 @@ module Of_router2 = struct
                    ; security = operation_security parts.security
                    }
                    e.meta
+                 |> add_unauthorized parts.unauthorized
                , parts.schemes )
              ]
            end

@@ -523,6 +523,127 @@ let test_realm_is_not_a_conflict () =
     1
     (List.length (Option.get spec.components).Spec.Component.security_schemes)
 
+let response_401 (op : Spec.Operation.t) =
+  match List.assoc_opt "401" op.responses.responses with
+  | Some (Spec.Json_schema.Or_ref.Value (r : Spec.Response.t)) -> Some r
+  | Some _ -> Alcotest.fail "expected an inline response"
+  | None -> None
+
+(* What the router really answers when no credentials are sent *)
+let answers_401 routes =
+  let request =
+    Request.make
+      ~version:`HTTP_1_1
+      ~meth:`GET
+      ~headers:(Headers.of_list [])
+      ~body:(Bytesrw.Bytes.Reader.of_string "")
+      "/x"
+  in
+  match R2.of_list routes request with
+  | response -> Response.status response = `Unauthorized
+  | exception Router.Extraction_failed _ -> false
+
+let test_401_matches_what_the_router_answers () =
+  let open R2 in
+  let check name expected gates =
+    let routes = [ get (s "x") |> gates >-> pure ok ] in
+    Alcotest.(check bool)
+      (name ^ ": documented")
+      expected
+      (Option.is_some (response_401 (operation "/x" get_op routes)));
+    Alcotest.(check bool) (name ^ ": answered") expected (answers_401 routes)
+  in
+  let denied = extract (fun _ -> Error Denied) in
+  check "no security" false Fun.id;
+  check "plain extract" false (gate denied);
+  check "gate" true (gate basic_auth);
+  check "second gate" true (fun e ->
+    e |> gate (extract (fun _ -> Ok ())) |> gate basic_auth);
+  check
+    "through memo and refine"
+    true
+    (gate (memo basic_auth |> refine (fun () -> Ok ())));
+  check "either scheme" true (gate (basic_auth <|> bearer_auth));
+  check "a fallback never fails" false (gate (basic_auth <|> pure ()));
+  check "fail replaces the error" false (gate (basic_auth <|> fail Denied));
+  check
+    "the right error wins over a scheme"
+    false
+    (gate (basic_auth <|> denied));
+  check
+    "the right scheme wins over an error"
+    true
+    (gate (denied <|> basic_auth));
+  check "fail on the left is ignored" true (gate (fail Denied <|> basic_auth))
+
+let test_401_documents_the_challenge () =
+  let open R2 in
+  let header gates =
+    let routes = [ get (s "x") |> gates >-> pure ok ] in
+    let response = Option.get (response_401 (operation "/x" get_op routes)) in
+    match List.assoc_opt "WWW-Authenticate" response.headers with
+    | Some (Spec.Json_schema.Or_ref.Value (h : Spec.Header.t)) ->
+      Some (Option.get h.description, Option.get h.required)
+    | Some _ -> Alcotest.fail "expected an inline header"
+    | None -> None
+  in
+  let check = Alcotest.(check (option (pair string bool))) in
+  check
+    "basic has its realm"
+    (Some ({|Basic realm="Staff"|}, true))
+    (header (gate (secured (basic ~realm:"Staff" no_login))));
+  check "bearer" (Some ("Bearer", true)) (header (gate bearer_auth));
+  check "api key has no challenge" None (header (gate api_key_auth));
+  check
+    "only the right branch can answer"
+    (Some ("Bearer", true))
+    (header (gate (basic_auth <|> bearer_auth)));
+  check
+    "the right branch has no challenge"
+    None
+    (header (gate (bearer_auth <|> api_key_auth)));
+  check
+    "not guaranteed when another scheme fails first"
+    (Some ("Bearer", false))
+    (header (fun e -> e |> gate api_key_auth |> gate bearer_auth))
+
+let test_scope_gate_documents_401 () =
+  let open R2 in
+  let routes =
+    [ scope ~gates:[ void basic_auth ] (s "api") [ get (s "x") >-> pure ok ]
+    ; get (s "public") >-> pure ok
+    ]
+  in
+  Alcotest.(check bool)
+    "inherited"
+    true
+    (Option.is_some (response_401 (operation "/api/x" get_op routes)));
+  Alcotest.(check bool)
+    "outside"
+    false
+    (Option.is_some (response_401 (operation "/public" get_op routes)))
+
+let test_declared_401_and_success_are_kept () =
+  let open R2 in
+  let routes =
+    [ get (s "x")
+      |> gate basic_auth
+      |> response_model ~status:`Unauthorized ~schema:name
+      >-> pure "denied"
+    ; get (s "y") |> gate basic_auth >-> pure ok
+    ]
+  in
+  Alcotest.(check string)
+    "declared 401"
+    ""
+    (Option.get (response_401 (operation "/x" get_op routes))).description;
+  Alcotest.(check (list string))
+    "success first"
+    [ "200"; "401" ]
+    (List.map fst (operation "/y" get_op routes).responses.responses);
+  (* The whole document still encodes *)
+  ignore (Openapi.generate_router2_string routes)
+
 let test_body_of_documents_each_content_type () =
   let open R2 in
   let routes =
@@ -571,6 +692,14 @@ let tests =
     , `Quick
     , test_generating_security_runs_no_extractor )
   ; "Realm is not a conflict", `Quick, test_realm_is_not_a_conflict
+  ; ( "401 matches what the router answers"
+    , `Quick
+    , test_401_matches_what_the_router_answers )
+  ; "401 documents the challenge", `Quick, test_401_documents_the_challenge
+  ; "Scope gate documents 401", `Quick, test_scope_gate_documents_401
+  ; ( "Declared 401 and success are kept"
+    , `Quick
+    , test_declared_401_and_success_are_kept )
   ; ( "body_of documents each content type"
     , `Quick
     , test_body_of_documents_each_content_type )
