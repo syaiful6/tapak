@@ -355,6 +355,171 @@ let test_root_path_is_documented_as_slash () =
   let routes = [ get (s "") >-> pure ok ] in
   ignore (operation "/" get_op routes)
 
+let security_of path routes =
+  (operation path get_op routes).Spec.Operation.security
+
+let requirements = Alcotest.(option (list (list (pair string (list string)))))
+let basic = R2.(secured Security.basic (fun _ -> Ok ()))
+let bearer = R2.(secured (Security.bearer ~format:"JWT" ()) (fun _ -> Ok ()))
+
+let api_key_auth =
+  R2.(secured (Security.api_key ~in_:`Header "x-api-key") (fun _ -> Ok ()))
+
+let test_no_security_by_default () =
+  let open R2 in
+  Alcotest.check
+    requirements
+    "absent, including for plain extract"
+    None
+    (security_of
+       "/x"
+       [ get (s "x") |> gate (extract (fun _ -> Ok ())) >-> pure ok ])
+
+let test_security_follows_schema_shape () =
+  let open R2 in
+  let check name expected gates =
+    Alcotest.check
+      requirements
+      name
+      expected
+      (security_of "/x" [ get (s "x") |> gates >-> pure ok ])
+  in
+  check "single" (Some [ [ "basicAuth", [] ] ]) (gate basic);
+  check
+    "sequence is AND"
+    (Some [ [ "basicAuth", []; "bearerAuth", [] ] ])
+    (fun e -> e |> gate basic |> gate bearer);
+  check
+    "<|> is OR"
+    (Some [ [ "basicAuth", [] ]; [ "bearerAuth", [] ] ])
+    (gate (basic <|> bearer));
+  check
+    "AND distributes over OR"
+    (Some
+       [ [ "basicAuth", []; "x-api-key", [] ]
+       ; [ "bearerAuth", []; "x-api-key", [] ]
+       ])
+    (fun e -> e |> gate (basic <|> bearer) |> gate api_key_auth);
+  check
+    "a fallback makes it optional"
+    (Some [ [ "basicAuth", [] ]; [] ])
+    (gate (basic <|> pure ()));
+  check
+    "fail adds nothing"
+    (Some [ [ "basicAuth", [] ] ])
+    (gate (basic <|> fail Denied));
+  check
+    "reading a scheme twice is one requirement"
+    (Some [ [ "basicAuth", [] ] ])
+    (fun e -> e |> gate basic |> gate basic);
+  check
+    "seen through refine and memo"
+    (Some [ [ "basicAuth", [] ] ])
+    (gate (memo basic |> refine (fun () -> Ok ())))
+
+let test_scope_gate_secures_routes () =
+  let open R2 in
+  let routes =
+    [ scope
+        ~gates:[ void basic ]
+        (s "api")
+        [ get (s "x") >-> pure ok; get (s "y") |> gate bearer >-> pure ok ]
+    ; get (s "public") >-> pure ok
+    ]
+  in
+  Alcotest.check
+    requirements
+    "inherited"
+    (Some [ [ "basicAuth", [] ] ])
+    (security_of "/api/x" routes);
+  Alcotest.check
+    requirements
+    "combined with the endpoint"
+    (Some [ [ "basicAuth", []; "bearerAuth", [] ] ])
+    (security_of "/api/y" routes);
+  Alcotest.check requirements "outside" None (security_of "/public" routes)
+
+let test_security_schemes_are_documented () =
+  let open R2 in
+  let routes =
+    [ get (s "a") |> gate basic >-> pure ok
+    ; get (s "b") |> gate bearer >-> pure ok
+    ; get (s "c") |> gate api_key_auth >-> pure ok
+    ; get (s "d") |> gate basic >-> pure ok
+    ; get (s "hidden")
+      |> gate (secured ~name:"hidden" Security.basic (fun _ -> Ok ()))
+      |> include_in_schema false
+      >-> pure ok
+    ]
+  in
+  let spec = Openapi.generate_router2 routes in
+  let schemes =
+    (Option.get spec.components).Spec.Component.security_schemes
+    |> List.map (fun (name, scheme) ->
+      match scheme with
+      | Spec.Json_schema.Or_ref.Value (v : Spec.Security_scheme.t) -> name, v
+      | _ -> Alcotest.fail "expected an inline scheme")
+  in
+  Alcotest.(check (list string))
+    "each once, hidden routes excluded"
+    [ "basicAuth"; "bearerAuth"; "x-api-key" ]
+    (List.map fst schemes);
+  let scheme name = List.assoc name schemes in
+  Alcotest.(check (option string))
+    "basic"
+    (Some "basic")
+    (scheme "basicAuth").scheme;
+  Alcotest.(check (option string))
+    "bearer format"
+    (Some "JWT")
+    (scheme "bearerAuth").bearer_format;
+  Alcotest.(check (option string))
+    "api key name"
+    (Some "x-api-key")
+    (scheme "x-api-key").name;
+  (* The whole document still encodes *)
+  ignore (Openapi.generate_router2_string routes)
+
+let test_conflicting_scheme_names_are_rejected () =
+  let open R2 in
+  let routes =
+    [ get (s "a")
+      |> gate (secured ~name:"auth" Security.basic (fun _ -> Ok ()))
+      >-> pure ok
+    ; get (s "b")
+      |> gate (secured ~name:"auth" (Security.bearer ()) (fun _ -> Ok ()))
+      >-> pure ok
+    ]
+  in
+  match Openapi.generate_router2 routes with
+  | _ -> Alcotest.fail "expected the conflict to be rejected"
+  | exception Invalid_argument _ -> ()
+
+let test_generating_security_runs_no_extractor () =
+  let open R2 in
+  let routes =
+    [ get (s "x")
+      |> gate
+           (secured Security.basic (fun _ ->
+              Alcotest.fail "extractor ran during generation"))
+      >-> pure ok
+    ]
+  in
+  ignore (Openapi.generate_router2 routes)
+
+let test_body_of_documents_each_content_type () =
+  let open R2 in
+  let routes =
+    [ post (s "x") >-> map (fun _ -> ok) (body_of [ Json; Urlencoded ] name) ]
+  in
+  match (operation "/x" post_op routes).request_body with
+  | Some (Spec.Json_schema.Or_ref.Value body) ->
+    Alcotest.(check (list string))
+      "both"
+      [ "application/json"; "application/x-www-form-urlencoded" ]
+      (List.map fst body.content)
+  | _ -> Alcotest.fail "expected an inline request body"
+
 let tests =
   [ "Matches Router output", `Quick, test_matches_router_output
   ; "Gates documented in run order", `Quick, test_gates_documented_in_run_order
@@ -377,6 +542,21 @@ let tests =
     , `Quick
     , test_gate_requires_what_alt_leaves_optional )
   ; "Body requirement follows <|>", `Quick, test_body_requirement_follows_alt
+  ; "No security by default", `Quick, test_no_security_by_default
+  ; "Security follows schema shape", `Quick, test_security_follows_schema_shape
+  ; "Scope gate secures routes", `Quick, test_scope_gate_secures_routes
+  ; ( "Security schemes are documented"
+    , `Quick
+    , test_security_schemes_are_documented )
+  ; ( "Conflicting scheme names are rejected"
+    , `Quick
+    , test_conflicting_scheme_names_are_rejected )
+  ; ( "Generating security runs no extractor"
+    , `Quick
+    , test_generating_security_runs_no_extractor )
+  ; ( "body_of documents each content type"
+    , `Quick
+    , test_body_of_documents_each_content_type )
   ; ( "Root path is documented as /"
     , `Quick
     , test_root_path_is_documented_as_slash )

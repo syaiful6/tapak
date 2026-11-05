@@ -28,6 +28,25 @@ let p = Router.p
 let ann = Router.ann
 let sprintf = Router.sprintf
 
+module Security = struct
+  type scheme =
+    | Basic
+    | Bearer of { format : string option }
+    | Api_key of
+        { name : string
+        ; in_ : [ `Header | `Query | `Cookie ]
+        }
+
+  let basic = Basic
+  let bearer ?format () = Bearer { format }
+  let api_key ~in_ name = Api_key { name; in_ }
+
+  let default_name = function
+    | Basic -> "basicAuth"
+    | Bearer _ -> "bearerAuth"
+    | Api_key { name; _ } -> name
+end
+
 module Schema = struct
   type schemak
   type 'a schemaf = (schemak, 'a) Sch.Free.t
@@ -37,11 +56,17 @@ module Schema = struct
     | Header : 'header Sch.t -> 'header t
     | Cookie : 'cookie Sch.t -> 'cookie t
     | Body :
-        { media_type : media_type
+        { media_types : media_type list
         ; schema : 'v Sch.t
         }
         -> 'v t
     | Extract : 'a extractor -> 'a t
+    | Secured :
+        { name : string
+        ; scheme : Security.scheme
+        ; extractor : 'a extractor
+        }
+        -> 'a t
     | Refine :
         { source : 'a schemaf
         ; check : 'a -> ('b, extractor_error) result
@@ -72,9 +97,25 @@ let lift t = Sch.Free.lift (Schema.inj t)
 let query schema = lift (Schema.Query schema)
 let header schema = lift (Schema.Header schema)
 let cookie schema = lift (Schema.Cookie schema)
-let body media_type schema = lift (Schema.Body { media_type; schema })
+
+(* The request's content type picks the decoder; [schema] is the same for all *)
+let body_of media_types schema =
+  if media_types = []
+  then invalid_arg "Router2.body_of: expected at least one media type";
+  lift
+    (Schema.Body { media_types = List.sort_uniq compare media_types; schema })
+
+let body media_type schema = body_of [ media_type ] schema
 let extract extractor = lift (Schema.Extract extractor)
 let request = extract Result.ok
+
+(* An extractor that is documented as a security requirement *)
+let secured ?name scheme extractor =
+  let name =
+    match name with Some name -> name | None -> Security.default_name scheme
+  in
+  lift (Schema.Secured { name; scheme; extractor })
+
 let refine check source = lift (Schema.Refine { source; check })
 
 (* Each call creates its own cache entry, so sharing means reusing the value *)
@@ -110,7 +151,7 @@ let rec has_body : type a. a schemaf -> bool =
 
 and effect_has_body : type a. a Schema.t -> bool = function
   | Body _ -> true
-  | Query _ | Header _ | Cookie _ | Extract _ | Fail _ -> false
+  | Query _ | Header _ | Cookie _ | Extract _ | Secured _ | Fail _ -> false
   | Refine { source; _ } -> has_body source
   | Memo { source; _ } -> has_body source
   | Alt { left; right } -> has_body left || has_body right
@@ -365,28 +406,37 @@ let expected_content_type : media_type -> string = function
   | Urlencoded -> "application/x-www-form-urlencoded"
   | Multipart -> "multipart/form-data"
 
-let validate_content_type : media_type -> Request.t -> (unit, string) result =
- fun input_type request ->
-  let expected = expected_content_type input_type in
+let select_media_type :
+  media_type list -> Request.t -> (media_type, string) result
+  =
+ fun media_types request ->
+  let expected =
+    String.concat ", " (List.map expected_content_type media_types)
+  in
   let actual = Request.header "content-type" request in
   match actual with
   | None ->
     Error (Printf.sprintf "Missing Content-Type header, expected: %s" expected)
   | Some content_type ->
     (* Extract media type, ignoring charset and other parameters *)
-    let media_type =
+    let actual_media_type =
       match String.split_on_char ';' content_type with
       | media :: _ -> String.trim media
       | [] -> content_type
     in
-    if Sch_ext.CI.equal media_type expected
-    then Ok ()
-    else
+    (match
+       List.find_opt
+         (fun candidate ->
+            Sch_ext.CI.equal actual_media_type (expected_content_type candidate))
+         media_types
+     with
+    | Some media_type -> Ok media_type
+    | None ->
       Error
         (Printf.sprintf
            "Unsupported Content-Type: %s, expected: %s"
-           media_type
-           expected)
+           actual_media_type
+           expected))
 
 module Cookie_parser = struct
   let parse request =
@@ -503,15 +553,20 @@ and compile_effect : type a. a Schema.t -> Reader.env -> a = function
   | Cookie schema ->
     fun { Reader.request; _ } ->
       decoded (Sch.Json.decode schema (Cookie_parser.to_json request))
-  | Body { media_type; schema } ->
+  | Body { media_types; schema } ->
     fun { Reader.request; _ } ->
-      (match validate_content_type media_type request with
+      (match select_media_type media_types request with
       | Error msg -> raise (Bad_request msg)
-      | Ok () ->
+      | Ok media_type ->
         (match evaluate_body_schema media_type schema request with
         | Ok validated_data -> validated_data
         | Error errors -> raise (Validation_failed errors)))
   | Extract extractor ->
+    fun { Reader.request; _ } ->
+      (match extractor request with
+      | Ok v -> v
+      | Error e -> raise (Extraction_failed e))
+  | Secured { extractor; _ } ->
     fun { Reader.request; _ } ->
       (match extractor request with
       | Ok v -> v

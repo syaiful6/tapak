@@ -41,7 +41,7 @@ type Router.extractor_error +=
   | Invalid_api_key
 
 let user : user Router.schemaf =
-  Router.extract (fun req ->
+  Router.(secured (Security.bearer ())) (fun req ->
     match Tapak.Request.header "Authorization" req with
     | Some auth when String.starts_with ~prefix:"Bearer " auth ->
       let token = String.sub auth 7 (String.length auth - 7) in

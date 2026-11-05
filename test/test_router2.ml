@@ -652,6 +652,75 @@ let test_union_body () =
     "square 3"
     (dispatch routes (json_request ~body:{|{"type":"square","size":3}|} "/x"))
 
+let form_request ?(body = "name=x") target =
+  make_request
+    ~meth:`POST
+    ~content_type:"application/x-www-form-urlencoded"
+    ~body
+    target
+
+let test_body_of_selects_by_content_type () =
+  let routes =
+    [ post (s "x")
+      >-> map
+            Response.of_string
+            (Private.Router2.body_of [ Json; Urlencoded ] name_schema)
+    ]
+  in
+  check_body "json" "x" (dispatch routes (json_request "/x"));
+  check_body "form" "x" (dispatch routes (form_request "/x"));
+  check_body
+    "content type parameters are ignored"
+    "x"
+    (dispatch
+       routes
+       (make_request
+          ~meth:`POST
+          ~content_type:"application/json; charset=utf-8"
+          ~body:{|{"name":"x"}|}
+          "/x"));
+  Alcotest.(check string)
+    "other content type"
+    "bad_request"
+    (run_outcome
+       routes
+       (make_request ~meth:`POST ~content_type:"text/plain" ~body:"x" "/x"));
+  Alcotest.(check string)
+    "missing content type"
+    "bad_request"
+    (run_outcome routes (make_request ~meth:`POST ~body:"x" "/x"));
+  Alcotest.(check string)
+    "invalid body for the selected type"
+    "validation_failed"
+    (run_outcome routes (json_request ~body:"{}" "/x"))
+
+let test_body_of_rejects_misuse () =
+  Alcotest.check_raises
+    "no media types"
+    (Invalid_argument "Router2.body_of: expected at least one media type")
+    (fun () -> ignore (Private.Router2.body_of [] name_schema));
+  let many = Private.Router2.body_of [ Json; Urlencoded ] name_schema in
+  match many <|> body Multipart name_schema with
+  | _ -> Alcotest.fail "expected two bodies in <|> to be rejected"
+  | exception Invalid_argument _ -> ()
+
+let test_secured_runs_like_extract () =
+  let bearer =
+    secured (Security.bearer ()) (fun req ->
+      match Request.header "authorization" req with
+      | Some "token" -> Ok "alice"
+      | _ -> Error Unauthorized)
+  in
+  let routes = [ get (s "me") >-> map Response.of_string bearer ] in
+  check_body
+    "value"
+    "alice"
+    (dispatch routes (make_request ~auth:"token" "/me"));
+  Alcotest.(check string)
+    "error"
+    "unauthorized"
+    (run_outcome routes (make_request "/me"))
+
 let tests =
   [ "Gate is not passed to handler", `Quick, test_gate_not_passed_to_handler
   ; "Effects run in declared order", `Quick, test_effects_run_in_declared_order
@@ -681,6 +750,11 @@ let tests =
   ; "Two bodies are rejected", `Quick, test_two_bodies_are_rejected
   ; "One body in <|>", `Quick, test_one_body_in_alt
   ; "Union body", `Quick, test_union_body
+  ; ( "body_of selects by content type"
+    , `Quick
+    , test_body_of_selects_by_content_type )
+  ; "body_of rejects misuse", `Quick, test_body_of_rejects_misuse
+  ; "secured runs like extract", `Quick, test_secured_runs_like_extract
   ; "Memo runs once per request", `Quick, test_memo_runs_once_per_request
   ; "Without memo runs each time", `Quick, test_without_memo_runs_each_time
   ; "Memo instances are separate", `Quick, test_memo_instances_are_separate
