@@ -328,11 +328,11 @@ type route =
       }
       -> route
 
-let ( >-> ) endpoint schema = Route { endpoint; schema; middlewares = [] }
+let handle schema endpoint = Route { endpoint; schema; middlewares = [] }
+let ( >> ) endpoint schema = handle schema endpoint
 
-(* The handler takes the request so it runs per request: a bare ['f] would be
-   evaluated once, when the route is built, for a route with no captures. *)
-let ( >> ) endpoint handler = endpoint >-> Sch.Free.map handler request
+let handle_request handler endpoint =
+  handle (Sch.Free.map handler request) endpoint
 
 let scope ?(middlewares = []) ?(gates = []) prefix routes =
   Scope { prefix; routes; gates; middlewares }

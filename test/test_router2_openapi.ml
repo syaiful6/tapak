@@ -73,29 +73,29 @@ let router2_routes =
     |> tags [ "a" ]
     |> tag "b"
     |> operation_id "getPost"
-    >->
+    >>
     let+ _ = query page
     and+ _ = header api_key_schema
     and+ _ = cookie session in
     fun _ _ -> ok)
   ; post (s "users")
     |> response_model ~status:`Created ~schema:name
-    >-> body Json name
+    >> body Json name
   ; (put (s "form" / ann ("c", "colour") (color_path ()))
-    >->
+    >>
     let+ _ = body Urlencoded name in
     fun _ -> ok)
   ; (patch (s "upload")
-    >->
+    >>
     let+ _ = body Multipart name in
     ok)
-  ; delete (s "files" / splat) >-> pure (fun _ -> ok)
+  ; delete (s "files" / splat) >> pure (fun _ -> ok)
   ; (any (s "any")
-    >->
+    >>
     let+ () = extract (fun _ -> Ok ()) in
     ok)
-  ; head (s "hidden") |> include_in_schema false >-> pure ok
-  ; scope (s "api" / s "v1") [ get (s "x" / slug) >-> pure (fun _ -> ok) ]
+  ; head (s "hidden") |> include_in_schema false >> pure ok
+  ; scope (s "api" / s "v1") [ get (s "x" / slug) >> pure (fun _ -> ok) ]
   ]
 
 let test_matches_router_output () =
@@ -139,7 +139,7 @@ let test_gates_documented_in_run_order () =
         (s "api")
         [ (get (s "x" / p "id" int)
           |> gate (header api_key_schema)
-          >->
+          >>
           let+ _ = query page in
           fun _ -> ok)
         ]
@@ -155,7 +155,7 @@ let test_refine_documents_its_source () =
   let routes =
     [ get (s "x")
       |> gate (header api_key_schema |> refine (fun key -> Ok key))
-      >-> pure ok
+      >> pure ok
     ]
   in
   Alcotest.(check (list string))
@@ -165,7 +165,7 @@ let test_refine_documents_its_source () =
 
 let test_extract_gate_is_invisible () =
   let open R2 in
-  let routes = [ get (s "x") |> gate (extract (fun _ -> Ok ())) >-> pure ok ] in
+  let routes = [ get (s "x") |> gate (extract (fun _ -> Ok ())) >> pure ok ] in
   Alcotest.(check (list string))
     "no parameters"
     []
@@ -178,7 +178,7 @@ let test_generation_runs_nothing () =
     [ (get (s "x")
       |> gate (extract fail_if_run)
       |> gate (header api_key_schema |> refine fail_if_run)
-      >->
+      >>
       let+ _ = extract fail_if_run in
       ok)
     ]
@@ -194,7 +194,7 @@ let test_shared_parameter_is_merged () =
     [ (get (s "x")
       |> gate (header api_key_opt)
       |> gate (header api_key_schema)
-      >->
+      >>
       let+ _ = header api_key_schema
       and+ _ = cookie session in
       ok)
@@ -215,7 +215,7 @@ let test_same_name_in_other_location_is_kept () =
   in
   let routes =
     [ (get (s "x")
-      >->
+      >>
       let+ _ = header api_key_schema
       and+ _ = query as_query in
       ok)
@@ -230,7 +230,7 @@ let test_first_body_is_documented () =
   let open R2 in
   let routes =
     [ (post (s "x")
-      >->
+      >>
       let+ _ = body Json name
       and+ _ = body Json other_name in
       ok)
@@ -255,7 +255,7 @@ let test_memo_documents_its_source_once () =
     [ scope
         ~gates:[ void key ]
         (s "api")
-        [ get (s "x") >-> map (fun _ -> ok) key ]
+        [ get (s "x") >> map (fun _ -> ok) key ]
     ]
   in
   Alcotest.(check (list string))
@@ -271,8 +271,7 @@ let flags = Alcotest.(list (pair string bool))
 let test_fail_keeps_parameter_required () =
   let open R2 in
   let routes =
-    [ get (s "x") >-> map (fun _ -> ok) (header api_key_schema <|> fail Denied)
-    ]
+    [ get (s "x") >> map (fun _ -> ok) (header api_key_schema <|> fail Denied) ]
   in
   Alcotest.check
     flags
@@ -284,9 +283,9 @@ let test_alt_makes_one_sided_parameter_optional () =
   let open R2 in
   let routes =
     [ get (s "x")
-      >-> map
-            (fun _ -> ok)
-            (map ignore (header api_key_schema) <|> map ignore (cookie session))
+      >> map
+           (fun _ -> ok)
+           (map ignore (header api_key_schema) <|> map ignore (cookie session))
     ]
   in
   Alcotest.check
@@ -303,7 +302,7 @@ let test_alt_keeps_parameter_required_in_both () =
      ())
     <|> map ignore (header api_key_schema)
   in
-  let routes = [ get (s "x") >-> map (fun () -> ok) both ] in
+  let routes = [ get (s "x") >> map (fun () -> ok) both ] in
   Alcotest.check
     flags
     "only the shared one"
@@ -315,9 +314,9 @@ let test_gate_requires_what_alt_leaves_optional () =
   let routes =
     [ get (s "x")
       |> gate (header api_key_schema)
-      >-> map
-            (fun _ -> ok)
-            (map Option.some (header api_key_schema) <|> pure None)
+      >> map
+           (fun _ -> ok)
+           (map Option.some (header api_key_schema) <|> pure None)
     ]
   in
   Alcotest.check
@@ -337,7 +336,7 @@ let post_op item = item.Spec.Path_item.post
 let test_body_requirement_follows_alt () =
   let open R2 in
   let required =
-    [ post (s "x") >-> map (fun _ -> ok) (body Json name <|> fail Denied) ]
+    [ post (s "x") >> map (fun _ -> ok) (body Json name <|> fail Denied) ]
   in
   Alcotest.(check bool)
     "with fail"
@@ -345,7 +344,7 @@ let test_body_requirement_follows_alt () =
     (body_required (operation "/x" post_op required));
   let optional =
     [ post (s "x")
-      >-> map (fun _ -> ok) (map Option.some (body Json name) <|> pure None)
+      >> map (fun _ -> ok) (map Option.some (body Json name) <|> pure None)
     ]
   in
   Alcotest.(check bool)
@@ -355,7 +354,7 @@ let test_body_requirement_follows_alt () =
 
 let test_root_path_is_documented_as_slash () =
   let open R2 in
-  let routes = [ get (s "") >-> pure ok ] in
+  let routes = [ get (s "") >> pure ok ] in
   ignore (operation "/" get_op routes)
 
 let security_of path routes =
@@ -377,7 +376,7 @@ let test_no_security_by_default () =
     None
     (security_of
        "/x"
-       [ get (s "x") |> gate (extract (fun _ -> Ok ())) >-> pure ok ])
+       [ get (s "x") |> gate (extract (fun _ -> Ok ())) >> pure ok ])
 
 let test_security_follows_schema_shape () =
   let open R2 in
@@ -386,7 +385,7 @@ let test_security_follows_schema_shape () =
       requirements
       name
       expected
-      (security_of "/x" [ get (s "x") |> gates >-> pure ok ])
+      (security_of "/x" [ get (s "x") |> gates >> pure ok ])
   in
   check "single" (Some [ [ "basicAuth", [] ] ]) (gate basic_auth);
   check
@@ -427,8 +426,8 @@ let test_scope_gate_secures_routes () =
     [ scope
         ~gates:[ void basic_auth ]
         (s "api")
-        [ get (s "x") >-> pure ok; get (s "y") |> gate bearer_auth >-> pure ok ]
-    ; get (s "public") >-> pure ok
+        [ get (s "x") >> pure ok; get (s "y") |> gate bearer_auth >> pure ok ]
+    ; get (s "public") >> pure ok
     ]
   in
   Alcotest.check
@@ -446,14 +445,14 @@ let test_scope_gate_secures_routes () =
 let test_security_schemes_are_documented () =
   let open R2 in
   let routes =
-    [ get (s "a") |> gate basic_auth >-> pure ok
-    ; get (s "b") |> gate bearer_auth >-> pure ok
-    ; get (s "c") |> gate api_key_auth >-> pure ok
-    ; get (s "d") |> gate basic_auth >-> pure ok
+    [ get (s "a") |> gate basic_auth >> pure ok
+    ; get (s "b") |> gate bearer_auth >> pure ok
+    ; get (s "c") |> gate api_key_auth >> pure ok
+    ; get (s "d") |> gate basic_auth >> pure ok
     ; get (s "hidden")
       |> gate (secured ~name:"hidden" (basic no_login))
       |> include_in_schema false
-      >-> pure ok
+      >> pure ok
     ]
   in
   let spec = Openapi.generate_router2 routes in
@@ -487,10 +486,8 @@ let test_security_schemes_are_documented () =
 let test_conflicting_scheme_names_are_rejected () =
   let open R2 in
   let routes =
-    [ get (s "a") |> gate (secured ~name:"auth" (basic no_login)) >-> pure ok
-    ; get (s "b")
-      |> gate (secured ~name:"auth" (bearer Option.some))
-      >-> pure ok
+    [ get (s "a") |> gate (secured ~name:"auth" (basic no_login)) >> pure ok
+    ; get (s "b") |> gate (secured ~name:"auth" (bearer Option.some)) >> pure ok
     ]
   in
   match Openapi.generate_router2 routes with
@@ -505,7 +502,7 @@ let test_generating_security_runs_no_extractor () =
            (secured
               (basic (fun ~username:_ ~password:_ ->
                  Alcotest.fail "verify ran during generation")))
-      >-> pure ok
+      >> pure ok
     ]
   in
   ignore (Openapi.generate_router2 routes)
@@ -513,8 +510,8 @@ let test_generating_security_runs_no_extractor () =
 let test_realm_is_not_a_conflict () =
   let open R2 in
   let routes =
-    [ get (s "a") |> gate (secured (basic ~realm:"One" no_login)) >-> pure ok
-    ; get (s "b") |> gate (secured (basic ~realm:"Two" no_login)) >-> pure ok
+    [ get (s "a") |> gate (secured (basic ~realm:"One" no_login)) >> pure ok
+    ; get (s "b") |> gate (secured (basic ~realm:"Two" no_login)) >> pure ok
     ]
   in
   let spec = Openapi.generate_router2 routes in
@@ -546,7 +543,7 @@ let answers_401 routes =
 let test_401_matches_what_the_router_answers () =
   let open R2 in
   let check name expected gates =
-    let routes = [ get (s "x") |> gates >-> pure ok ] in
+    let routes = [ get (s "x") |> gates >> pure ok ] in
     Alcotest.(check bool)
       (name ^ ": documented")
       expected
@@ -579,7 +576,7 @@ let test_401_matches_what_the_router_answers () =
 let test_401_documents_the_challenge () =
   let open R2 in
   let header gates =
-    let routes = [ get (s "x") |> gates >-> pure ok ] in
+    let routes = [ get (s "x") |> gates >> pure ok ] in
     let response = Option.get (response_401 (operation "/x" get_op routes)) in
     match List.assoc_opt "WWW-Authenticate" response.headers with
     | Some (Spec.Json_schema.Or_ref.Value (h : Spec.Header.t)) ->
@@ -610,8 +607,8 @@ let test_401_documents_the_challenge () =
 let test_scope_gate_documents_401 () =
   let open R2 in
   let routes =
-    [ scope ~gates:[ void basic_auth ] (s "api") [ get (s "x") >-> pure ok ]
-    ; get (s "public") >-> pure ok
+    [ scope ~gates:[ void basic_auth ] (s "api") [ get (s "x") >> pure ok ]
+    ; get (s "public") >> pure ok
     ]
   in
   Alcotest.(check bool)
@@ -629,8 +626,8 @@ let test_declared_401_and_success_are_kept () =
     [ get (s "x")
       |> gate basic_auth
       |> response_model ~status:`Unauthorized ~schema:name
-      >-> pure "denied"
-    ; get (s "y") |> gate basic_auth >-> pure ok
+      >> pure "denied"
+    ; get (s "y") |> gate basic_auth >> pure ok
     ]
   in
   Alcotest.(check string)
@@ -647,7 +644,7 @@ let test_declared_401_and_success_are_kept () =
 let test_body_of_documents_each_content_type () =
   let open R2 in
   let routes =
-    [ post (s "x") >-> map (fun _ -> ok) (body_of [ Json; Urlencoded ] name) ]
+    [ post (s "x") >> map (fun _ -> ok) (body_of [ Json; Urlencoded ] name) ]
   in
   match (operation "/x" post_op routes).request_body with
   | Some (Spec.Json_schema.Or_ref.Value body) ->

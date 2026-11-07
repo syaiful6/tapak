@@ -189,12 +189,15 @@ let extractor_error_middleware : Tapak.middleware =
 
 let routes =
   Router.
-    [ get (s "") >> home_handler
-    ; get (s "api-info") >-> map api_info_handler api_key_auth
-    ; get (s "profile") >-> map profile_handler user
-    ; get (s "admin" / s "dashboard") >-> map admin_dashboard_handler admin
-    ; get (s "admin" / s "stats") |> gate admin >> admin_stats_handler
-    ; get (s "users" / int64) >-> map get_user_handler user
+    [ get (s "") |> handle_request home_handler
+    ; get (s "api-info") |> handle (map api_info_handler api_key_auth)
+    ; get (s "profile") |> handle (map profile_handler user)
+    ; get (s "admin" / s "dashboard")
+      |> handle (map admin_dashboard_handler admin)
+    ; get (s "admin" / s "stats")
+      |> gate admin
+      |> handle_request admin_stats_handler
+    ; get (s "users" / int64) |> handle (map get_user_handler user)
     ]
 
 let openapi_route =
@@ -203,7 +206,8 @@ let openapi_route =
       ~title:"Custom Extractors"
       routes
   in
-  Router.(get (s "openapi.json") >> fun _req -> Tapak.json document)
+  Router.(
+    get (s "openapi.json") |> handle_request (fun _req -> Tapak.json document))
 
 let setup_app () =
   Router.of_list ~not_found ~unauthorized (openapi_route :: routes)

@@ -86,10 +86,10 @@ let user_handler search id =
 let test_gate_not_passed_to_handler () =
   let routes =
     [ (get (s "users" / int64)
-      >-> let+ _ = has_role "admin"
-          and+ limit = query limit_schema
-          and+ website = header website_schema in
-          user_handler { limit; website })
+      >> let+ _ = has_role "admin"
+         and+ limit = query limit_schema
+         and+ website = header website_schema in
+         user_handler { limit; website })
     ]
   in
   let response =
@@ -110,12 +110,12 @@ let ordered_routes =
   [ (put (s "items" / int)
     |> gate (step "endpoint-gate-1")
     |> gate (step "endpoint-gate-2")
-    >-> let+ () = step "first"
-        and+ () = step "second"
-        and+ () = step "third" in
-        fun id ->
-          log "handler";
-          Response.of_string (string_of_int id))
+    >> let+ () = step "first"
+       and+ () = step "second"
+       and+ () = step "third" in
+       fun id ->
+         log "handler";
+         Response.of_string (string_of_int id))
   ]
 
 let test_effects_run_in_declared_order () =
@@ -143,9 +143,9 @@ let test_scope_gates_run_first () =
             (s "b")
             [ (get (s "c")
               |> gate (step "endpoint")
-              >-> let+ () = step "block" in
-                  log "handler";
-                  Response.of_string "ok")
+              >> let+ () = step "block" in
+                 log "handler";
+                 Response.of_string "ok")
             ]
         ]
     ]
@@ -162,10 +162,10 @@ let test_failed_gate_skips_body_and_handler () =
   let routes =
     [ (put (s "users" / int64)
       |> gate (has_role "admin")
-      >-> let+ name = body Json name_schema in
-          fun _id ->
-            log "handler";
-            Response.of_string name)
+      >> let+ name = body Json name_schema in
+         fun _id ->
+           log "handler";
+           Response.of_string name)
     ]
   in
   let outcome target ?auth () =
@@ -187,7 +187,7 @@ let test_bad_capture_runs_no_gate () =
   let routes =
     [ get (s "users" / int64)
       |> gate (has_role "admin")
-      >-> pure (fun id -> Response.of_string (Int64.to_string id))
+      >> pure (fun id -> Response.of_string (Int64.to_string id))
     ]
   in
   let response =
@@ -203,7 +203,7 @@ let test_bad_capture_runs_no_gate () =
 let test_multiple_captures_are_curried () =
   let routes =
     [ get (s "orgs" / str / s "users" / int / splat)
-      >-> pure (fun org id rest ->
+      >> pure (fun org id rest ->
         Response.of_string
           (Printf.sprintf "%s %d %s" org id (String.concat "," rest)))
     ]
@@ -216,7 +216,7 @@ let test_multiple_captures_are_curried () =
 let test_refine_keeps_value () =
   let routes =
     [ (get (s "me")
-      >->
+      >>
       let+ admin = has_role "admin" in
       Response.of_string (string_of_int admin.id))
     ]
@@ -230,7 +230,7 @@ let test_body_request_and_response_model () =
   let routes =
     [ (post (s "names")
       |> response_model ~status:`Created ~schema:name_schema
-      >->
+      >>
       let+ name = body Json name_schema
       and+ req = request in
       name ^ ":" ^ Request.target req)
@@ -258,7 +258,7 @@ let test_sprintf_shares_path () =
     "/users/42/edit"
     (sprintf (path ()) 42L);
   let routes =
-    [ get (path ()) >-> pure (fun id -> Response.of_string (Int64.to_string id))
+    [ get (path ()) >> pure (fun id -> Response.of_string (Int64.to_string id))
     ]
   in
   check_body
@@ -270,7 +270,7 @@ let test_recover_catches_gate_failure () =
   let route =
     get (s "me")
     |> gate (has_role "admin")
-    >-> pure (Response.of_string "ok")
+    >> pure (Response.of_string "ok")
     |> recover (fun _req -> function
       | Extraction_failed Unauthorized ->
         Some (Response.of_string ~status:`Unauthorized "denied")
@@ -284,7 +284,7 @@ let test_recover_catches_gate_failure () =
   check_body "recovered body" "denied" response
 
 let test_match_returns_none () =
-  let routes = [ get (s "a") >-> pure (Response.of_string "a") ] in
+  let routes = [ get (s "a") >> pure (Response.of_string "a") ] in
   Alcotest.(check bool)
     "unknown path"
     true
@@ -318,9 +318,9 @@ let test_gated_scope_with_recover () =
     [ scope
         ~gates:[ void guard ]
         (s "api" / s "websites")
-        [ post (s "") >-> map create (body Urlencoded name_schema)
-        ; get (s "") >> list
-        ; delete int64 >-> pure delete_website
+        [ post (s "") >> map create (body Urlencoded name_schema)
+        ; get (s "") |> handle_request list
+        ; delete int64 >> pure delete_website
         ]
       |> recover not_authorized
     ]
@@ -362,15 +362,17 @@ let test_handler_operator_runs_per_request () =
     incr calls;
     Response.of_string (string_of_int !calls)
   in
-  let routes = [ get (s "x") >> handler ] in
+  let routes = [ get (s "x") |> handle_request handler ] in
   Alcotest.(check int) "not called when the route is built" 0 !calls;
   check_body "first" "1" (dispatch routes (make_request "/x"));
   check_body "second" "2" (dispatch routes (make_request "/x"))
 
 let test_handler_operator_with_gate_and_capture () =
   let routes =
-    [ ( get (s "x" / int) |> gate (has_role "admin") >> fun req id ->
-        Response.of_string (Printf.sprintf "%s %d" (Request.target req) id) )
+    [ get (s "x" / int)
+      |> gate (has_role "admin")
+      |> handle_request (fun req id ->
+        Response.of_string (Printf.sprintf "%s %d" (Request.target req) id))
     ]
   in
   check_body
@@ -402,7 +404,7 @@ let test_memo_runs_once_per_request () =
         (s "api")
         [ get (s "me")
           |> gate is_admin
-          >-> map (fun me -> Response.of_string (string_of_int me.id)) auth
+          >> map (fun me -> Response.of_string (string_of_int me.id)) auth
         ]
     ]
   in
@@ -420,7 +422,7 @@ let test_without_memo_runs_each_time () =
   let routes =
     [ get (s "me")
       |> gate auth
-      >-> map (fun me -> Response.of_string (string_of_int me.id)) auth
+      >> map (fun me -> Response.of_string (string_of_int me.id)) auth
     ]
   in
   ignore (dispatch routes (make_request ~auth:"admin" "/me"));
@@ -432,7 +434,7 @@ let test_memo_instances_are_separate () =
   let routes =
     [ get (s "me")
       |> gate (memo source)
-      >-> map (fun me -> Response.of_string (string_of_int me.id)) (memo source)
+      >> map (fun me -> Response.of_string (string_of_int me.id)) (memo source)
     ]
   in
   ignore (dispatch routes (make_request ~auth:"admin" "/me"));
@@ -444,7 +446,7 @@ let test_memo_failure_stops_the_request () =
   let routes =
     [ get (s "me")
       |> gate auth
-      >-> map (fun me -> Response.of_string (string_of_int me.id)) auth
+      >> map (fun me -> Response.of_string (string_of_int me.id)) auth
     ]
   in
   Alcotest.(check string)
@@ -455,9 +457,7 @@ let test_memo_failure_stops_the_request () =
 
 let test_memo_lets_gate_and_block_share_body () =
   let input = memo (body Json name_schema) in
-  let routes =
-    [ post (s "x") |> gate input >-> map Response.of_string input ]
-  in
+  let routes = [ post (s "x") |> gate input >> map Response.of_string input ] in
   check_body
     "the body stream is only consumed once"
     "x"
@@ -482,9 +482,9 @@ let test_memo_scope_value_reaches_routes () =
     [ scope
         ~gates:[ void search ]
         (s "websites")
-        [ get (s "") >-> map (show "list ") search
-        ; get (s "top") >-> map (show "top ") search
-        ; (get (s "ids") >> fun _req -> Response.of_string "ids")
+        [ get (s "") >> map (show "list ") search
+        ; get (s "top") >> map (show "top ") search
+        ; get (s "ids") |> handle_request (fun _req -> Response.of_string "ids")
         ]
     ]
   in
@@ -517,7 +517,7 @@ let test_alt_uses_first_success () =
     map (fun _ -> "key") (query key_schema)
     <|> map (fun _ -> "token") (query token_schema)
   in
-  let routes = [ get (s "x") >-> map Response.of_string either ] in
+  let routes = [ get (s "x") >> map Response.of_string either ] in
   check_body "left" "key" (dispatch routes (make_request "/x?x-key=a"));
   check_body "right" "token" (dispatch routes (make_request "/x?x-token=a"));
   check_body
@@ -528,9 +528,9 @@ let test_alt_uses_first_success () =
 let test_alt_raises_right_error () =
   let routes =
     [ get (s "x")
-      >-> map
-            (fun _ -> Response.of_string "ok")
-            (fail Forbidden <|> fail Unauthorized)
+      >> map
+           (fun _ -> Response.of_string "ok")
+           (fail Forbidden <|> fail Unauthorized)
     ]
   in
   Alcotest.(check string)
@@ -541,7 +541,7 @@ let test_alt_raises_right_error () =
 let test_fail_replaces_validation_error () =
   let routes =
     [ get (s "x")
-      >-> map Response.of_string (query key_schema <|> fail Unauthorized)
+      >> map Response.of_string (query key_schema <|> fail Unauthorized)
     ]
   in
   check_body "valid" "a" (dispatch routes (make_request "/x?x-key=a"));
@@ -553,9 +553,9 @@ let test_fail_replaces_validation_error () =
 let test_alt_keeps_other_exceptions () =
   let routes =
     [ get (s "x")
-      >-> map
-            Response.of_string
-            (extract (fun _ -> failwith "db down") <|> pure "fallback")
+      >> map
+           Response.of_string
+           (extract (fun _ -> failwith "db down") <|> pure "fallback")
     ]
   in
   Alcotest.check_raises "not caught" (Failure "db down") (fun () ->
@@ -564,7 +564,7 @@ let test_alt_keeps_other_exceptions () =
 let test_alt_right_branch_is_not_run_on_success () =
   let routes =
     [ get (s "x")
-      >-> map (fun () -> Response.of_string "ok") (step "left" <|> step "right")
+      >> map (fun () -> Response.of_string "ok") (step "left" <|> step "right")
     ]
   in
   ignore (run_outcome routes (make_request "/x"));
@@ -595,7 +595,7 @@ let test_two_bodies_are_rejected () =
 let test_one_body_in_alt () =
   let with_custom_error =
     [ post (s "x")
-      >-> map Response.of_string (body Json name_schema <|> fail Unauthorized)
+      >> map Response.of_string (body Json name_schema <|> fail Unauthorized)
     ]
   in
   check_body "valid" "x" (dispatch with_custom_error (json_request "/x"));
@@ -605,7 +605,7 @@ let test_one_body_in_alt () =
     (run_outcome with_custom_error (json_request ~body:"{}" "/x"));
   let body_on_right =
     [ post (s "x")
-      >-> map Response.of_string (fail Forbidden <|> body Json name_schema)
+      >> map Response.of_string (fail Forbidden <|> body Json name_schema)
     ]
   in
   check_body
@@ -642,7 +642,7 @@ let test_union_body () =
     | Circle v -> Response.of_string (Printf.sprintf "circle %g" v)
     | Square v -> Response.of_string (Printf.sprintf "square %g" v)
   in
-  let routes = [ post (s "x") >-> map show (body Json shape) ] in
+  let routes = [ post (s "x") >> map show (body Json shape) ] in
   check_body
     "first case"
     "circle 2"
@@ -662,9 +662,9 @@ let form_request ?(body = "name=x") target =
 let test_body_of_selects_by_content_type () =
   let routes =
     [ post (s "x")
-      >-> map
-            Response.of_string
-            (Private.Router2.body_of [ Json; Urlencoded ] name_schema)
+      >> map
+           Response.of_string
+           (Private.Router2.body_of [ Json; Urlencoded ] name_schema)
     ]
   in
   check_body "json" "x" (dispatch routes (json_request "/x"));
@@ -728,7 +728,7 @@ let basic_challenge = {|Basic realm="Restricted"|}
 
 let test_basic_auth () =
   let routes =
-    [ get (s "me") >-> map Response.of_string (secured (basic basic_auth)) ]
+    [ get (s "me") >> map Response.of_string (secured (basic basic_auth)) ]
   in
   let call ?auth () = dispatch routes (make_request ?auth "/me") in
   let rejected name ?auth () =
@@ -756,8 +756,9 @@ let test_secured_as_gate_or_value () =
     [ scope
         ~gates:[ void auth ]
         (s "api")
-        [ (get (s "gate") >> fun _req -> Response.of_string "gated")
-        ; get (s "value") >-> map Response.of_string auth
+        [ get (s "gate")
+          |> handle_request (fun _req -> Response.of_string "gated")
+        ; get (s "value") >> map Response.of_string auth
         ]
     ]
   in
@@ -779,7 +780,7 @@ let test_secured_as_gate_or_value () =
 let test_bearer_auth () =
   let verify = function "token" -> Some "alice" | _ -> None in
   let routes =
-    [ get (s "me") >-> map Response.of_string (secured (bearer verify)) ]
+    [ get (s "me") >> map Response.of_string (secured (bearer verify)) ]
   in
   let call ?auth () = dispatch routes (make_request ?auth "/me") in
   let rejected name ?auth () =
@@ -797,7 +798,7 @@ let test_api_key_locations () =
   let call in_ ?(headers = []) target =
     let routes =
       [ get (s "x")
-        >-> map Response.of_string (secured (api_key ~in_ "key" verify))
+        >> map Response.of_string (secured (api_key ~in_ "key" verify))
       ]
     in
     dispatch
@@ -821,7 +822,7 @@ let test_alternative_schemes () =
     secured (basic basic_auth)
     <|> secured (bearer (function "token" -> Some "bob" | _ -> None))
   in
-  let routes = [ get (s "me") >-> map Response.of_string auth ] in
+  let routes = [ get (s "me") >> map Response.of_string auth ] in
   let call auth = dispatch routes (make_request ~auth "/me") in
   check_body "basic" "alice" (call alice);
   check_body "bearer" "bob" (call "Bearer token")
@@ -848,7 +849,7 @@ let test_challenges () =
     (challenge (api_key ~in_:`Header "k" verify))
 
 let protected = secured (basic basic_auth)
-let protected_routes = [ get (s "me") >-> map Response.of_string protected ]
+let protected_routes = [ get (s "me") >> map Response.of_string protected ]
 
 let test_custom_unauthorized_response () =
   let reasons = ref [] in
@@ -890,7 +891,7 @@ let test_handler_can_set_its_own_challenge () =
 let test_recover_runs_before_default_401 () =
   let routes =
     [ get (s "me")
-      >-> map Response.of_string protected
+      >> map Response.of_string protected
       |> recover (fun _req -> function
         | Extraction_failed (Security.Unauthorized _) ->
           Some (Response.of_string ~status:`Unauthorized "from recover")
@@ -906,7 +907,7 @@ let test_authorization_stays_with_the_app () =
   let not_alice =
     protected |> refine (function "alice" -> Error Forbidden | who -> Ok who)
   in
-  let routes = [ get (s "me") >-> map Response.of_string not_alice ] in
+  let routes = [ get (s "me") >> map Response.of_string not_alice ] in
   Alcotest.(check string)
     "refine errors aren't turned into a 401"
     "forbidden"
