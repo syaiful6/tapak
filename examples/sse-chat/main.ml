@@ -319,11 +319,11 @@ let () =
   let app =
     let open Tapak.Router in
     of_list
-      [ get (s "") |> unit |> into home_handler
-      ; get (s "chat") |> unit |> into (chat_stream_handler room)
+      [ get (s "") |> handle_request (fun _ -> home_handler ())
+      ; get (s "chat") |> handle_request (fun _ -> chat_stream_handler room ())
       ; post (s "chat" / int)
-        |> request
-        |> into (fun req user_id -> post_message_handler room user_id req)
+        |> handle_request (fun req user_id ->
+          post_message_handler room user_id req)
       ]
   in
   let port = 8080 in

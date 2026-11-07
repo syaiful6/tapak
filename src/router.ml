@@ -41,55 +41,6 @@ type (_, _) path =
       -> ('a, 'b) path
   | Splat : ('a, 'b) path -> (string list -> 'a, 'b) path
 
-type metadata =
-  { operation_id : string option
-  ; summary : string option
-  ; description : string option
-  ; tags : string list
-  ; body_description : string option
-  ; include_in_schema : bool
-  }
-
-type (_, _) schema =
-  | Method : Http.Method.t * ('a, 'b) path -> ('a, 'b) schema
-  | Query :
-      { schema : 'query Sch.t
-      ; rest : ('a, 'b) schema
-      }
-      -> ('query -> 'a, 'b) schema
-  | Header :
-      { schema : 'header Sch.t
-      ; rest : ('a, 'b) schema
-      }
-      -> ('header -> 'a, 'b) schema
-  | Cookie :
-      { schema : 'cookie Sch.t
-      ; rest : ('a, 'b) schema
-      }
-      -> ('cookie -> 'a, 'b) schema
-  | Response_model :
-      { schema : 'resp Sch.t
-      ; status : Http.Status.t
-      ; rest : ('a, 'resp) schema
-      }
-      -> ('a, Response.t) schema
-  | Body :
-      { input_type : media_type
-      ; schema : 'validated Sch.t
-      ; rest : ('a, 'b) schema
-      }
-      -> ('validated -> 'a, 'b) schema
-  | Extract :
-      { extractor : 'g extractor
-      ; rest : ('a, 'b) schema
-      }
-      -> ('g -> 'a, 'b) schema
-  | Meta :
-      { meta : metadata
-      ; rest : ('a, 'b) schema
-      }
-      -> ('a, 'b) schema
-
 let parse_int ~off ~len s = Span.parse_int s (Span.make ~off ~len)
 let parse_int32 ~off ~len s = Span.parse_int32 s (Span.make ~off ~len)
 let parse_int64 ~off ~len s = Span.parse_int64 s (Span.make ~off ~len)
@@ -166,20 +117,6 @@ let enum : type a.
  fun ~parse ~format ~type_name ?format_name ~values () ->
   Enum { parse; format; type_name; format_name; values; rest = Nil }
 
-type route =
-  | Route :
-      { schema : ('a, Response.t) schema
-      ; handler : 'a
-      ; middlewares : Middleware.t list
-      }
-      -> route
-  | Scope :
-      { prefix : ('a, 'a) path
-      ; routes : route list
-      ; middlewares : Middleware.t list
-      }
-      -> route
-
 let is_slug ~off ~len s =
   if len = 0
   then false
@@ -219,57 +156,253 @@ let rec ( / ) : type a b c. (a, c) path -> (c, b) path -> (a, b) path =
   | Annotated { segment; name; description } ->
     Annotated { segment = segment / right; name; description }
 
-let get : ('a, 'b) path -> ('a, 'b) schema =
- fun pattern -> Method (`GET, pattern)
+let p : type a b. string -> (a, b) path -> (a, b) path =
+ fun name segment -> Annotated { segment; name; description = None }
 
-let head : ('a, 'b) path -> ('a, 'b) schema =
- fun pattern -> Method (`HEAD, pattern)
+let ann : type a b. string * string -> (a, b) path -> (a, b) path =
+ fun (name, desc) segment ->
+  Annotated { segment; name; description = Some desc }
 
-let post : ('a, 'b) path -> ('a, 'b) schema =
- fun pattern -> Method (`POST, pattern)
+let rec sprintf' : type a. (a, string) path -> string -> a =
+ fun pattern acc ->
+  match pattern with
+  | Nil -> acc
+  | Literal ("", rest) -> sprintf' rest (if acc = "" then "/" else acc)
+  | Literal (s, rest) -> sprintf' rest (acc ^ "/" ^ s)
+  | Splat rest ->
+    fun segments ->
+      let splat_path = String.concat "/" segments in
+      sprintf' rest (if splat_path = "" then acc else acc ^ "/" ^ splat_path)
+  | Capture { format; rest; _ } -> fun v -> sprintf' rest (acc ^ "/" ^ format v)
+  | Enum { format; rest; _ } -> fun v -> sprintf' rest (acc ^ "/" ^ format v)
+  | Annotated { segment; _ } -> sprintf' segment acc
 
-let put : ('a, 'b) path -> ('a, 'b) schema =
- fun pattern -> Method (`PUT, pattern)
+let sprintf pattern = sprintf' pattern ""
 
-let patch : ('a, 'b) path -> ('a, 'b) schema =
- fun pattern -> Method (`PATCH, pattern)
+let validation_error_to_json errors =
+  Jsont.Json.(object' (errors |> List.map (fun (k, v) -> name k, string v)))
 
-let delete : ('a, 'b) path -> ('a, 'b) schema =
- fun pattern -> Method (`DELETE, pattern)
+module Security = struct
+  type scheme =
+    | Basic of { realm : string }
+    | Bearer of { format : string option }
+    | Api_key of
+        { name : string
+        ; in_ : Security_api_key.location
+        }
 
-let any : ('a, 'b) path -> ('a, 'b) schema =
- fun pattern -> Method (`Other "*", pattern)
+  type reason =
+    | Missing
+    | Malformed
+    | Invalid
 
-let body : type a b c.
-  media_type -> a Sch.t -> (b, c) schema -> (a -> b, c) schema
-  =
- fun input_type schema rest -> Body { input_type; schema; rest }
+  type extractor_error += Unauthorized of scheme * reason
 
-let query : type a b c. a Sch.t -> (b, c) schema -> (a -> b, c) schema =
- fun schema rest -> Query { schema; rest }
+  (* Parsing and documentation come from one value, so a route can't document a
+     scheme it doesn't check. *)
+  type 'a t =
+    { scheme : scheme
+    ; extractor : 'a extractor
+    }
 
-let header : type a b c. a Sch.t -> (b, c) schema -> (a -> b, c) schema =
- fun schema rest -> Header { schema; rest }
+  let scheme t = t.scheme
 
-let cookie : type a b c. a Sch.t -> (b, c) schema -> (a -> b, c) schema =
- fun schema rest -> Cookie { schema; rest }
+  let verified scheme = function
+    | Some v -> Ok v
+    | None -> Error (Unauthorized (scheme, Invalid))
 
-let extract : type a b g. g extractor -> (a, b) schema -> (g -> a, b) schema =
- fun extractor schema -> Extract { extractor; rest = schema }
+  (* Verify functions answer "who is this?": [None] is a 401. Rejecting a known
+     user is authorization, which belongs in [refine] with its own error. *)
+  let basic ?(realm = "Restricted") verify =
+    let scheme = Basic { realm } in
+    { scheme
+    ; extractor =
+        (fun req ->
+          match Security_basic.authorization req with
+          | None -> Error (Unauthorized (scheme, Missing))
+          | Some (Basic (username, password)) ->
+            verified scheme (verify ~username ~password)
+          | Some (Other _) -> Error (Unauthorized (scheme, Malformed)))
+    }
 
-let response_model : type a resp.
-  status:Http.Status.t
-  -> schema:resp Sch.t
-  -> (a, resp) schema
-  -> (a, Response.t) schema
-  =
- fun ~status ~schema rest -> Response_model { schema; status; rest }
+  let bearer ?format verify =
+    let scheme = Bearer { format } in
+    { scheme
+    ; extractor =
+        (fun req ->
+          match Security_bearer.authorization req with
+          | None -> Error (Unauthorized (scheme, Missing))
+          | Some (Bearer token) -> verified scheme (verify token)
+          | Some (Other _) -> Error (Unauthorized (scheme, Malformed)))
+    }
 
-let request : type a b. (a, b) schema -> (Request.t -> a, b) schema =
- fun schema -> Extract { extractor = Result.ok; rest = schema }
+  let api_key ~in_ name verify =
+    let scheme = Api_key { name; in_ } in
+    { scheme
+    ; extractor =
+        (fun req ->
+          match Security_api_key.find ~in_ name req with
+          | None -> Error (Unauthorized (scheme, Missing))
+          | Some key -> verified scheme (verify key))
+    }
 
-let unit : type a b. (a, b) schema -> (unit -> a, b) schema =
- fun schema -> Extract { extractor = (fun _ -> Result.ok ()); rest = schema }
+  (* The WWW-Authenticate value for a 401 response, if the scheme has one *)
+  let challenge = function
+    | Basic { realm } ->
+      Some Security_basic.(string_of_challenge (Challenge.Basic realm))
+    | Bearer _ -> Some Security_bearer.challenge
+    | Api_key _ -> None
+
+  let default_unauthorized _req _scheme _reason =
+    Response.of_string ~status:`Unauthorized "Unauthorized"
+
+  (* A handler that sets its own WWW-Authenticate keeps it *)
+  let with_challenge scheme response =
+    match challenge scheme with
+    | Some value ->
+      Response.add_header_unless_exists "WWW-Authenticate" value response
+    | None -> response
+
+  let default_name = function
+    | Basic _ -> "basicAuth"
+    | Bearer _ -> "bearerAuth"
+    | Api_key { name; _ } -> name
+end
+
+let basic = Security.basic
+let bearer = Security.bearer
+let api_key = Security.api_key
+
+module Schema = struct
+  type schemak
+  type 'a schemaf = (schemak, 'a) Sch.Free.t
+
+  type _ t =
+    | Query : 'query Sch.t -> 'query t
+    | Header : 'header Sch.t -> 'header t
+    | Cookie : 'cookie Sch.t -> 'cookie t
+    | Body :
+        { media_types : media_type list
+        ; schema : 'v Sch.t
+        }
+        -> 'v t
+    | Extract : 'a extractor -> 'a t
+    | Secured :
+        { name : string
+        ; scheme : Security.scheme
+        ; extractor : 'a extractor
+        }
+        -> 'a t
+    | Refine :
+        { source : 'a schemaf
+        ; check : 'a -> ('b, extractor_error) result
+        }
+        -> 'b t
+    | Alt :
+        { left : 'a schemaf
+        ; right : 'a schemaf
+        }
+        -> 'a t
+    | Fail : extractor_error -> 'a t
+    | Memo :
+        { key : 'a Context.key
+        ; source : 'a schemaf
+        }
+        -> 'a t
+
+  external inj : 'a t -> ('a, schemak) Sch.Sig.app = "%identity"
+  external prj : ('a, schemak) Sch.Sig.app -> 'a t = "%identity"
+end
+
+type 'a schemaf = 'a Schema.schemaf
+
+include Sch.Free.Syntax
+
+let pure = Sch.Free.pure
+let lift t = Sch.Free.lift (Schema.inj t)
+let query schema = lift (Schema.Query schema)
+let header schema = lift (Schema.Header schema)
+let cookie schema = lift (Schema.Cookie schema)
+
+(* The request's content type picks the decoder; [schema] is the same for all *)
+let body_of media_types schema =
+  if media_types = []
+  then invalid_arg "Router.body_of: expected at least one media type";
+  lift
+    (Schema.Body { media_types = List.sort_uniq compare media_types; schema })
+
+let body media_type schema = body_of [ media_type ] schema
+let extract extractor = lift (Schema.Extract extractor)
+let request = extract Result.ok
+
+let secured ?name { Security.scheme; extractor } =
+  let name =
+    match name with Some name -> name | None -> Security.default_name scheme
+  in
+  lift (Schema.Secured { name; scheme; extractor })
+
+let refine check source = lift (Schema.Refine { source; check })
+
+(* Each call creates its own cache entry, so sharing means reusing the value *)
+let memo source =
+  let key = Context.Key.create { Context.name = None; show = None } in
+  lift (Schema.Memo { key; source })
+
+let map = Sch.Free.map
+let fail e = lift (Schema.Fail e)
+
+module Body_scan = struct
+  type k
+
+  external inj : bool -> ('a, k) Sch.Sig.app = "%identity"
+  external prj : ('a, k) Sch.Sig.app -> bool = "%identity"
+
+  let applicative : k Sch.Sig.applicative =
+    { pure = (fun _ -> inj false)
+    ; map = (fun _ a -> inj (prj a))
+    ; apply = (fun f a -> inj (prj f || prj a))
+    }
+end
+
+let rec has_body : type a. a schemaf -> bool =
+ fun schema ->
+  Body_scan.prj
+    (Sch.Free.run
+       Body_scan.applicative
+       { run =
+           (fun effect_ -> Body_scan.inj (effect_has_body (Schema.prj effect_)))
+       }
+       schema)
+
+and effect_has_body : type a. a Schema.t -> bool = function
+  | Body _ -> true
+  | Query _ | Header _ | Cookie _ | Extract _ | Secured _ | Fail _ -> false
+  | Refine { source; _ } -> has_body source
+  | Memo { source; _ } -> has_body source
+  | Alt { left; right } -> has_body left || has_body right
+
+(* [left <|> right] runs [right] when [left] fails validation or extraction;
+   other exceptions propagate. If both fail, [right]'s error is raised. Effects
+   in a failed [left] aren't undone.
+
+   A body stream can't be re-read, so a body isn't retryable: only one branch
+   may declare one, and this raises [Invalid_argument] when the schema is built
+   otherwise. To accept several body shapes, use a union in a single [Sch.t]. *)
+let ( <|> ) left right =
+  if has_body left && has_body right
+  then invalid_arg "Router.( <|> ): only one branch may read the body";
+  lift (Schema.Alt { left; right })
+
+let void source = Sch.Free.map ignore source
+
+type metadata =
+  { operation_id : string option
+  ; summary : string option
+  ; description : string option
+  ; tags : string list
+  ; body_description : string option
+  ; include_in_schema : bool
+  }
 
 let empty_metadata =
   { operation_id = None
@@ -280,53 +413,100 @@ let empty_metadata =
   ; include_in_schema = true
   }
 
-let operation_id : type a b. string -> (a, b) schema -> (a, b) schema =
- fun id rest ->
-  match rest with
-  | Meta { meta; rest } ->
-    Meta { meta = { meta with operation_id = Some id }; rest }
-  | rest -> Meta { meta = { empty_metadata with operation_id = Some id }; rest }
+type response_doc =
+  | Response_doc :
+      { status : Http.Status.t
+      ; schema : 'resp Sch.t
+      }
+      -> response_doc
 
-let summary : type a b. string -> (a, b) schema -> (a, b) schema =
- fun s rest ->
-  match rest with
-  | Meta { meta; rest } -> Meta { meta = { meta with summary = Some s }; rest }
-  | rest -> Meta { meta = { empty_metadata with summary = Some s }; rest }
+type ('f, 'res) endpoint =
+  | Endpoint :
+      { method_ : Http.Method.t
+      ; path : ('f, 'r) path
+      ; finish : 'r -> 'res
+      ; gates : unit schemaf list
+      ; response : response_doc option
+      ; meta : metadata
+      }
+      -> ('f, 'res) endpoint
 
-let description : type a b. string -> (a, b) schema -> (a, b) schema =
- fun d rest ->
-  match rest with
-  | Meta { meta; rest } ->
-    Meta { meta = { meta with description = Some d }; rest }
-  | rest -> Meta { meta = { empty_metadata with description = Some d }; rest }
+let endpoint method_ path =
+  Endpoint
+    { method_
+    ; path
+    ; finish = Fun.id
+    ; gates = []
+    ; response = None
+    ; meta = empty_metadata
+    }
 
-let tags : type a b. string list -> (a, b) schema -> (a, b) schema =
- fun ts rest ->
-  match rest with
-  | Meta { meta; rest } -> Meta { meta = { meta with tags = ts }; rest }
-  | rest -> Meta { meta = { empty_metadata with tags = ts }; rest }
+let get path = endpoint `GET path
+let head path = endpoint `HEAD path
+let post path = endpoint `POST path
+let put path = endpoint `PUT path
+let patch path = endpoint `PATCH path
+let delete path = endpoint `DELETE path
+let any path = endpoint (`Other "*") path
 
-let tag : type a b. string -> (a, b) schema -> (a, b) schema =
- fun t rest ->
-  match rest with
-  | Meta { meta; rest } ->
-    Meta { meta = { meta with tags = meta.tags @ [ t ] }; rest }
-  | rest -> Meta { meta = { empty_metadata with tags = [ t ] }; rest }
+let gate source (Endpoint e) =
+  Endpoint { e with gates = e.gates @ [ void source ] }
 
-let include_in_schema : type a b. bool -> (a, b) schema -> (a, b) schema =
- fun value rest ->
-  match rest with
-  | Meta { meta; rest } ->
-    Meta { meta = { meta with include_in_schema = value }; rest }
-  | rest ->
-    Meta { meta = { empty_metadata with include_in_schema = value }; rest }
+let response_model ~status ~schema (Endpoint e) =
+  Endpoint
+    { e with
+      finish =
+        (fun r ->
+          Response.json ~status (Sch.Json.encode_string schema (e.finish r)))
+    ; response = Some (Response_doc { status; schema })
+    }
 
-let p : type a b. string -> (a, b) path -> (a, b) path =
- fun name segment -> Annotated { segment; name; description = None }
+let map_meta f (Endpoint e) = Endpoint { e with meta = f e.meta }
+let operation_id id = map_meta (fun m -> { m with operation_id = Some id })
+let summary s = map_meta (fun m -> { m with summary = Some s })
+let description d = map_meta (fun m -> { m with description = Some d })
+let tags ts = map_meta (fun m -> { m with tags = ts })
+let tag t = map_meta (fun m -> { m with tags = m.tags @ [ t ] })
+let include_in_schema v = map_meta (fun m -> { m with include_in_schema = v })
 
-let ann : type a b. string * string -> (a, b) path -> (a, b) path =
- fun (name, desc) segment ->
-  Annotated { segment; name; description = Some desc }
+type route =
+  | Route :
+      { endpoint : ('f, Response.t) endpoint
+      ; schema : 'f schemaf
+      ; middlewares : Middleware.t list
+      }
+      -> route
+  | Scope :
+      { prefix : ('a, 'a) path
+      ; routes : route list
+      ; gates : unit schemaf list
+      ; middlewares : Middleware.t list
+      }
+      -> route
+
+let handle schema endpoint = Route { endpoint; schema; middlewares = [] }
+let ( >> ) endpoint schema = handle schema endpoint
+
+let handle_request handler endpoint =
+  handle (Sch.Free.map handler request) endpoint
+
+let scope ?(middlewares = []) ?(gates = []) prefix routes =
+  Scope { prefix; routes; gates; middlewares }
+
+let recover_middleware handler next a =
+  match next a with
+  | b -> b
+  | exception e ->
+    (match handler a e with Some resp -> resp | None -> raise e)
+
+let recover handler route =
+  match route with
+  | Route r ->
+    Route
+      { r with middlewares = r.middlewares @ [ recover_middleware handler ] }
+  | Scope r ->
+    Scope
+      { r with middlewares = r.middlewares @ [ recover_middleware handler ] }
 
 let[@inline] str_has_pct ~off ~len str =
   let end_pos = off + len in
@@ -396,123 +576,92 @@ module Path_cursor = struct
       | Some (_, rest) -> skip (n - 1) rest
 end
 
+(* Captures are parsed up front and handed back as a function, so a request with
+   a malformed capture is rejected before any gate runs. *)
+let rec match_path : type a b. (a, b) path -> Path_cursor.t -> (a -> b) option =
+ fun pattern cursor ->
+  match pattern with
+  | Nil ->
+    (match Path_cursor.next cursor with
+    | None -> Some Fun.id
+    | Some _ -> None (* Reject trailing segments *))
+  | Literal ("", rest) ->
+    (* Empty literal doesn't consume anything, just continue *)
+    match_path rest cursor
+  | Literal (expected, rest) ->
+    (match Path_cursor.next cursor with
+    | Some (span, rest_cursor)
+      when span_equal_lit rest_cursor.path span expected ->
+      match_path rest rest_cursor
+    | _ -> None)
+  | Splat rest ->
+    let remaining = Path_cursor.to_list cursor in
+    Option.map
+      (fun k f -> k (f remaining))
+      (match_path rest (Path_cursor.create ""))
+  | Capture { parse; rest; _ } -> match_capture parse rest cursor
+  | Enum { parse; rest; _ } -> match_capture parse rest cursor
+  | Annotated { segment; _ } -> match_path segment cursor
+
+and match_capture : type p a b.
+  (off:int -> len:int -> string -> p option)
+  -> (a, b) path
+  -> Path_cursor.t
+  -> ((p -> a) -> b) option
+  =
+ fun parse rest cursor ->
+  match Path_cursor.next cursor with
+  | Some (span, rest_cursor) ->
+    let off = Span.off span in
+    let len = Span.len span in
+    let result =
+      if str_has_pct ~off ~len rest_cursor.path
+      then
+        let decoded = Uri.pct_decode (String.sub rest_cursor.path off len) in
+        parse ~off:0 ~len:(String.length decoded) decoded
+      else parse ~off ~len rest_cursor.path
+    in
+    (match result with
+    | Some v -> Option.map (fun k f -> k (f v)) (match_path rest rest_cursor)
+    | None -> None)
+  | None -> None
+
 let expected_content_type : media_type -> string = function
   | Json -> "application/json"
   | Urlencoded -> "application/x-www-form-urlencoded"
   | Multipart -> "multipart/form-data"
 
-let validate_content_type : media_type -> Request.t -> (unit, string) result =
- fun input_type request ->
-  let expected = expected_content_type input_type in
+let select_media_type :
+  media_type list -> Request.t -> (media_type, string) result
+  =
+ fun media_types request ->
+  let expected =
+    String.concat ", " (List.map expected_content_type media_types)
+  in
   let actual = Request.header "content-type" request in
   match actual with
   | None ->
     Error (Printf.sprintf "Missing Content-Type header, expected: %s" expected)
   | Some content_type ->
     (* Extract media type, ignoring charset and other parameters *)
-    let media_type =
+    let actual_media_type =
       match String.split_on_char ';' content_type with
       | media :: _ -> String.trim media
       | [] -> content_type
     in
-    if Sch_ext.CI.equal media_type expected
-    then Ok ()
-    else
+    (match
+       List.find_opt
+         (fun candidate ->
+            Sch_ext.CI.equal actual_media_type (expected_content_type candidate))
+         media_types
+     with
+    | Some media_type -> Ok media_type
+    | None ->
       Error
         (Printf.sprintf
            "Unsupported Content-Type: %s, expected: %s"
-           media_type
-           expected)
-
-let rec match_pattern : type a b.
-  (a, b) path -> Path_cursor.t -> Request.t -> a -> b option
-  =
- fun pattern cursor request k ->
-  match pattern with
-  | Nil ->
-    (match Path_cursor.next cursor with
-    | None -> Some k
-    | Some _ -> None (* Reject trailing segments *))
-  | Literal ("", rest) ->
-    (* Empty literal doesn't consume anything, just continue *)
-    match_pattern rest cursor request k
-  | Literal (expected, rest) ->
-    (match Path_cursor.next cursor with
-    | Some (span, rest_cursor)
-      when span_equal_lit rest_cursor.path span expected ->
-      match_pattern rest rest_cursor request k
-    | _ -> None)
-  | Splat rest ->
-    let remaining = Path_cursor.to_list cursor in
-    match_pattern rest (Path_cursor.create "") request (k remaining)
-  | Capture { parse; rest; _ } ->
-    (match Path_cursor.next cursor with
-    | Some (span, rest_cursor) ->
-      let off = Span.off span in
-      let len = Span.len span in
-      let result =
-        if str_has_pct ~off ~len rest_cursor.path
-        then
-          let decoded = Uri.pct_decode (String.sub rest_cursor.path off len) in
-          parse ~off:0 ~len:(String.length decoded) decoded
-        else parse ~off ~len rest_cursor.path
-      in
-      (match result with
-      | Some v -> match_pattern rest rest_cursor request (k v)
-      | None -> None)
-    | None -> None)
-  | Enum { parse; rest; _ } ->
-    (match Path_cursor.next cursor with
-    | Some (span, rest_cursor) ->
-      let off = Span.off span in
-      let len = Span.len span in
-      let result =
-        if str_has_pct ~off ~len rest_cursor.path
-        then
-          let decoded = Uri.pct_decode (String.sub rest_cursor.path off len) in
-          parse ~off:0 ~len:(String.length decoded) decoded
-        else parse ~off ~len rest_cursor.path
-      in
-      (match result with
-      | Some v -> match_pattern rest rest_cursor request (k v)
-      | None -> None)
-    | None -> None)
-  | Annotated { segment; _ } -> match_pattern segment cursor request k
-
-let rec get_method : type a b. (a, b) schema -> Http.Method.t = function
-  | Method (m, _) -> m
-  | Query { rest; _ } -> get_method rest
-  | Header { rest; _ } -> get_method rest
-  | Cookie { rest; _ } -> get_method rest
-  | Body { rest; _ } -> get_method rest
-  | Extract { rest; _ } -> get_method rest
-  | Meta { rest; _ } -> get_method rest
-  | Response_model { rest; _ } -> get_method rest
-
-let into : type a. a -> (a, Response.t) schema -> route =
- fun handler schema -> Route { schema; handler; middlewares = [] }
-
-let recover_middleware handler next a =
-  match next a with
-  | b -> b
-  | exception e ->
-    (match handler a e with Some resp -> resp | None -> raise e)
-
-let recover : (Request.t -> exn -> Response.t option) -> route -> route =
- fun handler route ->
-  match route with
-  | Route { schema; handler = h; middlewares } ->
-    Route
-      { schema
-      ; handler = h
-      ; middlewares = middlewares @ [ recover_middleware handler ]
-      }
-  | Scope { prefix; routes; middlewares } ->
-    Scope
-      { prefix
-      ; routes
-      ; middlewares = middlewares @ [ recover_middleware handler ]
-      }
+           actual_media_type
+           expected))
 
 module Cookie_parser = struct
   let parse request =
@@ -571,58 +720,115 @@ let evaluate_body_schema : type a.
     Sch_ext.Multipart_decoder.decode_request schema request
     |> Sch.Validation.to_result
 
-let rec evaluate_schema : type a b.
-  (a, b) schema -> Path_cursor.t -> a -> Request.t -> b option
-  =
- fun schema cursor k request ->
-  match schema with
-  | Method (_, pattern) -> match_pattern pattern cursor request k
-  | Query { schema; rest } ->
-    (match
-       Sch.Json.decode
-         schema
-         (Form.Urlencoded.of_query request |> Form.Urlencoded.to_json)
-     with
-    | Sch.Validation.Success query_data ->
-      evaluate_schema rest cursor (k query_data) request
-    | Sch.Validation.Error errors ->
-      raise (Validation_failed (List.map Sch.error_to_pair errors)))
-  | Header { schema; rest } ->
-    (match
-       Sch.Json.decode
-         ~lookup:Sch.mem_ci
-         schema
-         (Sch_ext.Header.to_json (Request.headers request))
-     with
-    | Sch.Validation.Success header_data ->
-      evaluate_schema rest cursor (k header_data) request
-    | Sch.Validation.Error errors ->
-      raise (Validation_failed (List.map Sch.error_to_pair errors)))
-  | Cookie { schema; rest } ->
-    (match Sch.Json.decode schema (Cookie_parser.to_json request) with
-    | Sch.Validation.Success cookie_data ->
-      evaluate_schema rest cursor (k cookie_data) request
-    | Sch.Validation.Error errors ->
-      raise (Validation_failed (List.map Sch.error_to_pair errors)))
-  | Body { input_type; schema; rest } ->
-    (match validate_content_type input_type request with
-    | Error msg -> raise (Bad_request msg)
-    | Ok () ->
-      (match evaluate_body_schema input_type schema request with
-      | Ok validated_data ->
-        evaluate_schema rest cursor (k validated_data) request
-      | Error errors -> raise (Validation_failed errors)))
-  | Response_model { status; rest; schema } ->
-    (match evaluate_schema rest cursor k request with
-    | Some data ->
-      let json = Sch.Json.encode_string schema data in
-      Some (Response.json ~status json)
-    | None -> None)
-  | Extract { extractor; rest } ->
-    (match extractor request with
-    | Ok g -> evaluate_schema rest cursor (k g) request
-    | Error e -> raise (Extraction_failed e))
-  | Meta { rest; _ } -> evaluate_schema rest cursor k request
+module Reader = struct
+  type k
+
+  type env =
+    { request : Request.t
+    ; mutable memo : Context.t
+    }
+
+  type 'a t = env -> 'a
+
+  external inj : 'a t -> ('a, k) Sch.Sig.app = "%identity"
+  external prj : ('a, k) Sch.Sig.app -> 'a t = "%identity"
+
+  (* [Sch.Free.run] folds the tail of the effect sequence into the function side
+     of [apply] and the head into the argument side. Evaluating the argument
+     first is what runs effects in the order they were declared. *)
+  let applicative : k Sch.Sig.applicative =
+    { pure = (fun a -> inj (fun _ -> a))
+    ; map = (fun f a -> inj (fun env -> f (prj a env)))
+    ; apply =
+        (fun f a ->
+          inj (fun env ->
+            let x = prj a env in
+            (prj f env) x))
+    }
+end
+
+let decoded = function
+  | Sch.Validation.Success v -> v
+  | Sch.Validation.Error errors ->
+    raise (Validation_failed (List.map Sch.error_to_pair errors))
+
+let rec compile : type a. a schemaf -> Reader.env -> a =
+ fun schema ->
+  Reader.prj
+    (Sch.Free.run
+       Reader.applicative
+       { run = (fun effect_ -> Reader.inj (compile_effect (Schema.prj effect_)))
+       }
+       schema)
+
+and compile_effect : type a. a Schema.t -> Reader.env -> a = function
+  | Query schema ->
+    fun { Reader.request; _ } ->
+      decoded
+        (Sch.Json.decode
+           schema
+           (Form.Urlencoded.of_query request |> Form.Urlencoded.to_json))
+  | Header schema ->
+    fun { Reader.request; _ } ->
+      decoded
+        (Sch.Json.decode
+           ~lookup:Sch.mem_ci
+           schema
+           (Sch_ext.Header.to_json (Request.headers request)))
+  | Cookie schema ->
+    fun { Reader.request; _ } ->
+      decoded (Sch.Json.decode schema (Cookie_parser.to_json request))
+  | Body { media_types; schema } ->
+    fun { Reader.request; _ } ->
+      (match select_media_type media_types request with
+      | Error msg -> raise (Bad_request msg)
+      | Ok media_type ->
+        (match evaluate_body_schema media_type schema request with
+        | Ok validated_data -> validated_data
+        | Error errors -> raise (Validation_failed errors)))
+  | Extract extractor ->
+    fun { Reader.request; _ } ->
+      (match extractor request with
+      | Ok v -> v
+      | Error e -> raise (Extraction_failed e))
+  | Secured { extractor; _ } ->
+    fun { Reader.request; _ } ->
+      (match extractor request with
+      | Ok v -> v
+      | Error e -> raise (Extraction_failed e))
+  | Refine { source; check } ->
+    let run = compile source in
+    fun env ->
+      (match check (run env) with
+      | Ok v -> v
+      | Error e -> raise (Extraction_failed e))
+  | Fail e -> fun _ -> raise (Extraction_failed e)
+  | Alt { left; right } ->
+    let run_left = compile left in
+    let run_right = compile right in
+    fun env ->
+      (try run_left env with
+      | Extraction_failed _ | Validation_failed _ | Bad_request _ ->
+        run_right env)
+  | Memo { key; source } ->
+    let run = compile source in
+    fun env ->
+      (match Context.find key env.memo with
+      | Some v -> v
+      | None ->
+        let v = run env in
+        env.memo <- Context.add key v env.memo;
+        v)
+
+let compile_route schema =
+  let run = compile schema in
+  fun request -> run { Reader.request; memo = Context.empty }
+
+let with_gates gates schema =
+  List.fold_right
+    (fun gate rest -> Sch.Free.apply (Sch.Free.map (fun () x -> x) gate) rest)
+    gates
+    schema
 
 module Trie = struct
   type segment =
@@ -632,9 +838,10 @@ module Trie = struct
 
   type flat_route =
     | Flat_route :
-        { schema : ('a, Response.t) schema
-        ; handler : 'a
-        ; method_ : Http.Method.t
+        { method_ : Http.Method.t
+        ; path : ('f, 'r) path
+        ; finish : 'r -> Response.t
+        ; run : Request.t -> 'f
         ; segments : segment list
         ; middlewares : Middleware.t list
         ; prefix_len : int
@@ -692,40 +899,39 @@ module Trie = struct
     | Splat rest -> Splat_key :: extract_path_segments rest
     | Annotated { segment; _ } -> extract_path_segments segment
 
-  let rec extract_path_segments_and_method : type a b.
-    (a, b) schema -> Http.Method.t * segment list
-    = function
-    | Method (m, pattern) -> m, extract_path_segments pattern
-    | Query { rest; _ } -> extract_path_segments_and_method rest
-    | Header { rest; _ } -> extract_path_segments_and_method rest
-    | Cookie { rest; _ } -> extract_path_segments_and_method rest
-    | Body { rest; _ } -> extract_path_segments_and_method rest
-    | Response_model { rest; _ } -> extract_path_segments_and_method rest
-    | Extract { rest; _ } -> extract_path_segments_and_method rest
-    | Meta { rest; _ } -> extract_path_segments_and_method rest
-
-  let rec flatten_route prefix_len prefix middlewares route =
+  let rec flatten_route prefix_len prefix middlewares gates route =
     match route with
-    | Route { schema; handler; middlewares = route_mws } ->
-      let method_, segments = extract_path_segments_and_method schema in
+    | Route { endpoint = Endpoint e; schema; middlewares = route_mws } ->
+      let segments = extract_path_segments e.path in
       [ Flat_route
-          { schema
-          ; handler
-          ; method_
+          { method_ = e.method_
+          ; path = e.path
+          ; finish = e.finish
+          ; run = compile_route (with_gates (gates @ e.gates) schema)
           ; segments = prefix @ segments
           ; middlewares = middlewares @ route_mws
           ; prefix_len
           }
       ]
-    | Scope { prefix = scope_prefix; routes; middlewares = scope_mws } ->
+    | Scope
+        { prefix = scope_prefix
+        ; routes
+        ; gates = scope_gates
+        ; middlewares = scope_mws
+        } ->
       let scope_segments = extract_path_segments scope_prefix in
       let new_prefix = prefix @ scope_segments in
       let new_prefix_len = prefix_len + List.length scope_segments in
       routes
       |> List.concat_map
-           (flatten_route new_prefix_len new_prefix (middlewares @ scope_mws))
+           (flatten_route
+              new_prefix_len
+              new_prefix
+              (middlewares @ scope_mws)
+              (gates @ scope_gates))
 
-  let flatten_routes routes = routes |> List.concat_map (flatten_route 0 [] [])
+  let flatten_routes routes =
+    routes |> List.concat_map (flatten_route 0 [] [] [])
 
   let empty =
     { literals = String_map.empty
@@ -792,81 +998,38 @@ module Trie = struct
         first_some (match_trie rest_cursor method_ child) try_capture
       | None -> try_capture ())
 
-  let route_filter next request =
-    match next request with Some resp -> resp | None -> raise Not_found
-
-  let router' trie request =
-    let path = Request.target request in
-    let cursor = Path_cursor.create path in
-    let method_ = Request.meth request in
-    match match_trie cursor method_ trie with
-    | Some (Flat_route { schema; handler; middlewares; prefix_len; _ }) ->
-      let cursor = Path_cursor.create path |> Path_cursor.skip prefix_len in
-      let service =
-        Middleware.apply_all
-          middlewares
-          (route_filter (evaluate_schema schema cursor handler))
+  let router' ~unauthorized trie request =
+    let target = Request.target request in
+    match
+      match_trie (Path_cursor.create target) (Request.meth request) trie
+    with
+    | Some (Flat_route { path; finish; run; middlewares; prefix_len; _ }) ->
+      let cursor = Path_cursor.create target |> Path_cursor.skip prefix_len in
+      let service request =
+        match match_path path cursor with
+        | Some apply_captures -> finish (apply_captures (run request))
+        | None -> raise Not_found
       in
-      service request
+      (* Outside the route's middlewares, so [recover] gets the first chance *)
+      (try Middleware.apply_all middlewares service request with
+      | Extraction_failed (Security.Unauthorized (scheme, reason)) ->
+        Security.with_challenge scheme (unauthorized request scheme reason))
     | None -> raise Not_found
 
-  let router routes =
+  let router ~unauthorized routes =
     let trie = compile routes in
-    router' trie
+    router' ~unauthorized trie
 end
 
-let match' routes =
+let match' ?(unauthorized = Security.default_unauthorized) routes =
   let trie = Trie.compile routes in
-  fun request -> try Some (Trie.router' trie request) with Not_found -> None
+  fun request ->
+    try Some (Trie.router' ~unauthorized trie request) with Not_found -> None
 
-let rec sprintf' : type a. (a, string) path -> string -> a =
- fun pattern acc ->
-  match pattern with
-  | Nil -> acc
-  | Literal ("", rest) -> sprintf' rest (if acc = "" then "/" else acc)
-  | Literal (s, rest) -> sprintf' rest (acc ^ "/" ^ s)
-  | Splat rest ->
-    fun segments ->
-      let splat_path = String.concat "/" segments in
-      sprintf' rest (if splat_path = "" then acc else acc ^ "/" ^ splat_path)
-  | Capture { format; rest; _ } -> fun v -> sprintf' rest (acc ^ "/" ^ format v)
-  | Enum { format; rest; _ } -> fun v -> sprintf' rest (acc ^ "/" ^ format v)
-  | Annotated { segment; _ } -> sprintf' segment acc
-
-let sprintf pattern = sprintf' pattern ""
-
-let scope ?(middlewares = []) prefix routes =
-  Scope { prefix; routes; middlewares }
-
-module type Resource = sig
-  type id
-
-  val id_path : unit -> (id -> 'a, 'a) path
-  val index : Handler.t
-  val new_ : Handler.t
-  val create : Handler.t
-  val get : Request.t -> id -> Response.t
-  val edit : Request.t -> id -> Response.t
-  val update : Request.t -> id -> Response.t
-  val delete : Request.t -> id -> Response.t
-end
-
-let resource ?(middlewares = []) prefix_builder (module R : Resource) =
-  scope
-    ~middlewares
-    prefix_builder
-    [ get (s "") |> request |> into R.index
-    ; get (s "new") |> request |> into R.new_
-    ; post (s "") |> request |> into R.create
-    ; get (R.id_path ()) |> request |> into R.get
-    ; get (R.id_path () / s "edit") |> request |> into R.edit
-    ; put (R.id_path ()) |> request |> into R.update
-    ; delete (R.id_path ()) |> request |> into R.delete
-    ]
-
-let of_list ?(not_found = Handler.not_found) route_list =
-  let matcher = Trie.router route_list in
+let of_list
+      ?(not_found = Handler.not_found)
+      ?(unauthorized = Security.default_unauthorized)
+      route_list
+  =
+  let matcher = Trie.router ~unauthorized route_list in
   fun req -> try matcher req with Not_found -> not_found req
-
-let validation_error_to_json errors =
-  Jsont.Json.(object' (errors |> List.map (fun (k, v) -> name k, string v)))

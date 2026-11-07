@@ -227,24 +227,25 @@ let setup_app env =
     Router.(
       of_list
         ~not_found
-        [ get (s "") |> unit |> into home_handler
-        ; get (s "users" / int64) |> into user_handler
+        [ get (s "") |> handle_request (fun _ -> home_handler ())
+        ; get (s "users" / int64) >> pure user_handler
         ; scope
             (s "api")
-            [ get (s "version") |> request |> into api_version_handler
+            [ get (s "version") |> handle_request api_version_handler
             ; scope
                 (s "users")
-                [ get (s "") |> unit |> into api_users_handler
-                ; get int64 |> into api_detail_user_handler
-                ; post int64 |> request |> into api_update_user_handler
+                [ get (s "") |> handle_request (fun _ -> api_users_handler ())
+                ; get int64 >> pure api_detail_user_handler
+                ; post int64 |> handle_request api_update_user_handler
                 ]
             ]
-        ; get (s "files" / str) |> into files_handler
-        ; post (s "echo") |> request |> into echo_handler
-        ; put (s "echo") |> request |> into echo_handler
-        ; get (s "form") |> request |> into form_get_handler
-        ; post (s "form") |> request |> into form_post_handler
-        ; get (s "download" / s "users.csv") |> unit |> into stream_csv_handler
+        ; get (s "files" / str) >> pure files_handler
+        ; post (s "echo") |> handle_request echo_handler
+        ; put (s "echo") |> handle_request echo_handler
+        ; get (s "form") |> handle_request form_get_handler
+        ; post (s "form") |> handle_request form_post_handler
+        ; get (s "download" / s "users.csv")
+          |> handle_request (fun _ -> stream_csv_handler ())
         ])
     |> pipe
          ~through:

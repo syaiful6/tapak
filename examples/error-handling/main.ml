@@ -286,24 +286,20 @@ let app env =
   Tapak.(
     Router.(
       of_list
-        [ get (s "") |> unit |> into home_page
+        [ get (s "") |> handle_request home_page
         ; post (s "api" / s "users")
-          |> body Json User_request.schema
-          |> into create_user_json
+          >> map create_user_json (body Json User_request.schema)
           |> recover json_error_handler
         ; post (s "signup")
-          |> body Json User_request.schema
-          |> into create_user_html
+          >> map create_user_html (body Json User_request.schema)
           |> recover html_error_handler
         ; post (s "register")
-          |> body Json User_request.schema
-          |> into create_user_json
+          >> map create_user_json (body Json User_request.schema)
           |> recover negotiated_error_handler
         ; scope
             (s "admin")
             [ post (s "users")
-              |> body Json User_request.schema
-              |> into create_user_json
+              >> map create_user_json (body Json User_request.schema)
             ]
           |> recover handle_admin_errors
         ])

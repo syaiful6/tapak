@@ -1,7 +1,6 @@
 open Tapak
 module Openapi = Private.Openapi
 module Spec = Openapi.Spec
-module R2 = Private.Router2
 
 let page =
   Sch.Object.(
@@ -38,35 +37,9 @@ let color_path () =
     ~values:[ "red"; "blue" ]
     ()
 
-(* The same API written against both routers must produce the same document *)
-let router_routes =
+(* Every kind of route, pinned to the document it produces *)
+let document_routes =
   let open Router in
-  [ get (s "users" / p "id" int64 / s "posts" / int)
-    |> query page
-    |> header api_key_schema
-    |> cookie session
-    |> summary "summary"
-    |> description "description"
-    |> tags [ "a" ]
-    |> tag "b"
-    |> operation_id "getPost"
-    |> into (fun _ _ _ _ _ -> ok)
-  ; post (s "users")
-    |> body Json name
-    |> response_model ~status:`Created ~schema:name
-    |> into Fun.id
-  ; put (s "form" / ann ("c", "colour") (color_path ()))
-    |> body Urlencoded name
-    |> into (fun _ _ -> ok)
-  ; patch (s "upload") |> body Multipart name |> into (fun _ -> ok)
-  ; delete (s "files" / splat) |> into (fun _ -> ok)
-  ; any (s "any") |> extract (fun _ -> Ok ()) |> into (fun () -> ok)
-  ; head (s "hidden") |> include_in_schema false |> into ok
-  ; scope (s "api" / s "v1") [ get (s "x" / slug) |> into (fun _ -> ok) ]
-  ]
-
-let router2_routes =
-  let open R2 in
   [ (get (s "users" / p "id" int64 / s "posts" / int)
     |> summary "summary"
     |> description "description"
@@ -98,24 +71,22 @@ let router2_routes =
   ; scope (s "api" / s "v1") [ get (s "x" / slug) >> pure (fun _ -> ok) ]
   ]
 
-let test_matches_router_output () =
+let expected_document =
+  {golden|{"openapi":"3.1.0","info":{"title":"T","description":"D","version":"1"},"servers":[],"paths":{"/b/any":{"get":{"parameters":[],"responses":{"200":{"description":"OK","headers":{},"content":{},"links":{}}},"deprecated":false},"put":{"parameters":[],"responses":{"200":{"description":"OK","headers":{},"content":{},"links":{}}},"deprecated":false},"post":{"parameters":[],"responses":{"200":{"description":"OK","headers":{},"content":{},"links":{}}},"deprecated":false},"delete":{"parameters":[],"responses":{"200":{"description":"OK","headers":{},"content":{},"links":{}}},"deprecated":false},"patch":{"parameters":[],"responses":{"200":{"description":"OK","headers":{},"content":{},"links":{}}},"deprecated":false},"servers":[],"parameters":[]},"/b/api/v1/x/{param0}":{"get":{"parameters":[{"name":"param0","in":"path","required":true,"deprecated":false,"allowEmptyValue":false,"allowReserved":false,"schema":{"type":"string","format":"slug"}}],"responses":{"200":{"description":"OK","headers":{},"content":{},"links":{}}},"deprecated":false},"servers":[],"parameters":[]},"/b/files/{splat}":{"delete":{"parameters":[{"name":"splat","in":"path","description":"Catch-all path segments","required":true,"deprecated":false,"allowEmptyValue":false,"allowReserved":false,"schema":{"type":"string"}}],"responses":{"200":{"description":"OK","headers":{},"content":{},"links":{}}},"deprecated":false},"servers":[],"parameters":[]},"/b/form/{c}":{"put":{"parameters":[{"name":"c","in":"path","description":"colour","required":true,"deprecated":false,"allowEmptyValue":false,"allowReserved":false,"schema":{"type":"string","enum":["red","blue"]}}],"requestBody":{"content":{"application/x-www-form-urlencoded":{"schema":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]},"examples":{},"encoding":{}}},"required":true},"responses":{"200":{"description":"OK","headers":{},"content":{},"links":{}}},"deprecated":false},"servers":[],"parameters":[]},"/b/upload":{"patch":{"parameters":[],"requestBody":{"content":{"multipart/form-data":{"schema":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]},"examples":{},"encoding":{}}},"required":true},"responses":{"200":{"description":"OK","headers":{},"content":{},"links":{}}},"deprecated":false},"servers":[],"parameters":[]},"/b/users":{"post":{"parameters":[],"requestBody":{"content":{"application/json":{"schema":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]},"examples":{},"encoding":{}}},"required":true},"responses":{"201":{"description":"","headers":{},"content":{"application/json":{"schema":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]},"examples":{},"encoding":{}}},"links":{}}},"deprecated":false},"servers":[],"parameters":[]},"/b/users/{id}/posts/{param0}":{"get":{"tags":["a","b"],"summary":"summary","description":"description","operationId":"getPost","parameters":[{"name":"id","in":"path","required":true,"deprecated":false,"allowEmptyValue":false,"allowReserved":false,"schema":{"type":"integer","format":"int64"}},{"name":"param0","in":"path","required":true,"deprecated":false,"allowEmptyValue":false,"allowReserved":false,"schema":{"type":"integer"}},{"name":"limit","in":"query","description":"max","required":false,"deprecated":false,"allowEmptyValue":false,"allowReserved":false,"schema":{"type":"integer","format":"int32"}},{"name":"q","in":"query","required":false,"deprecated":false,"allowEmptyValue":false,"allowReserved":false,"schema":{"type":["string","null"]}},{"name":"x-api-key","in":"header","required":true,"deprecated":false,"allowEmptyValue":false,"allowReserved":false,"schema":{"type":"string"}},{"name":"session","in":"cookie","required":true,"deprecated":false,"allowEmptyValue":false,"allowReserved":false,"schema":{"type":"string"}}],"responses":{"200":{"description":"OK","headers":{},"content":{},"links":{}}},"deprecated":false},"servers":[],"parameters":[]}}}|golden}
+
+let test_document_is_stable () =
   Alcotest.(check string)
     "same document"
+    expected_document
     (Openapi.generate_string
        ~title:"T"
        ~version:"1"
        ~description:"D"
        ~base_path:"/b"
-       router_routes)
-    (Openapi.generate_router2_string
-       ~title:"T"
-       ~version:"1"
-       ~description:"D"
-       ~base_path:"/b"
-       router2_routes)
+       document_routes)
 
 let operation path method_ routes =
-  let spec = Openapi.generate_router2 routes in
+  let spec = Openapi.generate routes in
   match List.assoc path spec.paths with
   | Spec.Json_schema.Or_ref.Value item -> Option.get (method_ item)
   | _ -> Alcotest.fail "expected an inline path item"
@@ -132,7 +103,7 @@ let parameters (op : Spec.Operation.t) =
 let names op = List.map (fun (p : Spec.Parameter.t) -> p.name) (parameters op)
 
 let test_gates_documented_in_run_order () =
-  let open R2 in
+  let open Router in
   let routes =
     [ scope
         ~gates:[ void (cookie session) ]
@@ -151,7 +122,7 @@ let test_gates_documented_in_run_order () =
     (names (operation "/api/x/{id}" get_op routes))
 
 let test_refine_documents_its_source () =
-  let open R2 in
+  let open Router in
   let routes =
     [ get (s "x")
       |> gate (header api_key_schema |> refine (fun key -> Ok key))
@@ -164,7 +135,7 @@ let test_refine_documents_its_source () =
     (names (operation "/x" get_op routes))
 
 let test_extract_gate_is_invisible () =
-  let open R2 in
+  let open Router in
   let routes = [ get (s "x") |> gate (extract (fun _ -> Ok ())) >> pure ok ] in
   Alcotest.(check (list string))
     "no parameters"
@@ -172,7 +143,7 @@ let test_extract_gate_is_invisible () =
     (names (operation "/x" get_op routes))
 
 let test_generation_runs_nothing () =
-  let open R2 in
+  let open Router in
   let fail_if_run _ = Alcotest.fail "effect ran during generation" in
   let routes =
     [ (get (s "x")
@@ -189,7 +160,7 @@ let test_generation_runs_nothing () =
     (names (operation "/x" get_op routes))
 
 let test_shared_parameter_is_merged () =
-  let open R2 in
+  let open Router in
   let routes =
     [ (get (s "x")
       |> gate (header api_key_opt)
@@ -209,7 +180,7 @@ let test_shared_parameter_is_merged () =
     Alcotest.failf "expected 2 parameters, got %d" (List.length params)
 
 let test_same_name_in_other_location_is_kept () =
-  let open R2 in
+  let open Router in
   let as_query =
     Sch.Object.(define ~kind:"Q" @@ mem ~enc:Fun.id "x-api-key" Sch.string)
   in
@@ -227,7 +198,7 @@ let test_same_name_in_other_location_is_kept () =
     (List.length (parameters (operation "/x" get_op routes)))
 
 let test_first_body_is_documented () =
-  let open R2 in
+  let open Router in
   let routes =
     [ (post (s "x")
       >>
@@ -236,7 +207,7 @@ let test_first_body_is_documented () =
       ok)
     ]
   in
-  let document = Openapi.generate_router2_string routes in
+  let document = Openapi.generate_string routes in
   let contains needle =
     let n = String.length needle in
     let rec go i =
@@ -249,7 +220,7 @@ let test_first_body_is_documented () =
   Alcotest.(check bool) "second body absent" false (contains {|"other"|})
 
 let test_memo_documents_its_source_once () =
-  let open R2 in
+  let open Router in
   let key = memo (header api_key_schema) in
   let routes =
     [ scope
@@ -269,7 +240,7 @@ let required_flags op =
 let flags = Alcotest.(list (pair string bool))
 
 let test_fail_keeps_parameter_required () =
-  let open R2 in
+  let open Router in
   let routes =
     [ get (s "x") >> map (fun _ -> ok) (header api_key_schema <|> fail Denied) ]
   in
@@ -280,7 +251,7 @@ let test_fail_keeps_parameter_required () =
     (required_flags (operation "/x" get_op routes))
 
 let test_alt_makes_one_sided_parameter_optional () =
-  let open R2 in
+  let open Router in
   let routes =
     [ get (s "x")
       >> map
@@ -295,7 +266,7 @@ let test_alt_makes_one_sided_parameter_optional () =
     (required_flags (operation "/x" get_op routes))
 
 let test_alt_keeps_parameter_required_in_both () =
-  let open R2 in
+  let open Router in
   let both =
     (let+ _ = header api_key_schema
      and+ _ = cookie session in
@@ -310,7 +281,7 @@ let test_alt_keeps_parameter_required_in_both () =
     (required_flags (operation "/x" get_op routes))
 
 let test_gate_requires_what_alt_leaves_optional () =
-  let open R2 in
+  let open Router in
   let routes =
     [ get (s "x")
       |> gate (header api_key_schema)
@@ -334,7 +305,7 @@ let body_required op =
 let post_op item = item.Spec.Path_item.post
 
 let test_body_requirement_follows_alt () =
-  let open R2 in
+  let open Router in
   let required =
     [ post (s "x") >> map (fun _ -> ok) (body Json name <|> fail Denied) ]
   in
@@ -353,7 +324,7 @@ let test_body_requirement_follows_alt () =
     (body_required (operation "/x" post_op optional))
 
 let test_root_path_is_documented_as_slash () =
-  let open R2 in
+  let open Router in
   let routes = [ get (s "") >> pure ok ] in
   ignore (operation "/" get_op routes)
 
@@ -362,14 +333,14 @@ let security_of path routes =
 
 let requirements = Alcotest.(option (list (list (pair string (list string)))))
 let no_login ~username:_ ~password:_ = Some ()
-let basic_auth = R2.(secured (basic no_login))
-let bearer_auth = R2.(void (secured (bearer ~format:"JWT" Option.some)))
+let basic_auth = Router.(secured (basic no_login))
+let bearer_auth = Router.(void (secured (bearer ~format:"JWT" Option.some)))
 
 let api_key_auth =
-  R2.(void (secured (api_key ~in_:`Header "x-api-key" Option.some)))
+  Router.(void (secured (api_key ~in_:`Header "x-api-key" Option.some)))
 
 let test_no_security_by_default () =
-  let open R2 in
+  let open Router in
   Alcotest.check
     requirements
     "absent, including for plain extract"
@@ -379,7 +350,7 @@ let test_no_security_by_default () =
        [ get (s "x") |> gate (extract (fun _ -> Ok ())) >> pure ok ])
 
 let test_security_follows_schema_shape () =
-  let open R2 in
+  let open Router in
   let check name expected gates =
     Alcotest.check
       requirements
@@ -421,7 +392,7 @@ let test_security_follows_schema_shape () =
     (gate (memo basic_auth |> refine (fun () -> Ok ())))
 
 let test_scope_gate_secures_routes () =
-  let open R2 in
+  let open Router in
   let routes =
     [ scope
         ~gates:[ void basic_auth ]
@@ -443,7 +414,7 @@ let test_scope_gate_secures_routes () =
   Alcotest.check requirements "outside" None (security_of "/public" routes)
 
 let test_security_schemes_are_documented () =
-  let open R2 in
+  let open Router in
   let routes =
     [ get (s "a") |> gate basic_auth >> pure ok
     ; get (s "b") |> gate bearer_auth >> pure ok
@@ -455,7 +426,7 @@ let test_security_schemes_are_documented () =
       >> pure ok
     ]
   in
-  let spec = Openapi.generate_router2 routes in
+  let spec = Openapi.generate routes in
   let schemes =
     (Option.get spec.components).Spec.Component.security_schemes
     |> List.map (fun (name, scheme) ->
@@ -481,21 +452,21 @@ let test_security_schemes_are_documented () =
     (Some "x-api-key")
     (scheme "x-api-key").name;
   (* The whole document still encodes *)
-  ignore (Openapi.generate_router2_string routes)
+  ignore (Openapi.generate_string routes)
 
 let test_conflicting_scheme_names_are_rejected () =
-  let open R2 in
+  let open Router in
   let routes =
     [ get (s "a") |> gate (secured ~name:"auth" (basic no_login)) >> pure ok
     ; get (s "b") |> gate (secured ~name:"auth" (bearer Option.some)) >> pure ok
     ]
   in
-  match Openapi.generate_router2 routes with
+  match Openapi.generate routes with
   | _ -> Alcotest.fail "expected the conflict to be rejected"
   | exception Invalid_argument _ -> ()
 
 let test_generating_security_runs_no_extractor () =
-  let open R2 in
+  let open Router in
   let routes =
     [ get (s "x")
       |> gate
@@ -505,16 +476,16 @@ let test_generating_security_runs_no_extractor () =
       >> pure ok
     ]
   in
-  ignore (Openapi.generate_router2 routes)
+  ignore (Openapi.generate routes)
 
 let test_realm_is_not_a_conflict () =
-  let open R2 in
+  let open Router in
   let routes =
     [ get (s "a") |> gate (secured (basic ~realm:"One" no_login)) >> pure ok
     ; get (s "b") |> gate (secured (basic ~realm:"Two" no_login)) >> pure ok
     ]
   in
-  let spec = Openapi.generate_router2 routes in
+  let spec = Openapi.generate routes in
   Alcotest.(check int)
     "OpenAPI has no realm, so one scheme"
     1
@@ -536,12 +507,12 @@ let answers_401 routes =
       ~body:(Bytesrw.Bytes.Reader.of_string "")
       "/x"
   in
-  match R2.of_list routes request with
+  match Router.of_list routes request with
   | response -> Response.status response = `Unauthorized
   | exception Router.Extraction_failed _ -> false
 
 let test_401_matches_what_the_router_answers () =
-  let open R2 in
+  let open Router in
   let check name expected gates =
     let routes = [ get (s "x") |> gates >> pure ok ] in
     Alcotest.(check bool)
@@ -574,7 +545,7 @@ let test_401_matches_what_the_router_answers () =
   check "fail on the left is ignored" true (gate (fail Denied <|> basic_auth))
 
 let test_401_documents_the_challenge () =
-  let open R2 in
+  let open Router in
   let header gates =
     let routes = [ get (s "x") |> gates >> pure ok ] in
     let response = Option.get (response_401 (operation "/x" get_op routes)) in
@@ -605,7 +576,7 @@ let test_401_documents_the_challenge () =
     (header (fun e -> e |> gate api_key_auth |> gate bearer_auth))
 
 let test_scope_gate_documents_401 () =
-  let open R2 in
+  let open Router in
   let routes =
     [ scope ~gates:[ void basic_auth ] (s "api") [ get (s "x") >> pure ok ]
     ; get (s "public") >> pure ok
@@ -621,7 +592,7 @@ let test_scope_gate_documents_401 () =
     (Option.is_some (response_401 (operation "/public" get_op routes)))
 
 let test_declared_401_and_success_are_kept () =
-  let open R2 in
+  let open Router in
   let routes =
     [ get (s "x")
       |> gate basic_auth
@@ -639,10 +610,10 @@ let test_declared_401_and_success_are_kept () =
     [ "200"; "401" ]
     (List.map fst (operation "/y" get_op routes).responses.responses);
   (* The whole document still encodes *)
-  ignore (Openapi.generate_router2_string routes)
+  ignore (Openapi.generate_string routes)
 
 let test_body_of_documents_each_content_type () =
-  let open R2 in
+  let open Router in
   let routes =
     [ post (s "x") >> map (fun _ -> ok) (body_of [ Json; Urlencoded ] name) ]
   in
@@ -655,7 +626,7 @@ let test_body_of_documents_each_content_type () =
   | _ -> Alcotest.fail "expected an inline request body"
 
 let tests =
-  [ "Matches Router output", `Quick, test_matches_router_output
+  [ "Document is stable", `Quick, test_document_is_stable
   ; "Gates documented in run order", `Quick, test_gates_documented_in_run_order
   ; "Refine documents its source", `Quick, test_refine_documents_its_source
   ; "Extract gate is invisible", `Quick, test_extract_gate_is_invisible
@@ -708,4 +679,4 @@ let tests =
     , test_memo_documents_its_source_once )
   ]
   |> List.map (fun (name, speed, fn) -> Alcotest.test_case name speed fn)
-  |> fun tests -> [ "Router2 OpenAPI", tests ]
+  |> fun tests -> [ "OpenAPI", tests ]

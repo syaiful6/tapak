@@ -54,8 +54,8 @@
             }
 
             let routes = Router.[
-            get (s "assets" / splat) @->
-            Static.serve fs_backend ~config:static_config ()
+            get (s "assets" / splat)
+            |> handle_request (Static.serve fs_backend ~config:static_config ())
             ]</code></pre>
       </section>
 

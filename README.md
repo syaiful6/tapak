@@ -96,9 +96,9 @@ let app env =
   Tapak.(
     Router.(
       of_list
-        [ get (s "") |> unit |> into home_handler
-        ; get (s "users" / int64) |> into user_handler
-        ; get (s "api" / s "users" / int64 / str) |> into api_handler
+        [ get (s "") |> handle_request (fun _ -> home_handler ())
+        ; get (s "users" / int64) >> pure user_handler
+        ; get (s "api" / s "users" / int64 / str) >> pure api_handler
         ])
     |> use
          (module Middleware.Request_logger)

@@ -5,7 +5,7 @@
    extractors in Axum/Warp (Rust). Extractors allow you to define custom types
    that can be "extracted" from requests with type-safe error handling.
 
-   Routes are written against the applicative [Router2]: a handler is built by
+   Routes are applicative: a handler is built by
    parsing the request, and anything it doesn't need (a gate) never reaches it.
 
    Use cases:
@@ -16,7 +16,7 @@
 *)
 
 module Log = (val Logs.src_log Logs.default : Logs.LOG)
-module Router = Tapak.Private.Router2
+module Router = Tapak.Router
 
 type user =
   { id : int
@@ -201,11 +201,7 @@ let routes =
     ]
 
 let openapi_route =
-  let document =
-    Tapak.Private.Openapi.generate_router2_string
-      ~title:"Custom Extractors"
-      routes
-  in
+  let document = Tapak.openapi ~title:"Custom Extractors" routes in
   Router.(
     get (s "openapi.json") |> handle_request (fun _req -> Tapak.json document))
 

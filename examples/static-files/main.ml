@@ -53,10 +53,10 @@ let () =
     Tapak.(
       Router.(
         of_list
-          [ get (s "api" / s "hello") |> unit |> into api_handler
+          [ get (s "api" / s "hello")
+            |> handle_request (fun _ -> api_handler ())
           ; get splat
-            |> request
-            |> into
+            |> handle_request
                  (Tapak.static
                     ~env:(env :> Tapak.Static.fs_env)
                     ~config:static_config
