@@ -288,18 +288,18 @@ let app env =
       of_list
         [ get (s "") |> handle_request home_page
         ; post (s "api" / s "users")
-          >> map create_user_json (body Json User_request.schema)
+          |> handle (map create_user_json (body Json User_request.schema))
           |> recover json_error_handler
         ; post (s "signup")
-          >> map create_user_html (body Json User_request.schema)
+          |> handle (map create_user_html (body Json User_request.schema))
           |> recover html_error_handler
         ; post (s "register")
-          >> map create_user_json (body Json User_request.schema)
+          |> handle (map create_user_json (body Json User_request.schema))
           |> recover negotiated_error_handler
         ; scope
             (s "admin")
             [ post (s "users")
-              >> map create_user_json (body Json User_request.schema)
+              |> handle (map create_user_json (body Json User_request.schema))
             ]
           |> recover handle_admin_errors
         ])

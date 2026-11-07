@@ -193,7 +193,7 @@ module To_parameter = struct
              if Hashtbl.mem seen p.name
              then false
              else (
-               Hashtbl.add seen p.name ();
+               Hashtbl.replace seen p.name ();
                true))
           case_params
       in
@@ -352,12 +352,20 @@ let add_operation meth operation item =
   | `TRACE -> { item with trace = Some operation }
   | `PATCH -> { item with patch = Some operation }
   | `Other "*" ->
+    (* A route for a specific method wins at runtime, whatever the order *)
+    let or_any = function
+      | Some _ as specific -> specific
+      | None -> Some operation
+    in
     { item with
-      get = Some operation
-    ; post = Some operation
-    ; put = Some operation
-    ; delete = Some operation
-    ; patch = Some operation
+      get = or_any item.get
+    ; put = or_any item.put
+    ; post = or_any item.post
+    ; delete = or_any item.delete
+    ; options = or_any item.options
+    ; head = or_any item.head
+    ; patch = or_any item.patch
+    ; trace = or_any item.trace
     }
   | `CONNECT | `Other _ -> item
 
@@ -530,10 +538,9 @@ module Of_router = struct
   (* Nothing here touches a request: [Extract] contributes nothing, and [Refine]
      only contributes what its source declares. *)
   let rec collect : type a. a Router.schemaf -> parts =
-   fun schema -> Pc.prj (Sch.Free.run pc_applicative (effect_nat ()) schema)
+   fun schema -> Pc.prj (Sch.Free.run pc_applicative effect_nat schema)
 
-  and effect_nat : unit -> (Router.Schema.schemak, Pc.t) Sch.Sig.nat =
-   fun () ->
+  and effect_nat : (Router.Schema.schemak, Pc.t) Sch.Sig.nat =
     { Sch.Sig.run =
         (fun (type b) (fa : (b, Router.Schema.schemak) Sch.Sig.app) ->
           let effect_ : b Router.Schema.t = Router.Schema.prj fa in

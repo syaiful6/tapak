@@ -40,7 +40,7 @@ let () =
     }
   in
 
-  let api_handler () =
+  let api_handler _req =
     let json_body = "Hello from API", Ptime_clock.now () |> Ptime.to_float_s in
     let headers =
       Tapak.Headers.of_list
@@ -53,8 +53,7 @@ let () =
     Tapak.(
       Router.(
         of_list
-          [ get (s "api" / s "hello")
-            |> handle_request (fun _ -> api_handler ())
+          [ get (s "api" / s "hello") |> handle_request api_handler
           ; get splat
             |> handle_request
                  (Tapak.static

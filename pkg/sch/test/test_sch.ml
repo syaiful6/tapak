@@ -1143,6 +1143,20 @@ let test_to_json_schema_optional_field () =
     (Some [ "name" ])
     schema.required
 
+let test_error_on_unknown_case_insensitive () =
+  let codec =
+    Sch.Object.(
+      define ~unknown:Error_on_unknown @@ mem ~enc:Fun.id "X-Key" Sch.string)
+  in
+  let decode text = Sch.Json.decode_string ~lookup:Sch.mem_ci codec text in
+  (match decode {|{"x-key":"k"}|} with
+  | Sch.Validation.Success value ->
+    Alcotest.(check string) "field is known in any case" "k" value
+  | Sch.Validation.Error _ -> Alcotest.fail "x-key should match X-Key");
+  match decode {|{"x-key":"k","x-other":"v"}|} with
+  | Sch.Validation.Success _ -> Alcotest.fail "x-other should be unknown"
+  | Sch.Validation.Error _ -> ()
+
 let test_to_json_schema_additional_properties () =
   let codec =
     Sch.Object.(define ~unknown:Error_on_unknown @@ mem "name" Sch.string)
@@ -1554,6 +1568,9 @@ let to_json_schema_tests =
   ; "int schema", `Quick, test_to_json_schema_int
   ; "object schema", `Quick, test_to_json_schema_object
   ; "optional field", `Quick, test_to_json_schema_optional_field
+  ; ( "Error_on_unknown is case-insensitive with mem_ci"
+    , `Quick
+    , test_error_on_unknown_case_insensitive )
   ; "additionalProperties", `Quick, test_to_json_schema_additional_properties
   ; "list schema", `Quick, test_to_json_schema_list
   ; "option schema", `Quick, test_to_json_schema_option

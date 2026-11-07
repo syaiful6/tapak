@@ -198,7 +198,7 @@ let () =
     Tapak.Router.
       [ get (s "")
         |> handle_request (fun _ -> serve_static_file root "index.html")
-      ; get (s "static" / str) >> pure (serve_static_file root)
+      ; get (s "static" / str) |> handle (pure (serve_static_file root))
       ; Tapak.Socket.mount (s "socket") endpoint
       ]
   in

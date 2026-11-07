@@ -11,7 +11,7 @@ let trusted_proxies =
     (* Ipaddr.Prefix.of_string_exn "192.168.0.0/16"; *)
   ]
 
-let home_handler () =
+let home_handler _req =
   Tapak.html
     ~status:`OK
     {|<h1>Tapak Showcases</h1>
@@ -141,7 +141,7 @@ let form_post_handler req =
       "<h1>403 Forbidden</h1><p>Invalid CSRF token</p><p><a href=\"/form\">Try \
        again</a></p>"
 
-let stream_csv_handler () =
+let stream_csv_handler _req =
   let headers =
     Tapak.Headers.of_list
       [ "Content-Type", "text/csv"
@@ -187,7 +187,7 @@ let user_schema =
     and+ name = mem ~enc:(fun u -> u.name) "name" Sch.string in
     { id; name })
 
-let api_users_handler () =
+let api_users_handler _req =
   Tapak.json
     (Sch.Json.encode_string
        (Sch.list user_schema)
@@ -227,25 +227,25 @@ let setup_app env =
     Router.(
       of_list
         ~not_found
-        [ get (s "") |> handle_request (fun _ -> home_handler ())
-        ; get (s "users" / int64) >> pure user_handler
+        [ get (s "") |> handle_request home_handler
+        ; get (s "users" / int64) |> handle (pure user_handler)
         ; scope
             (s "api")
             [ get (s "version") |> handle_request api_version_handler
             ; scope
                 (s "users")
-                [ get (s "") |> handle_request (fun _ -> api_users_handler ())
-                ; get int64 >> pure api_detail_user_handler
+                [ get (s "") |> handle_request api_users_handler
+                ; get int64 |> handle (pure api_detail_user_handler)
                 ; post int64 |> handle_request api_update_user_handler
                 ]
             ]
-        ; get (s "files" / str) >> pure files_handler
+        ; get (s "files" / str) |> handle (pure files_handler)
         ; post (s "echo") |> handle_request echo_handler
         ; put (s "echo") |> handle_request echo_handler
         ; get (s "form") |> handle_request form_get_handler
         ; post (s "form") |> handle_request form_post_handler
         ; get (s "download" / s "users.csv")
-          |> handle_request (fun _ -> stream_csv_handler ())
+          |> handle_request stream_csv_handler
         ])
     |> pipe
          ~through:

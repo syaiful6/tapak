@@ -198,8 +198,7 @@ module Security = struct
 
   type extractor_error += Unauthorized of scheme * reason
 
-  (* Parsing and documentation come from one value, so a route can't document a
-     scheme it doesn't check. *)
+  (* Keep parsing and OpenAPI documentation in the same value. *)
   type 'a t =
     { scheme : scheme
     ; extractor : 'a extractor
@@ -211,8 +210,8 @@ module Security = struct
     | Some v -> Ok v
     | None -> Error (Unauthorized (scheme, Invalid))
 
-  (* Verify functions answer "who is this?": [None] is a 401. Rejecting a known
-     user is authorization, which belongs in [refine] with its own error. *)
+  (* Verification identifies the caller. [None] produces a 401 response; use
+     [refine] with a separate error for authorization. *)
   let basic ?(realm = "Restricted") verify =
     let scheme = Basic { realm } in
     { scheme
@@ -381,13 +380,12 @@ and effect_has_body : type a. a Schema.t -> bool = function
   | Memo { source; _ } -> has_body source
   | Alt { left; right } -> has_body left || has_body right
 
-(* [left <|> right] runs [right] when [left] fails validation or extraction;
-   other exceptions propagate. If both fail, [right]'s error is raised. Effects
-   in a failed [left] aren't undone.
+(* [left <|> right] runs [right] if [left] fails validation or extraction. Other
+   exceptions propagate. If both fail, [right]'s error is raised. Effects from
+   [left] are not rolled back.
 
-   A body stream can't be re-read, so a body isn't retryable: only one branch
-   may declare one, and this raises [Invalid_argument] when the schema is built
-   otherwise. To accept several body shapes, use a union in a single [Sch.t]. *)
+   A body stream cannot be read twice, so only one branch may read it. To accept
+   several body shapes, use a union in one [Sch.t]. *)
 let ( <|> ) left right =
   if has_body left && has_body right
   then invalid_arg "Router.( <|> ): only one branch may read the body";
@@ -663,43 +661,10 @@ let select_media_type :
            actual_media_type
            expected))
 
-module Cookie_parser = struct
-  let parse request =
-    let header = Request.headers request in
-    let cookies = Cookies.Cookie.parse header in
-    let tbl = Hashtbl.create 16 in
-    List.iter
-      (fun (key, value) ->
-         let existing_key =
-           Hashtbl.fold
-             (fun k _ acc -> if String.equal k key then Some k else acc)
-             tbl
-             None
-         in
-         match existing_key with
-         | Some k ->
-           let values = Hashtbl.find tbl k in
-           Hashtbl.replace tbl k (value :: values)
-         | None -> Hashtbl.add tbl key [ value ])
-      cookies;
-    Hashtbl.fold (fun k v acc -> (k, v) :: acc) tbl []
-
-  let to_json request =
-    let forms = parse request in
-    let fields =
-      List.map
-        (fun (key, values) ->
-           match values with
-           | [] -> Jsont.Json.name key, Jsont.Json.null ()
-           | [ single ] -> Jsont.Json.name key, Jsont.Json.string single
-           | multiple ->
-             ( Jsont.Json.name key
-             , Jsont.Json.list (List.map Jsont.Json.string (List.rev multiple))
-             ))
-        forms
-    in
-    Jsont.Json.object' fields
-end
+let cookies_to_json request =
+  Cookies.Cookie.parse (Request.headers request)
+  |> Sch_ext.Forms.group ~equal:String.equal
+  |> Sch_ext.Forms.to_json
 
 let evaluate_body_schema : type a.
   media_type -> a Sch.t -> Request.t -> (a, (string * string) list) result
@@ -723,9 +688,13 @@ let evaluate_body_schema : type a.
 module Reader = struct
   type k
 
+  (* [query] and [cookies] hold what the effects decode from, so several effects
+     reading the same source parse it once. *)
   type env =
     { request : Request.t
     ; mutable memo : Context.t
+    ; mutable query : Jsont.json option
+    ; mutable cookies : Jsont.json option
     }
 
   type 'a t = env -> 'a
@@ -745,6 +714,24 @@ module Reader = struct
             let x = prj a env in
             (prj f env) x))
     }
+
+  let query_json env =
+    match env.query with
+    | Some json -> json
+    | None ->
+      let json =
+        Form.Urlencoded.of_query env.request |> Form.Urlencoded.to_json
+      in
+      env.query <- Some json;
+      json
+
+  let cookies_json env =
+    match env.cookies with
+    | Some json -> json
+    | None ->
+      let json = cookies_to_json env.request in
+      env.cookies <- Some json;
+      json
 end
 
 let decoded = function
@@ -763,21 +750,24 @@ let rec compile : type a. a schemaf -> Reader.env -> a =
 
 and compile_effect : type a. a Schema.t -> Reader.env -> a = function
   | Query schema ->
-    fun { Reader.request; _ } ->
-      decoded
-        (Sch.Json.decode
-           schema
-           (Form.Urlencoded.of_query request |> Form.Urlencoded.to_json))
+    fun env -> decoded (Sch.Json.decode schema (Reader.query_json env))
   | Header schema ->
-    fun { Reader.request; _ } ->
-      decoded
-        (Sch.Json.decode
-           ~lookup:Sch.mem_ci
-           schema
-           (Sch_ext.Header.to_json (Request.headers request)))
+    (match Sch_ext.Declared.names schema with
+    | Some names ->
+      fun { Reader.request; _ } ->
+        decoded
+          (Sch.Json.decode
+             schema
+             (Sch_ext.Header.to_json_of_names names (Request.headers request)))
+    | None ->
+      fun { Reader.request; _ } ->
+        decoded
+          (Sch.Json.decode
+             ~lookup:Sch.mem_ci
+             schema
+             (Sch_ext.Header.to_json (Request.headers request))))
   | Cookie schema ->
-    fun { Reader.request; _ } ->
-      decoded (Sch.Json.decode schema (Cookie_parser.to_json request))
+    fun env -> decoded (Sch.Json.decode schema (Reader.cookies_json env))
   | Body { media_types; schema } ->
     fun { Reader.request; _ } ->
       (match select_media_type media_types request with
@@ -822,7 +812,8 @@ and compile_effect : type a. a Schema.t -> Reader.env -> a = function
 
 let compile_route schema =
   let run = compile schema in
-  fun request -> run { Reader.request; memo = Context.empty }
+  fun request ->
+    run { Reader.request; memo = Context.empty; query = None; cookies = None }
 
 let with_gates gates schema =
   List.fold_right
@@ -833,7 +824,10 @@ let with_gates gates schema =
 module Trie = struct
   type segment =
     | Lit of string
-    | Capt
+    | Capt of
+        { parser : Obj.t (* Only compared physically, to tell parsers apart *)
+        ; label : string
+        }
     | Splat_key
 
   type flat_route =
@@ -889,13 +883,23 @@ module Trie = struct
     ; handlers : flat_route Method_map.t
     }
 
+  let capture_segment parse type_name format_name =
+    let label =
+      match format_name with
+      | Some format -> type_name ^ ":" ^ format
+      | None -> type_name
+    in
+    Capt { parser = Obj.repr parse; label }
+
   let rec extract_path_segments : type a b. (a, b) path -> segment list =
     function
     | Nil -> []
     | Literal ("", rest) -> extract_path_segments rest
     | Literal (s, rest) -> Lit s :: extract_path_segments rest
-    | Capture { rest; _ } -> Capt :: extract_path_segments rest
-    | Enum { rest; _ } -> Capt :: extract_path_segments rest
+    | Capture { parse; type_name; format_name; rest; _ } ->
+      capture_segment parse type_name format_name :: extract_path_segments rest
+    | Enum { parse; type_name; format_name; rest; _ } ->
+      capture_segment parse type_name format_name :: extract_path_segments rest
     | Splat rest -> Splat_key :: extract_path_segments rest
     | Annotated { segment; _ } -> extract_path_segments segment
 
@@ -940,10 +944,67 @@ module Trie = struct
     ; handlers = Method_map.empty
     }
 
+  let any_method : Http.Method.t = `Other "*"
+
+  let describe_route (Flat_route { method_; segments; _ }) =
+    let method_name =
+      if method_ = any_method then "ANY" else Http.Method.to_string method_
+    in
+    let segment_name = function
+      | Lit s -> s
+      | Capt { label; _ } -> "<" ^ label ^ ">"
+      | Splat_key -> "*"
+    in
+    method_name ^ " /" ^ String.concat "/" (List.map segment_name segments)
+
+  let reject_conflict route other reason =
+    invalid_arg
+      (Printf.sprintf
+         "Router: %s conflicts with %s: %s"
+         (describe_route route)
+         (describe_route other)
+         reason)
+
+  let methods_overlap route other =
+    let a = flat_route_method route in
+    let b = flat_route_method other in
+    a = b || a = any_method || b = any_method
+
+  let same_segment a b =
+    match a, b with
+    | Lit a, Lit b -> String.equal a b
+    | Capt a, Capt b -> a.parser == b.parser
+    | Splat_key, Splat_key -> true
+    | (Lit _ | Capt _ | Splat_key), _ -> false
+
+  (* A failed capture does not try another route. Reject overlaps that would
+     leave a route unreachable or make its documentation ambiguous. A specific
+     method may coexist with [any] when both parse the path the same way. *)
+  let check_same_path route handlers =
+    Method_map.iter
+      (fun _ other ->
+         if flat_route_method route = flat_route_method other
+         then reject_conflict route other "both match the same requests"
+         else if
+           methods_overlap route other
+           && not
+                (List.equal
+                   same_segment
+                   (flat_route_segments route)
+                   (flat_route_segments other))
+         then
+           reject_conflict
+             route
+             other
+             "both match the same requests with different capture parsers, and \
+              a failed capture doesn't try the next route")
+      handlers
+
   let rec insert_route : segment list -> flat_route -> t -> t =
    fun segments route node ->
     match segments with
     | [] ->
+      check_same_path route node.handlers;
       { node with
         handlers = Method_map.add (flat_route_method route) route node.handlers
       }
@@ -953,7 +1014,7 @@ module Trie = struct
       in
       let updated_child = insert_route segs route child in
       { node with literals = String_map.add s updated_child node.literals }
-    | Capt :: segs ->
+    | Capt _ :: segs ->
       let child = node.capture |> Option.value ~default:empty in
       let updated_child = insert_route segs route child in
       { node with capture = Some updated_child }
@@ -962,12 +1023,63 @@ module Trie = struct
       let updated_child = insert_route segs route child in
       { node with splat = Some updated_child }
 
+  let rec routes_under node =
+    List.map snd (Method_map.bindings node.handlers)
+    @ List.concat_map
+        (fun (_, child) -> routes_under child)
+        (String_map.bindings node.literals)
+    @ List.concat_map
+        routes_under
+        (List.filter_map Fun.id [ node.capture; node.splat ])
+
+  let rec check_captures_beside_splats node =
+    (match node.capture, node.splat with
+    | Some capture, Some splat ->
+      let splat_routes = routes_under splat in
+      List.iter
+        (fun route ->
+           List.iter
+             (fun other ->
+                if methods_overlap route other
+                then
+                  reject_conflict
+                    route
+                    other
+                    "a capture that fails to parse doesn't fall back to the \
+                     splat")
+             splat_routes)
+        (routes_under capture)
+    | _ -> ());
+    String_map.iter
+      (fun _ child -> check_captures_beside_splats child)
+      node.literals;
+    Option.iter check_captures_beside_splats node.capture;
+    Option.iter check_captures_beside_splats node.splat
+
+  let rec has_segment_after_splat = function
+    | [] | [ Splat_key ] -> false
+    | Splat_key :: _ -> true
+    | _ :: segments -> has_segment_after_splat segments
+
+  let check_splat_is_last route =
+    if has_segment_after_splat (flat_route_segments route)
+    then
+      invalid_arg
+        (Printf.sprintf
+           "Router: %s can never match: a splat takes the rest of the path"
+           (describe_route route))
+
   let compile routes =
     let routes' = flatten_routes routes in
-    List.fold_left
-      (fun trie route -> insert_route (flat_route_segments route) route trie)
-      empty
-      routes'
+    List.iter check_splat_is_last routes';
+    let trie =
+      List.fold_left
+        (fun trie route -> insert_route (flat_route_segments route) route trie)
+        empty
+        routes'
+    in
+    check_captures_beside_splats trie;
+    trie
 
   let rec match_trie cursor method_ trie =
     let first_some option fallback =
@@ -983,7 +1095,7 @@ module Trie = struct
     | None ->
       first_some (Method_map.find_opt method_ trie.handlers) (fun () ->
         (* Fall back to "any" method handler *)
-        first_some (Method_map.find_opt (`Other "*") trie.handlers) try_splat)
+        first_some (Method_map.find_opt any_method trie.handlers) try_splat)
     | Some (span, rest_cursor) ->
       let try_capture () =
         match trie.capture with

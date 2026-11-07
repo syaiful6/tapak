@@ -2068,6 +2068,344 @@ let test_nested_scopes_multiple_routes () =
   | Some _ -> ()
   | None -> Alcotest.fail "/api/v1/profile should match with nested scopes"
 
+let tag_schema =
+  Sch.Object.(
+    define ~kind:"Tag" @@ mem ~enc:Fun.id "x-tag" (Sch.list Sch.string))
+
+let test_declared_headers_keep_value_order () =
+  let headers =
+    Headers.of_list [ "x-tag", "a"; "host", "h"; "X-TAG", "b"; "x-tag", "c" ]
+  in
+  let decode json =
+    match Sch.Json.decode ~lookup:Sch.mem_ci tag_schema json with
+    | Sch.Validation.Success v -> v
+    | Sch.Validation.Error _ -> Alcotest.fail "expected the tags to decode"
+  in
+  Alcotest.(check (list string))
+    "same as converting every header"
+    (decode (Sch_ext.Header.to_json headers))
+    (decode (Sch_ext.Header.to_json_of_names [ "x-tag" ] headers))
+
+let test_declared_names () =
+  let check name expected schema =
+    Alcotest.(check (option (list string)))
+      name
+      expected
+      (Sch_ext.Declared.names schema)
+  in
+  check "single field" (Some [ "limit" ]) limit_schema;
+  check
+    "fields in declaration order"
+    (Some [ "a"; "b" ])
+    Sch.Object.(
+      define ~kind:"Pair"
+      @@
+      let+ a = mem ~enc:fst "a" Sch.int
+      and+ b = mem ~enc:snd "b" Sch.int in
+      a, b);
+  check
+    "rejecting unknown members needs every member"
+    None
+    Sch.Object.(
+      define ~kind:"Strict" ~unknown:Sch.Error_on_unknown
+      @@ mem ~enc:Fun.id "a" Sch.int);
+  check
+    "a union reads a discriminator"
+    None
+    Sch.Union.(
+      define
+        ~discriminator:"kind"
+        [ case ~tag:"a" ~inj:Fun.id ~proj:Option.some limit_schema ]);
+  check "not an object" None Sch.int
+
+let test_strict_header_schema_sees_all_headers () =
+  let strict =
+    Sch.Object.(
+      define ~kind:"Strict" ~unknown:Sch.Error_on_unknown
+      @@ mem ~enc:Fun.id "x-key" Sch.string)
+  in
+  let routes =
+    [ (get (s "a")
+      >>
+      let+ key = header strict in
+      Response.of_string key)
+    ]
+  in
+  let request headers =
+    Request.make
+      ~version:`HTTP_1_1
+      ~meth:`GET
+      ~headers:(Headers.of_list headers)
+      ~body:(Bytesrw.Bytes.Reader.empty ())
+      "/a"
+  in
+  check_body
+    "only the declared header"
+    "k"
+    (dispatch routes (request [ "X-Key", "k" ]));
+  Alcotest.(check string)
+    "another header is rejected"
+    "validation_failed"
+    (run_outcome routes (request [ "x-key", "k"; "x-other", "v" ]))
+
+let test_inputs_read_twice_agree () =
+  let session =
+    Sch.Object.(define ~kind:"Session" @@ mem ~enc:Fun.id "session" Sch.string)
+  in
+  let routes =
+    [ (get (s "a")
+      >>
+      let+ l1 = query limit_schema
+      and+ l2 = query limit_schema
+      and+ c1 = cookie session
+      and+ c2 = cookie session in
+      Response.of_string (Printf.sprintf "%d %d %s %s" l1 l2 c1 c2))
+    ]
+  in
+  let request =
+    Request.make
+      ~version:`HTTP_1_1
+      ~meth:`GET
+      ~headers:(Headers.of_list [ "cookie", "session=abc; theme=dark" ])
+      ~body:(Bytesrw.Bytes.Reader.empty ())
+      "/a?limit=5"
+  in
+  check_body
+    "both readers see the value"
+    "5 5 abc abc"
+    (dispatch routes request)
+
+let test_parsed_inputs_are_not_shared_between_requests () =
+  let routes =
+    [ (get (s "a")
+      >>
+      let+ limit = query limit_schema in
+      Response.of_string (string_of_int limit))
+    ]
+  in
+  let handler = of_list routes in
+  check_body "first" "1" (handler (make_request "/a?limit=1"));
+  check_body "second" "2" (handler (make_request "/a?limit=2"))
+
+(* Captures stay with the target the route matched. Everything the schema reads
+   comes from the request as middleware left it. *)
+let test_schema_sees_request_from_middleware () =
+  let session =
+    Sch.Object.(define ~kind:"Session" @@ mem ~enc:Fun.id "session" Sch.string)
+  in
+  let rewrite next request =
+    next
+      (Request.with_
+         ~target:"/m/999?limit=7"
+         ~headers:
+           (Headers.of_list [ "x-website", "new"; "cookie", "session=new" ])
+         request)
+  in
+  let routes =
+    [ scope
+        ~middlewares:[ rewrite ]
+        (s "m")
+        [ (get int
+          >>
+          let+ limit = query limit_schema
+          and+ website = header website_schema
+          and+ session = cookie session in
+          fun id ->
+            Response.of_string
+              (Printf.sprintf "%d %d %s %s" id limit website session))
+        ]
+    ]
+  in
+  check_body
+    "capture from the matched target, the rest from the new request"
+    "5 7 new new"
+    (dispatch routes (make_request "/m/5?limit=1"))
+
+let contains ~sub text =
+  let n = String.length sub in
+  let rec at i =
+    i + n <= String.length text && (String.sub text i n = sub || at (i + 1))
+  in
+  at 0
+
+let check_rejected name fragments routes =
+  match (of_list routes : Handler.t) with
+  | _ -> Alcotest.failf "%s: expected the routes to be rejected" name
+  | exception Invalid_argument message ->
+    List.iter
+      (fun sub ->
+         if not (contains ~sub message)
+         then Alcotest.failf "%s: %S doesn't mention %S" name message sub)
+      fragments
+
+let check_accepted name routes =
+  match (of_list routes : Handler.t) with
+  | _ -> ()
+  | exception Invalid_argument message -> Alcotest.failf "%s: %s" name message
+
+let reply text = pure (fun _ -> Response.of_string text)
+let constant text = pure (Response.of_string text)
+
+let test_same_shape_and_method_is_rejected () =
+  check_rejected
+    "different parsers"
+    [ "GET /u/<integer>"; "GET /u/<string:slug>" ]
+    [ get (s "u" / int) >> reply "int"; get (s "u" / slug) >> reply "slug" ];
+  check_rejected
+    "same parser"
+    [ "GET /u/<integer>" ]
+    [ get (s "u" / int) >> reply "a"; get (s "u" / int) >> reply "b" ];
+  check_rejected
+    "literal duplicate"
+    [ "POST /a/b" ]
+    [ post (s "a" / s "b") >> constant "x"
+    ; post (s "a" / s "b") >> constant "y"
+    ];
+  check_rejected
+    "duplicate through a scope"
+    [ "GET /a/b" ]
+    [ scope (s "a") [ get (s "b") >> constant "x" ]
+    ; get (s "a" / s "b") >> constant "y"
+    ];
+  check_rejected
+    "two any routes"
+    [ "ANY /a" ]
+    [ any (s "a") >> constant "x"; any (s "a") >> constant "y" ]
+
+let test_any_with_other_parser_is_rejected () =
+  check_rejected
+    "any after get"
+    [ "ANY /v/<string:slug>"; "GET /v/<integer>" ]
+    [ get (s "v" / int) >> reply "int"; any (s "v" / slug) >> reply "slug" ];
+  check_rejected
+    "get after any"
+    [ "ANY /v/<string:slug>"; "GET /v/<integer>" ]
+    [ any (s "v" / slug) >> reply "slug"; get (s "v" / int) >> reply "int" ]
+
+let test_specific_method_beats_any () =
+  let routes =
+    [ any (s "a" / str) >> reply "any"; put (s "a" / str) >> reply "put" ]
+  in
+  check_body "specific" "put" (dispatch routes (make_request ~meth:`PUT "/a/x"));
+  check_body "fallback" "any" (dispatch routes (make_request "/a/x"))
+
+let test_capture_next_to_splat_is_rejected () =
+  check_rejected
+    "same position"
+    [ "GET /x/<integer>"; "GET /x/*" ]
+    [ get (s "x" / int) >> reply "int"; get (s "x" / splat) >> reply "splat" ];
+  check_rejected
+    "order doesn't matter"
+    [ "GET /x/<integer>"; "GET /x/*" ]
+    [ get (s "x" / splat) >> reply "splat"; get (s "x" / int) >> reply "int" ];
+  check_rejected
+    "capture deeper in the path"
+    [ "GET /x/<integer>/y"; "GET /x/*" ]
+    [ get (s "x" / int / s "y") >> reply "int"
+    ; get (s "x" / splat) >> reply "splat"
+    ];
+  check_rejected
+    "a capture that can't fail"
+    [ "GET /x/<string>"; "GET /x/*" ]
+    [ get (s "x" / str) >> reply "str"; get (s "x" / splat) >> reply "splat" ];
+  check_rejected
+    "any overlaps every method"
+    [ "POST /x/<integer>"; "ANY /x/*" ]
+    [ post (s "x" / int) >> reply "int"; any (s "x" / splat) >> reply "splat" ]
+
+let test_segments_after_splat_are_rejected () =
+  check_rejected
+    "literal"
+    [ "GET /s/*/tail" ]
+    [ get (s "s" / splat / s "tail") >> reply "x" ];
+  check_rejected
+    "capture"
+    [ "GET /s/*/<integer>" ]
+    [ get (s "s" / splat / int) >> pure (fun _ _ -> Response.of_string "x") ]
+
+let test_routes_that_do_not_conflict_are_accepted () =
+  check_accepted
+    "different methods, different parsers"
+    [ get (s "u" / int) >> reply "int"; post (s "u" / slug) >> reply "slug" ];
+  check_accepted
+    "different methods, capture and splat"
+    [ get (s "x" / int) >> reply "int"; post (s "x" / splat) >> reply "splat" ];
+  check_accepted
+    "different shapes after a capture"
+    [ get (s "u" / int / s "a") >> reply "int"
+    ; get (s "u" / slug / s "b") >> reply "slug"
+    ];
+  check_accepted
+    "literal next to a capture"
+    [ get (s "x" / s "new") >> constant "new"
+    ; get (s "x" / int) >> reply "int"
+    ];
+  check_accepted
+    "literal next to a splat"
+    [ get (s "x" / s "new") >> constant "new"
+    ; get (s "x" / splat) >> reply "splat"
+    ];
+  check_accepted
+    "root catch-all next to literals"
+    [ get (s "api" / s "hello") >> constant "hi"
+    ; get (s "api" / int) >> reply "int"
+    ; get splat >> reply "rest"
+    ];
+  check_accepted
+    "any next to a method with the same parser"
+    [ any (s "a" / str) >> reply "any"; put (s "a" / str) >> reply "put" ];
+  check_accepted
+    "any next to a method on a literal path"
+    [ any (s "a") >> constant "any"; put (s "a") >> constant "put" ]
+
+let test_failed_capture_under_literal_skips_outer_splat () =
+  let routes =
+    [ get (s "a" / s "new" / int) >> reply "int"
+    ; get (s "a" / splat) >> reply "splat"
+    ]
+  in
+  check_body "capture" "int" (dispatch routes (make_request "/a/new/1"));
+  check_body "splat" "splat" (dispatch routes (make_request "/a/other/1"));
+  Alcotest.(check string)
+    "a failed capture doesn't reach the splat"
+    "404"
+    (run_outcome routes (make_request "/a/new/abc"))
+
+let test_match_rejects_when_built () =
+  match
+    (match' [ get (s "a") >> constant "x"; get (s "a") >> constant "y" ]
+     : Request.t -> Response.t option)
+  with
+  | _ -> Alcotest.fail "expected the routes to be rejected"
+  | exception Invalid_argument _ -> ()
+
+let test_strict_header_schema_with_uppercase_field () =
+  let strict =
+    Sch.Object.(
+      define ~kind:"Strict" ~unknown:Sch.Error_on_unknown
+      @@ mem ~enc:Fun.id "X-Key" Sch.string)
+  in
+  let routes =
+    [ (get (s "a")
+      >>
+      let+ key = header strict in
+      Response.of_string key)
+    ]
+  in
+  let request headers =
+    Request.make
+      ~version:`HTTP_1_1
+      ~meth:`GET
+      ~headers:(Headers.of_list headers)
+      ~body:(Bytesrw.Bytes.Reader.empty ())
+      "/a"
+  in
+  check_body "declared header" "k" (dispatch routes (request [ "x-key", "k" ]));
+  Alcotest.(check string)
+    "other headers are still rejected"
+    "validation_failed"
+    (run_outcome routes (request [ "x-key", "k"; "x-other", "v" ]))
+
 let tests =
   [ "Simple route", `Quick, test_simple_route
   ; "Int64 parameter", `Quick, test_int64_param
@@ -2207,6 +2545,43 @@ let tests =
   ; ( ">> with gate and capture"
     , `Quick
     , test_handler_operator_with_gate_and_capture )
+  ; ( "Declared headers keep value order"
+    , `Quick
+    , test_declared_headers_keep_value_order )
+  ; "Declared names", `Quick, test_declared_names
+  ; ( "Strict header schema sees all headers"
+    , `Quick
+    , test_strict_header_schema_sees_all_headers )
+  ; "Inputs read twice agree", `Quick, test_inputs_read_twice_agree
+  ; ( "Parsed inputs aren't shared between requests"
+    , `Quick
+    , test_parsed_inputs_are_not_shared_between_requests )
+  ; ( "Schema sees request from middleware"
+    , `Quick
+    , test_schema_sees_request_from_middleware )
+  ; ( "Same shape and method is rejected"
+    , `Quick
+    , test_same_shape_and_method_is_rejected )
+  ; ( "any with another parser is rejected"
+    , `Quick
+    , test_any_with_other_parser_is_rejected )
+  ; "Specific method beats any", `Quick, test_specific_method_beats_any
+  ; ( "Capture next to splat is rejected"
+    , `Quick
+    , test_capture_next_to_splat_is_rejected )
+  ; ( "Segments after splat are rejected"
+    , `Quick
+    , test_segments_after_splat_are_rejected )
+  ; ( "Routes that don't conflict are accepted"
+    , `Quick
+    , test_routes_that_do_not_conflict_are_accepted )
+  ; ( "Failed capture under a literal skips outer splat"
+    , `Quick
+    , test_failed_capture_under_literal_skips_outer_splat )
+  ; "match' rejects when built", `Quick, test_match_rejects_when_built
+  ; ( "Strict header schema with uppercase field"
+    , `Quick
+    , test_strict_header_schema_with_uppercase_field )
   ]
   |> List.map (fun (name, speed, fn) -> Alcotest.test_case name speed fn)
   |> fun tests -> [ "Router", tests ]

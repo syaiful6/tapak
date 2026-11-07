@@ -1,8 +1,8 @@
 (** Type-safe routing.
 
-    A route pairs an {!endpoint} (method, path and documentation) with a
-    {!schemaf}: an applicative description of what to read from the request. The
-    schema produces the handler, so path captures become its last arguments:
+    A route combines an {!endpoint} (method, path, and documentation) with a
+    {!schemaf}, which describes the values to read from the request. The schema
+    returns the handler; path captures are passed as its final arguments:
 
     {[
       get (s "users" / int64)
@@ -13,7 +13,7 @@
       fun id -> show_user page id
     ]}
 
-    The same value drives dispatch and OpenAPI generation. *)
+    Routes are also used to generate the OpenAPI document. *)
 
 (** {1 Errors} *)
 
@@ -114,8 +114,7 @@ module Security : sig
   type extractor_error += Unauthorized of scheme * reason
 
   type 'a t
-  (** Parsing and documentation come from one value, so a route can't document a
-      scheme it doesn't check. *)
+  (** A security value contains both its parser and its OpenAPI description. *)
 
   val scheme : 'a t -> scheme
 
@@ -123,8 +122,8 @@ module Security : sig
   (** The [WWW-Authenticate] value for a 401 response, if the scheme has one. *)
 end
 
-(** Verify functions answer "who is this?": [None] is a 401. Rejecting a known
-    user is authorization, which belongs in {!refine} with its own error. *)
+(** Verification functions identify the caller. [None] produces a 401 response.
+    Use {!refine} with a separate error to reject an identified caller. *)
 
 val basic :
    ?realm:string
@@ -218,9 +217,9 @@ val memo : 'a schemaf -> 'a schemaf
     entry, so sharing means reusing the value. *)
 
 val ( <|> ) : 'a schemaf -> 'a schemaf -> 'a schemaf
-(** [left <|> right] runs [right] when [left] fails validation or extraction;
-    other exceptions propagate. If both fail, [right]'s error is raised. Effects
-    in a failed [left] aren't undone.
+(** [left <|> right] runs [right] if [left] fails validation or extraction.
+    Other exceptions propagate. If both branches fail, [right]'s error is
+    raised. Effects from [left] are not rolled back.
 
     A body stream can't be re-read, so a body isn't retryable. To accept several
     body shapes, use a union in a single {!Sch.t}.
@@ -317,14 +316,32 @@ val recover : (Request.t -> exn -> Response.t option) -> route -> route
 val with_gates : unit schemaf list -> 'a schemaf -> 'a schemaf
 (** The schema a route runs: [gates] in order, then [schema]. *)
 
-(** {1 Dispatch} *)
+(** {1 Dispatch}
+
+    The router chooses one route. If a capture fails to parse, it returns 404
+    instead of trying another route. Router construction therefore rejects
+    overlapping routes that would be unreachable or ambiguous in the OpenAPI
+    document. {!any} overlaps every method. Conflicts include:
+
+    - two routes with the same method and path shape, such as [/u/int] and
+      [/u/slug];
+    - a method and {!any} on the same shape with different parsers. With the
+      same parsers they're fine, and the method's route wins;
+    - a capture and a splat at one position, such as [/x/int/y] and [/x/splat];
+    - segments after a splat, whatever the method.
+
+    Literals may coexist with captures and splats. Different methods may parse
+    the same path differently. Parsers are compared by physical identity, so two
+    {!custom} calls count as different parsers unless they reuse the same value. *)
 
 val match' :
    ?unauthorized:(Request.t -> Security.scheme -> Security.reason -> Response.t)
   -> route list
   -> Request.t
   -> Response.t option
-(** [match' routes req] is the response of the matching route, if there is one. *)
+(** [match' routes req] is the response of the matching route, if there is one.
+
+    @raise Invalid_argument when applied to conflicting [routes]. *)
 
 val of_list :
    ?not_found:Handler.t
@@ -332,7 +349,9 @@ val of_list :
        (Request.t -> Security.scheme -> Security.reason -> Response.t)
   -> route list
   -> Handler.t
-(** [of_list routes] dispatches to [routes]. [not_found] answers when no route
-    matches and defaults to a 404. [unauthorized] answers when a {!secured}
-    schema rejects the request and defaults to a bare 401; the scheme's
-    [WWW-Authenticate] challenge is added unless the response already sets one. *)
+(** [of_list routes] dispatches requests to [routes]. [not_found] handles
+    unmatched requests and defaults to 404. [unauthorized] handles failures from
+    {!secured} schemas and defaults to 401. The router adds the scheme's
+    [WWW-Authenticate] challenge unless the response already contains one.
+
+    @raise Invalid_argument if [routes] conflict. *)

@@ -278,7 +278,29 @@ module Urlencoded = struct
     | Array of node list ref
     | Value of string list
 
-  let to_json params =
+  let has_nested_key params =
+    List.exists (fun (key, _) -> String.contains key '[') params
+
+  let flat_to_json params =
+    let rec add key values = function
+      | [] -> [ key, values ]
+      | (k, existing) :: rest when String.equal k key ->
+        (k, existing @ values) :: rest
+      | param :: rest -> param :: add key values rest
+    in
+    let field (key, values) =
+      ( Jsont.Json.name key
+      , match values with
+        | [] -> Jsont.Json.null ()
+        | [ v ] -> Jsont.Json.string v
+        | vs -> Jsont.Json.list (List.map Jsont.Json.string vs) )
+    in
+    Jsont.Json.object'
+      (List.map
+         field
+         (List.fold_left (fun acc (k, vs) -> add k vs acc) [] params))
+
+  let nested_to_json params =
     let params = normalize params in
     let parse_key key =
       match String.split_on_char ~sep:'[' key with
@@ -394,4 +416,7 @@ module Urlencoded = struct
       | Value vs -> Jsont.Json.list (List.map Jsont.Json.string vs)
     in
     as_json root
+
+  let to_json params =
+    if has_nested_key params then nested_to_json params else flat_to_json params
 end

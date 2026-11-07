@@ -167,47 +167,48 @@ let v1_api_routes =
       |> operation_id "listUsers"
       |> tags [ "Users" ]
       |> response_model ~status:`OK ~schema:User.schema_list
-      >> map list_users (query search_schema)
+      |> handle (map list_users (query search_schema))
     ; get (s "users" / p "userId" int64)
       |> summary "Get a user by ID"
       |> operation_id "getUser"
       |> tags [ "Users" ]
       |> response_model ~status:`OK ~schema:User.schema
-      >> pure get_user
+      |> handle (pure get_user)
     ; post (s "users")
       |> summary "Create a new user"
       |> description "Requires authentication via X-API-Key header"
       |> operation_id "createUser"
       |> tags [ "Users" ]
       |> response_model ~status:`Created ~schema:User.schema
-      >> map create_user (body Json User.schema_request)
+      |> handle (map create_user (body Json User.schema_request))
     ; post (s "users" / s "bulk")
       |> summary "Bulk create users"
       |> operation_id "bulkCreateUsers"
       |> tags [ "Users" ]
       |> response_model ~status:`Created ~schema:User.schema_list
-      >> map bulk_create_users (body Json (Sch.list User.schema_request))
+      |> handle
+           (map bulk_create_users (body Json (Sch.list User.schema_request)))
     ; put (s "users" / p "userId" int64)
       |> summary "Update a user"
       |> description "Requires authentication via X-API-Key header"
       |> operation_id "updateUser"
       |> tags [ "Users" ]
       |> response_model ~status:`OK ~schema:User.schema
-      >> map update_user (body Json User.schema_request)
+      |> handle (map update_user (body Json User.schema_request))
     ; delete (s "users" / p "userId" int)
       |> summary "Delete a user"
       |> description "Requires authentication via X-API-Key header"
       |> operation_id "deleteUser"
       |> tags [ "Users" ]
       |> response_model ~status:`No_content ~schema:delete_response_schema
-      >> pure delete_user
+      |> handle (pure delete_user)
     ; get (s "profile")
       |> summary "Get user profile"
       |> description "Returns user profile information from session cookies"
       |> operation_id "getUserProfile"
       |> tags [ "Users" ]
       |> response_model ~status:`OK ~schema:profile_response_schema
-      >> map get_user_profile (cookie session_cookies_schema)
+      |> handle (map get_user_profile (cookie session_cookies_schema))
     ]
 
 let api_v1_routes = Tapak.Router.[ scope (s "v1") v1_api_routes ]
@@ -222,7 +223,7 @@ let openapi_schema ?base_path routes =
        ?base_path
        routes)
 
-let swagger_ui_handler () =
+let swagger_ui_handler _req =
   let html =
     {|<!DOCTYPE html>
 <html lang="en">
@@ -286,9 +287,9 @@ let app env =
     Router.(
       of_list
         [ scope (s "api") api_v1_routes
-        ; get (s "docs") |> handle_request (fun _ -> swagger_ui_handler ())
+        ; get (s "docs") |> handle_request swagger_ui_handler
         ; get (s "openapi.json")
-          >> pure (openapi_schema ~base_path:"/api" api_v1_routes)
+          |> handle (pure (openapi_schema ~base_path:"/api" api_v1_routes))
         ])
     |> pipe
          ~through:

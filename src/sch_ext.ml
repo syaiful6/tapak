@@ -37,41 +37,74 @@ let case_tags (cases : _ Sch.union_case list) =
 let find_case_by_tag tag cases =
   List.find_opt (fun (Sch.Case c) -> String.equal c.tag tag) cases
 
-module Header = struct
-  let to_forms h =
-    let xs = Http.Header.to_list h in
-    let tbl = Hashtbl.create 16 in
-    List.iter
-      (fun (key, value) ->
-         let existing_key =
-           Hashtbl.fold
-             (fun k _ acc -> if CI.equal k key then Some k else acc)
-             tbl
-             None
-         in
-         match existing_key with
-         | Some k ->
-           let values = Hashtbl.find tbl k in
-           Hashtbl.replace tbl k (value :: values)
-         | None -> Hashtbl.add tbl key [ value ])
-      xs;
-    Hashtbl.fold (fun k v acc -> (k, v) :: acc) tbl []
-
-  let to_json h =
-    let forms = to_forms h in
-    let fields =
-      List.map
-        (fun (key, values) ->
-           match values with
-           | [] -> Jsont.Json.name key, Jsont.Json.null ()
-           | [ single ] -> Jsont.Json.name key, Jsont.Json.string single
-           | multiple ->
-             ( Jsont.Json.name key
-             , Jsont.Json.list
-                 (List.map (fun v -> Jsont.Json.string v) (List.rev multiple)) ))
-        forms
+module Forms = struct
+  (* Groups values by key, keeping keys in first-seen order and each key's
+     values newest first. Requests carry few keys, so a list beats building a
+     table. *)
+  let group ~equal pairs =
+    let rec add key value = function
+      | [] -> [ key, [ value ] ]
+      | (k, values) :: rest when equal k key -> (k, value :: values) :: rest
+      | form :: rest -> form :: add key value rest
     in
-    Jsont.Json.object' fields
+    List.fold_left (fun acc (key, value) -> add key value acc) [] pairs
+
+  let field_of_values key values =
+    match values with
+    | [] -> Jsont.Json.name key, Jsont.Json.null ()
+    | [ single ] -> Jsont.Json.name key, Jsont.Json.string single
+    | multiple ->
+      Jsont.Json.name key, Jsont.Json.list (List.map Jsont.Json.string multiple)
+
+  let to_json forms =
+    Jsont.Json.object'
+      (List.map
+         (fun (key, values) -> field_of_values key (List.rev values))
+         forms)
+end
+
+(* The names a flat object schema reads, known without decoding anything. [None]
+   means the whole input is needed: a union reads a discriminator, and
+   [Error_on_unknown] has to see the members it would reject. *)
+module Declared = struct
+  module Names = Sch.Sig.Make (struct
+      type 'a t = string list
+    end)
+
+  let applicative : Names.t Sch.Sig.applicative =
+    { pure = (fun _ -> Names.inj [])
+    ; map = (fun _ names -> Names.inj (Names.prj names))
+    ; apply = (fun f a -> Names.inj (Names.prj a @ Names.prj f))
+    }
+
+  let field_name : type o. (o Sch.fieldk, Names.t) Sch.Sig.nat =
+    { Sch.Sig.run =
+        (fun (type b) (fa : (b, o Sch.fieldk) Sch.Sig.app) ->
+          let field = Sch.Object.prj fa in
+          (Names.inj [ field.name ] : (b, Names.t) Sch.Sig.app))
+    }
+
+  let rec names : type a. a Sch.t -> string list option = function
+    | Sch.Object { members; unknown = Skip; _ } ->
+      Some (Names.prj (Sch.Free.run applicative field_name members))
+    | Sch.Iso { repr; _ } -> names repr
+    | _ -> None
+end
+
+module Header = struct
+  let to_forms h = Forms.group ~equal:CI.equal (Http.Header.to_list h)
+  let to_json h = Forms.to_json (to_forms h)
+
+  (* Members are named exactly as the schema names them, so decoding this needs
+     no case-insensitive lookup. *)
+  let to_json_of_names names h =
+    Jsont.Json.object'
+      (List.filter_map
+         (fun name ->
+            match Http.Header.get_multi h name with
+            | [] -> None
+            | values -> Some (Forms.field_of_values name values))
+         names)
 end
 
 module Validation_syntax = struct
