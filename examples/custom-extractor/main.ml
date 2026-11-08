@@ -5,6 +5,9 @@
    extractors in Axum/Warp (Rust). Extractors allow you to define custom types
    that can be "extracted" from requests with type-safe error handling.
 
+   Routes are applicative: a handler is built by
+   parsing the request, and anything it doesn't need (a gate) never reaches it.
+
    Use cases:
    - Authentication: Extract authenticated user from token
    - Authorization: Extract user with specific roles/permissions
@@ -13,6 +16,7 @@
 *)
 
 module Log = (val Logs.src_log Logs.default : Logs.LOG)
+module Router = Tapak.Router
 
 type user =
   { id : int
@@ -29,42 +33,24 @@ let user_schema =
     and+ role = mem ~enc:(fun u -> u.role) "role" Sch.string in
     { id; name; role })
 
-type admin = user
+type Router.extractor_error += Forbidden_not_admin
 
-type Tapak.Router.extractor_error +=
-  | Missing_auth_header
-  | Invalid_bearer_token
-  | Invalid_token
-  | Forbidden_not_admin
-  | Invalid_api_key
+let verify_token = function
+  (* In real app: validate JWT, query database, etc. *)
+  | "valid-token" -> Some { id = 1; name = "Alice"; role = "admin" }
+  | "user-token" -> Some { id = 2; name = "Bob"; role = "user" }
+  | _ -> None
 
-let user : user Tapak.Router.extractor =
- fun req ->
-  match Tapak.Request.header "Authorization" req with
-  | Some auth when String.starts_with ~prefix:"Bearer " auth ->
-    let token = String.sub auth 7 (String.length auth - 7) in
-    (* In real app: validate JWT, query database, etc. *)
-    if token = "valid-token"
-    then Ok { id = 1; name = "Alice"; role = "admin" }
-    else if token = "user-token"
-    then Ok { id = 2; name = "Bob"; role = "user" }
-    else Error Invalid_token
-  | Some _ -> Error Invalid_bearer_token
-  | None -> Error Missing_auth_header
+let user : user Router.schemaf = Router.(secured (bearer verify_token))
 
-let admin : admin Tapak.Router.extractor =
- fun req ->
-  match user req with
-  | Ok u when u.role = "admin" -> Ok u
-  | Ok _ -> Error Forbidden_not_admin
-  | Error e -> Error e
+let admin : user Router.schemaf =
+  user
+  |> Router.refine (fun u ->
+    if u.role = "admin" then Ok u else Error Forbidden_not_admin)
 
-(** API key extractor example *)
-let api_key : string Tapak.Router.extractor =
- fun req ->
-  match Tapak.Request.header "x-api-key" req with
-  | Some key when String.length key > 0 -> Ok key
-  | _ -> Error Invalid_api_key
+(** API key extractor example, documented as an apiKey security scheme *)
+let api_key_auth : string Router.schemaf =
+  Router.(secured (api_key ~in_:`Header "x-api-key" Option.some))
 
 let json_to_string json =
   Jsont_bytesrw.encode_string Jsont.json json |> Result.get_ok
@@ -100,6 +86,10 @@ let get_user_handler user user_id =
              , string (Printf.sprintf "%s (id=%d)" user.name user.id) )
            ]))
 
+let admin_stats_handler _req =
+  Tapak.json
+    (json_to_string Jsont.Json.(object' [ name "active_users", int 42 ]))
+
 let home_handler _req =
   Tapak.html
     {|<h1>Custom Extractors Example</h1>
@@ -121,6 +111,8 @@ Common use cases:</p>
   <li><code>GET /profile</code> - Extracts authenticated User</li>
   <li><code>GET /admin/dashboard</code> - Extracts Admin (validates role)</li>
   <li><code>GET /users/:id</code> - Combines User extractor + path param</li>
+  <li><code>GET /admin/stats</code> - Gated by Admin, handler doesn't receive it</li>
+  <li><code>GET /openapi.json</code> - Generated from the same routes</li>
 </ul>
 
 <h2>Test Credentials</h2>
@@ -154,10 +146,7 @@ curl -H "Authorization: Bearer valid-token" http://localhost:8080/users/123
 <h2>Error Handling</h2>
 <p>Extractors use extensible error variants for type-safe error handling:</p>
 <pre>
-type Router.extractor_error +=
-  | Missing_auth_header
-  | Invalid_token
-  | Forbidden_not_admin
+type Router.extractor_error += Forbidden_not_admin
 
 (* Caught by middleware *)
 try next req with
@@ -174,46 +163,50 @@ let not_found _req =
     ~status:`Not_found
     (Sch.Json.encode_string error_schema "Not found")
 
+(* The router returns a 401 by default and adds WWW-Authenticate for us, so this
+   only chooses the body. *)
+let unauthorized _req scheme reason =
+  let message =
+    match scheme, (reason : Router.Security.reason) with
+    | Router.Security.Api_key _, _ -> "Invalid or missing API key"
+    | _, Missing -> "Missing Authorization header"
+    | _, Malformed -> "Invalid Bearer token format"
+    | _, Invalid -> "Invalid token"
+  in
+  Tapak.json ~status:`Unauthorized (Sch.Json.encode_string error_schema message)
+
 let extractor_error_middleware : Tapak.middleware =
  fun next req ->
   try next req with
-  | Tapak.Router.Extraction_failed Missing_auth_header ->
-    Tapak.json
-      ~status:`Unauthorized
-      (Sch.Json.encode_string error_schema "Missing Authorization header")
-  | Tapak.Router.Extraction_failed Invalid_bearer_token ->
-    Tapak.json
-      ~status:`Unauthorized
-      (Sch.Json.encode_string error_schema "Invalid Bearer token format")
-  | Tapak.Router.Extraction_failed Invalid_token ->
-    Tapak.json
-      ~status:`Unauthorized
-      (Sch.Json.encode_string error_schema "Invalid token")
-  | Tapak.Router.Extraction_failed Forbidden_not_admin ->
+  | Router.Extraction_failed Forbidden_not_admin ->
     Tapak.json
       ~status:`Forbidden
       (Sch.Json.encode_string error_schema "Admin access required")
-  | Tapak.Router.Extraction_failed Invalid_api_key ->
-    Tapak.json
-      ~status:`Unauthorized
-      (Sch.Json.encode_string error_schema "Invalid or missing API key")
-  | Tapak.Router.Extraction_failed _ ->
+  | Router.Extraction_failed _ ->
     Tapak.json
       ~status:`Bad_request
       (Sch.Json.encode_string error_schema "Extractor failed")
 
+let routes =
+  Router.
+    [ get (s "") |> handle_request home_handler
+    ; get (s "api-info") |> handle (map api_info_handler api_key_auth)
+    ; get (s "profile") |> handle (map profile_handler user)
+    ; get (s "admin" / s "dashboard")
+      |> handle (map admin_dashboard_handler admin)
+    ; get (s "admin" / s "stats")
+      |> gate admin
+      |> handle_request admin_stats_handler
+    ; get (s "users" / int64) |> handle (map get_user_handler user)
+    ]
+
+let openapi_route =
+  let document = Tapak.openapi ~title:"Custom Extractors" routes in
+  Router.(
+    get (s "openapi.json") |> handle_request (fun _req -> Tapak.json document))
+
 let setup_app () =
-  Tapak.Router.(
-    of_list
-      ~not_found
-      [ get (s "") |> unit |> into home_handler
-      ; get (s "api-info") |> extract api_key |> into api_info_handler
-      ; get (s "profile") |> extract user |> into profile_handler
-      ; get (s "admin" / s "dashboard")
-        |> extract admin
-        |> into admin_dashboard_handler
-      ; get (s "users" / int64) |> extract user |> into get_user_handler
-      ])
+  Router.of_list ~not_found ~unauthorized (openapi_route :: routes)
   |> extractor_error_middleware
 
 let setup_log level =

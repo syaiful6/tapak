@@ -197,9 +197,8 @@ let () =
   let all_routes =
     Tapak.Router.
       [ get (s "")
-        |> unit
-        |> into (fun () -> serve_static_file root "index.html")
-      ; get (s "static" / str) |> into (serve_static_file root)
+        |> handle_request (fun _ -> serve_static_file root "index.html")
+      ; get (s "static" / str) |> handle (pure (serve_static_file root))
       ; Tapak.Socket.mount (s "socket") endpoint
       ]
   in

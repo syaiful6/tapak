@@ -163,56 +163,52 @@ let get_user_profile (session_id, theme) =
 let v1_api_routes =
   Tapak.Router.
     [ get (s "users")
-      |> query search_schema
       |> summary "List all users"
       |> operation_id "listUsers"
       |> tags [ "Users" ]
       |> response_model ~status:`OK ~schema:User.schema_list
-      |> into list_users
+      |> handle (map list_users (query search_schema))
     ; get (s "users" / p "userId" int64)
       |> summary "Get a user by ID"
       |> operation_id "getUser"
       |> tags [ "Users" ]
       |> response_model ~status:`OK ~schema:User.schema
-      |> into get_user
+      |> handle (pure get_user)
     ; post (s "users")
-      |> body Json User.schema_request
       |> summary "Create a new user"
       |> description "Requires authentication via X-API-Key header"
       |> operation_id "createUser"
       |> tags [ "Users" ]
       |> response_model ~status:`Created ~schema:User.schema
-      |> into create_user
+      |> handle (map create_user (body Json User.schema_request))
     ; post (s "users" / s "bulk")
-      |> body Json (Sch.list User.schema_request)
       |> summary "Bulk create users"
       |> operation_id "bulkCreateUsers"
       |> tags [ "Users" ]
       |> response_model ~status:`Created ~schema:User.schema_list
-      |> into bulk_create_users
+      |> handle
+           (map bulk_create_users (body Json (Sch.list User.schema_request)))
     ; put (s "users" / p "userId" int64)
-      |> body Json User.schema_request
       |> summary "Update a user"
       |> description "Requires authentication via X-API-Key header"
       |> operation_id "updateUser"
       |> tags [ "Users" ]
       |> response_model ~status:`OK ~schema:User.schema
-      |> into update_user
+      |> handle (map update_user (body Json User.schema_request))
     ; delete (s "users" / p "userId" int)
       |> summary "Delete a user"
       |> description "Requires authentication via X-API-Key header"
       |> operation_id "deleteUser"
       |> tags [ "Users" ]
       |> response_model ~status:`No_content ~schema:delete_response_schema
-      |> into delete_user
+      |> handle (pure delete_user)
     ; get (s "profile")
-      |> cookie session_cookies_schema
       |> summary "Get user profile"
       |> description "Returns user profile information from session cookies"
       |> operation_id "getUserProfile"
       |> tags [ "Users" ]
       |> response_model ~status:`OK ~schema:profile_response_schema
-      |> into get_user_profile
+      |> handle (map get_user_profile (cookie session_cookies_schema))
     ]
 
 let api_v1_routes = Tapak.Router.[ scope (s "v1") v1_api_routes ]
@@ -227,7 +223,7 @@ let openapi_schema ?base_path routes =
        ?base_path
        routes)
 
-let swagger_ui_handler () =
+let swagger_ui_handler _req =
   let html =
     {|<!DOCTYPE html>
 <html lang="en">
@@ -291,9 +287,9 @@ let app env =
     Router.(
       of_list
         [ scope (s "api") api_v1_routes
-        ; get (s "docs") |> unit |> into swagger_ui_handler
+        ; get (s "docs") |> handle_request swagger_ui_handler
         ; get (s "openapi.json")
-          |> into (openapi_schema ~base_path:"/api" api_v1_routes)
+          |> handle (pure (openapi_schema ~base_path:"/api" api_v1_routes))
         ])
     |> pipe
          ~through:

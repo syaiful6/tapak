@@ -64,6 +64,7 @@
    (>= 3.0.0))
   (angstrom
    (>= 0.15.0))
+  base64
   (multipart_form
    (>= 0.7.0))
   cows

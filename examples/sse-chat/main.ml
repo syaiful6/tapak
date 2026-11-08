@@ -274,9 +274,9 @@ let html_page =
 </body>
 </html>|}
 
-let home_handler () = Tapak.html ~status:`OK html_page
+let home_handler _req = Tapak.html ~status:`OK html_page
 
-let chat_stream_handler room () =
+let chat_stream_handler room _req =
   let stream = Eio.Stream.create 125 in
   let user_id = Chat_room.add_client room stream in
   let user_id_event =
@@ -319,11 +319,11 @@ let () =
   let app =
     let open Tapak.Router in
     of_list
-      [ get (s "") |> unit |> into home_handler
-      ; get (s "chat") |> unit |> into (chat_stream_handler room)
+      [ get (s "") |> handle_request home_handler
+      ; get (s "chat") |> handle_request (chat_stream_handler room)
       ; post (s "chat" / int)
-        |> request
-        |> into (fun req user_id -> post_message_handler room user_id req)
+        |> handle_request (fun req user_id ->
+          post_message_handler room user_id req)
       ]
   in
   let port = 8080 in

@@ -371,24 +371,21 @@ let app env =
   Tapak.(
     Router.(
       of_list
-        [ get (s "") |> unit |> into index_page
+        [ get (s "") |> handle_request index_page
         ; scope
             (s "api")
-            [ get (s "users") |> unit |> into list_users
+            [ get (s "users") |> handle_request list_users
             ; post (s "users")
-              |> body Json User_request.schema
-              |> into create_user
+              |> handle (map create_user (body Json User_request.schema))
             ; put (s "users" / p "userId" int64)
-              |> body Json update_schema
-              |> into update_user
+              |> handle (map update_user (body Json update_schema))
             ]
-        ; post (s "login") |> body Urlencoded login_schema |> into login_form
+        ; post (s "login")
+          |> handle (map login_form (body Urlencoded login_schema))
         ; post (s "contact")
-          |> body Urlencoded contact_schema
-          |> into contact_form
+          |> handle (map contact_form (body Urlencoded contact_schema))
         ; post (s "upload")
-          |> body Multipart upload_input_schema
-          |> into upload_file
+          |> handle (map upload_file (body Multipart upload_input_schema))
         ])
     |> pipe
          ~through:

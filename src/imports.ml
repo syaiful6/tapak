@@ -22,6 +22,16 @@ module String = struct
     if is_prefix s ~prefix
     then Some (sub s ~pos:prefix_len ~len:(length s - prefix_len))
     else None
+
+  let strip_prefix_ci ~prefix s =
+    let prefix_len = length prefix in
+    if
+      length s >= prefix_len
+      && equal
+           (lowercase_ascii (sub s ~pos:0 ~len:prefix_len))
+           (lowercase_ascii prefix)
+    then Some (sub s ~pos:prefix_len ~len:(length s - prefix_len))
+    else None
 end
 
 module Option = struct

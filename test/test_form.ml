@@ -454,10 +454,32 @@ let test_multipart_parsing_invalid () =
       (List.length parsed)
   | Error (`Msg _) -> ()
 
+let test_urlencoded_to_json () =
+  let check name input expected =
+    let json = Form.Urlencoded.(to_json (of_string input)) in
+    Alcotest.(check string)
+      name
+      expected
+      (Jsont_bytesrw.encode_string Jsont.json json |> Result.get_ok)
+  in
+  check "empty" "" {|{}|};
+  check "flat" "a=1&b=2" {|{"a":"1","b":"2"}|};
+  check
+    "repeated keys collect in order"
+    "a=1&b=2&a=3"
+    {|{"a":["1","3"],"b":"2"}|};
+  check "comma separated values" "a=1,2" {|{"a":["1","2"]}|};
+  check "key without a value" "a" {|{"a":null}|};
+  check "empty value" "a=" {|{"a":""}|};
+  check "nested keys" "user[name]=x" {|{"user":{"name":"x"}}|};
+  check "array keys" "tags[]=x&tags[]=y" {|{"tags":["x","y"]}|}
+
 let tests =
   List.map
     (fun (name, cases) -> Format.asprintf "Form: %s" name, cases)
-    [ ( "of_string tests"
+    [ ( "to_json tests"
+      , [ Alcotest.test_case "to_json" `Quick test_urlencoded_to_json ] )
+    ; ( "of_string tests"
       , [ Alcotest.test_case "Empty string" `Quick test_of_string_empty
         ; Alcotest.test_case
             "Single parameter"

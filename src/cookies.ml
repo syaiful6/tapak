@@ -66,5 +66,42 @@ end
 module Cookie = struct
   include Cohttp.Cookie.Cookie_hdr
 
-  let parse = extract
+  let is_space = function ' ' | '\t' -> true | _ -> false
+
+  let rec skip_spaces s stop i =
+    if i < stop && is_space (String.unsafe_get s i)
+    then skip_spaces s stop (i + 1)
+    else i
+
+  let rec find_from s stop c i =
+    if i >= stop
+    then stop
+    else if String.unsafe_get s i = c
+    then i
+    else find_from s stop c (i + 1)
+
+  (* [$]-prefixed attributes such as [$Path] are not cookies *)
+  let[@tail_mod_cons] rec parse_pairs s pos =
+    let total = String.length s in
+    if pos > total
+    then []
+    else
+      let stop = find_from s total ';' pos in
+      let start = skip_spaces s stop pos in
+      if start = stop || String.unsafe_get s start = '$'
+      then parse_pairs s (stop + 1)
+      else
+        let eq = find_from s stop '=' start in
+        let name = String.sub s start (eq - start) in
+        let value =
+          if eq = stop then "" else String.sub s (eq + 1) (stop - eq - 1)
+        in
+        (name, value) :: parse_pairs s (stop + 1)
+
+  (* Behaves as [extract] does, including later headers coming first *)
+  let parse hdr =
+    List.fold_left
+      (fun acc header -> parse_pairs header 0 @ acc)
+      []
+      (Http.Header.get_multi hdr "cookie")
 end

@@ -78,7 +78,7 @@ Add Tapak as a flake input in your `flake.nix`:
 Here's a simple example demonstrating type-safe routing, middleware composition, and EIO integration:
 
 ```ocaml
-let home_handler () =
+let home_handler _req =
   Tapak.html ~status:`OK "<h1>Welcome to Tapak!</h1>"
 
 let user_handler user_id =
@@ -96,9 +96,9 @@ let app env =
   Tapak.(
     Router.(
       of_list
-        [ get (s "") |> unit |> into home_handler
-        ; get (s "users" / int64) |> into user_handler
-        ; get (s "api" / s "users" / int64 / str) |> into api_handler
+        [ get (s "") |> handle_request home_handler
+        ; get (s "users" / int64) |> handle (pure user_handler)
+        ; get (s "api" / s "users" / int64 / str) |> handle (pure api_handler)
         ])
     |> use
          (module Middleware.Request_logger)

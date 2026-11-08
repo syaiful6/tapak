@@ -122,34 +122,6 @@ let rec path_to_string : type a b.
     in
     Format.sprintf "/{%s}%s" param_name rest_path, param :: params
 
-let rec extract_metadata : type a b. (a, b) Router.schema -> Router.metadata =
- fun schema ->
-  let open Option.Syntax in
-  match schema with
-  | Method _ ->
-    { operation_id = None
-    ; summary = None
-    ; description = None
-    ; tags = []
-    ; body_description = None
-    ; include_in_schema = true
-    }
-  | Query { rest; _ } -> extract_metadata rest
-  | Header { rest; _ } -> extract_metadata rest
-  | Cookie { rest; _ } -> extract_metadata rest
-  | Body { rest; _ } -> extract_metadata rest
-  | Extract { rest; _ } -> extract_metadata rest
-  | Response_model { rest; _ } -> extract_metadata rest
-  | Meta { meta; rest } ->
-    let base_meta = extract_metadata rest in
-    { operation_id = meta.operation_id <|> base_meta.operation_id
-    ; summary = meta.summary <|> base_meta.summary
-    ; description = meta.description <|> base_meta.description
-    ; tags = meta.tags @ base_meta.tags
-    ; body_description = meta.body_description <|> base_meta.body_description
-    ; include_in_schema = meta.include_in_schema && base_meta.include_in_schema
-    }
-
 let schema_to_openapi_schema : type a. a Sch.t -> Spec.Json_schema.t =
  fun schema ->
   let t = Sch.to_json_schema schema in
@@ -221,7 +193,7 @@ module To_parameter = struct
              if Hashtbl.mem seen p.name
              then false
              else (
-               Hashtbl.add seen p.name ();
+               Hashtbl.replace seen p.name ();
                true))
           case_params
       in
@@ -261,56 +233,12 @@ module To_parameter = struct
     }
 end
 
-type any_schema = Schema : ('a, Response.t) Router.schema -> any_schema
-
-let rec get_method_and_path : type a b.
-  (a, b) Router.schema -> Http.Method.t * string * Spec.Parameter.t list
-  =
- fun schema ->
-  match schema with
-  | Router.Method (meth, path) ->
-    let path_str, path_params = path_to_string path in
-    meth, path_str, path_params
-  | Router.Query { rest; _ } -> get_method_and_path rest
-  | Router.Header { rest; _ } -> get_method_and_path rest
-  | Router.Cookie { rest; _ } -> get_method_and_path rest
-  | Router.Body { rest; _ } -> get_method_and_path rest
-  | Router.Extract { rest; _ } -> get_method_and_path rest
-  | Router.Meta { rest; _ } -> get_method_and_path rest
-  | Router.Response_model { rest; _ } -> get_method_and_path rest
-
 type operation_parts =
-  { parameters : Spec.Parameter.t list
-  ; body : (Router.media_type * Spec.Json_schema.t) option
+  { body : (Router.media_type list * Spec.Json_schema.t) option
+  ; body_required : bool
   ; response : (Http.Status.t * Spec.Json_schema.t) option
+  ; security : Spec.Security_requirement.t list option
   }
-
-let rec extract_parts : type a b. (a, b) Router.schema -> operation_parts =
- fun schema ->
-  match schema with
-  | Router.Method _ -> { parameters = []; body = None; response = None }
-  | Router.Query { schema; rest } ->
-    let parts = extract_parts rest in
-    let params = To_parameter.convert Spec.Location.Query schema in
-    { parts with parameters = parts.parameters @ params }
-  | Router.Header { schema; rest } ->
-    let parts = extract_parts rest in
-    let params = To_parameter.convert Spec.Location.Header schema in
-    { parts with parameters = parts.parameters @ params }
-  | Router.Cookie { schema; rest } ->
-    let parts = extract_parts rest in
-    let params = To_parameter.convert Spec.Location.Cookie schema in
-    { parts with parameters = parts.parameters @ params }
-  | Router.Body { input_type; schema; rest } ->
-    let parts = extract_parts rest in
-    let json_schema = schema_to_openapi_schema schema in
-    { parts with body = Some (input_type, json_schema) }
-  | Router.Response_model { schema; status; rest } ->
-    let parts = extract_parts rest in
-    let json_schema = schema_to_openapi_schema schema in
-    { parts with response = Some (status, json_schema) }
-  | Router.Extract { rest; _ } -> extract_parts rest
-  | Router.Meta { rest; _ } -> extract_parts rest
 
 let content_type_of_media_type = function
   | Router.Json -> "application/json"
@@ -325,12 +253,15 @@ let make_media_type json_schema =
     ; encoding = []
     }
 
-let make_request_body description input_type json_schema =
+let make_request_body description media_types json_schema required =
   Spec.Request_body.
     { description
     ; content =
-        [ content_type_of_media_type input_type, make_media_type json_schema ]
-    ; required = Some true
+        List.map
+          (fun media_type ->
+             content_type_of_media_type media_type, make_media_type json_schema)
+          media_types
+    ; required = Some required
     }
 
 let make_responses status json_schema =
@@ -362,12 +293,13 @@ let default_responses =
 let build_operation all_param_refs parts metadata =
   let request_body =
     Option.map
-      (fun (input_type, json_schema) ->
+      (fun (media_types, json_schema) ->
          Spec.Json_schema.Or_ref.Value
            (make_request_body
               metadata.Router.body_description
-              input_type
-              json_schema))
+              media_types
+              json_schema
+              parts.body_required))
       parts.body
   in
   let responses =
@@ -375,6 +307,7 @@ let build_operation all_param_refs parts metadata =
     | Some (status, json_schema) -> make_responses status json_schema
     | None -> default_responses
   in
+  let security = parts.security in
   Spec.Operation.
     { tags = (if metadata.Router.tags = [] then None else Some metadata.tags)
     ; summary = metadata.summary
@@ -386,7 +319,7 @@ let build_operation all_param_refs parts metadata =
     ; responses
     ; callbacks = []
     ; deprecated = false
-    ; security = None
+    ; security
     ; servers = []
     }
 
@@ -419,56 +352,35 @@ let add_operation meth operation item =
   | `TRACE -> { item with trace = Some operation }
   | `PATCH -> { item with patch = Some operation }
   | `Other "*" ->
+    (* A route for a specific method wins at runtime, whatever the order *)
+    let or_any = function
+      | Some _ as specific -> specific
+      | None -> Some operation
+    in
     { item with
-      get = Some operation
-    ; post = Some operation
-    ; put = Some operation
-    ; delete = Some operation
-    ; patch = Some operation
+      get = or_any item.get
+    ; put = or_any item.put
+    ; post = or_any item.post
+    ; delete = or_any item.delete
+    ; options = or_any item.options
+    ; head = or_any item.head
+    ; patch = or_any item.patch
+    ; trace = or_any item.trace
     }
   | `CONNECT | `Other _ -> item
 
-let rec flatten prefix prefix_params routes =
-  List.concat_map
-    (fun route ->
-       match route with
-       | Router.Route { schema; _ } -> [ prefix, prefix_params, Schema schema ]
-       | Router.Scope { prefix = scope_prefix; routes = children; _ } ->
-         let scope_path, scope_params = path_to_string scope_prefix in
-         flatten (prefix ^ scope_path) (prefix_params @ scope_params) children)
-    routes
-
-let generate
-      ?(title = "API")
-      ?(version = "0.0.0")
-      ?description
-      ?(base_path = "")
-      routes
-  =
-  let flat = flatten base_path [] routes in
+let assemble ~components ~title ~version ~description operations =
   let path_map : (string, Spec.Path_item.t) Hashtbl.t = Hashtbl.create 16 in
   List.iter
-    (fun (prefix, prefix_params, Schema schema) ->
-       let metadata = extract_metadata schema in
-       if metadata.include_in_schema
-       then begin
-         let meth, path_str, path_params = get_method_and_path schema in
-         let parts = extract_parts schema in
-         let full_path = prefix ^ path_str in
-         let all_param_refs =
-           List.map
-             (fun p -> Spec.Json_schema.Or_ref.Value p)
-             (prefix_params @ path_params @ parts.parameters)
-         in
-         let operation = build_operation all_param_refs parts metadata in
-         let item =
-           Option.value
-             ~default:empty_path_item
-             (Hashtbl.find_opt path_map full_path)
-         in
-         Hashtbl.replace path_map full_path (add_operation meth operation item)
-       end)
-    flat;
+    (fun (full_path, meth, operation) ->
+       let full_path = if String.equal full_path "" then "/" else full_path in
+       let item =
+         Option.value
+           ~default:empty_path_item
+           (Hashtbl.find_opt path_map full_path)
+       in
+       Hashtbl.replace path_map full_path (add_operation meth operation item))
+    operations;
   let paths =
     Hashtbl.fold
       (fun path item acc -> (path, Spec.Json_schema.Or_ref.Value item) :: acc)
@@ -489,11 +401,362 @@ let generate
   ; servers = []
   ; paths
   ; webhooks = []
-  ; components = None
+  ; components
   ; security = []
   ; tags = []
   ; external_docs = None
   }
+
+module Of_router = struct
+  type parts =
+    { parameters : Spec.Parameter.t Diflist.t
+    ; body : (Router.media_type list * Spec.Json_schema.t) option
+    ; body_optional : bool
+    ; never : bool
+    ; security : string list list
+    ; schemes : (string * Router.Security.scheme) list
+    ; unauthorized : Router.Security.scheme list
+    }
+
+  module Pc = Sch.Sig.Make (struct
+      type 'a t = parts
+    end)
+
+  let empty =
+    { parameters = Diflist.empty
+    ; body = None
+    ; body_optional = false
+    ; never = false
+    ; security = [ [] ]
+    ; schemes = []
+    ; unauthorized = []
+    }
+
+  let unique items =
+    List.rev
+      (List.fold_left
+         (fun acc item -> if List.mem item acc then acc else item :: acc)
+         []
+         items)
+
+  (* Security is kept as an OR of ANDs of scheme names, which is the shape
+     OpenAPI uses. [ [] ] means nothing is required. *)
+  let all_of first second =
+    unique
+      (List.concat_map
+         (fun a ->
+            List.map (fun b -> List.sort_uniq String.compare (a @ b)) second)
+         first)
+
+  (* A body can only be consumed once, so the first one declared is the one that
+     gets the data. *)
+  let combine first second =
+    let with_body = match first.body with Some _ -> first | None -> second in
+    { parameters = Diflist.concat first.parameters second.parameters
+    ; body = with_body.body
+    ; body_optional = with_body.body_optional
+    ; never = first.never || second.never
+    ; security = all_of first.security second.security
+    ; schemes = first.schemes @ second.schemes
+    ; unauthorized = first.unauthorized @ second.unauthorized
+    }
+
+  let pc_applicative : Pc.t Sch.Sig.applicative =
+    { pure = (fun _ -> Pc.inj empty)
+    ; map = (fun _f va -> Pc.inj (Pc.prj va))
+    ; apply = (fun vf va -> Pc.inj (combine (Pc.prj va) (Pc.prj vf)))
+    }
+
+  let of_parameters params =
+    { empty with
+      parameters =
+        List.fold_right
+          (fun p acc -> Diflist.concat (Diflist.single p) acc)
+          params
+          Diflist.empty
+    }
+
+  (* Gates and the block can read the same parameter, but OpenAPI forbids
+     repeating a name and location in one operation. The request fails if any
+     reader requires the parameter, so required wins. *)
+  let same_parameter (a : Spec.Parameter.t) (b : Spec.Parameter.t) =
+    a.in_ = b.in_
+    &&
+    match a.in_ with
+    | Spec.Location.Header -> Sch_ext.CI.equal a.name b.name
+    | _ -> String.equal a.name b.name
+
+  let merge_duplicates params =
+    List.fold_left
+      (fun acc (p : Spec.Parameter.t) ->
+         if List.exists (same_parameter p) acc
+         then
+           List.map
+             (fun (q : Spec.Parameter.t) ->
+                if same_parameter p q
+                then { q with required = q.required || p.required }
+                else q)
+             acc
+         else acc @ [ p ])
+      []
+      params
+
+  (* A parameter is only required by an alternative if every branch requires it.
+     A branch that can't succeed tells callers nothing, so it is ignored. [<|>]
+     allows a body in one branch only, so the other branch succeeds without it.
+     When both branches fail the right error is the one raised, so only the
+     right branch can answer 401. *)
+  let join left right =
+    if left.never
+    then right
+    else if right.never
+    then { left with unauthorized = right.unauthorized }
+    else
+      let lefts = merge_duplicates (Diflist.to_list left.parameters) in
+      let rights = merge_duplicates (Diflist.to_list right.parameters) in
+      let weaken others (p : Spec.Parameter.t) =
+        let required_by_others =
+          List.exists
+            (fun (q : Spec.Parameter.t) -> same_parameter p q && q.required)
+            others
+        in
+        { p with required = p.required && required_by_others }
+      in
+      let only_right =
+        List.filter (fun q -> not (List.exists (same_parameter q) lefts)) rights
+      in
+      { (of_parameters
+           (List.map (weaken rights) lefts @ List.map (weaken lefts) only_right))
+        with
+        body = (match left.body with Some _ -> left.body | None -> right.body)
+      ; body_optional = true
+      ; security = unique (left.security @ right.security)
+      ; schemes = left.schemes @ right.schemes
+      ; unauthorized = right.unauthorized
+      }
+
+  (* Nothing here touches a request: [Extract] contributes nothing, and [Refine]
+     only contributes what its source declares. *)
+  let rec collect : type a. a Router.schemaf -> parts =
+   fun schema -> Pc.prj (Sch.Free.run pc_applicative effect_nat schema)
+
+  and effect_nat : (Router.Schema.schemak, Pc.t) Sch.Sig.nat =
+    { Sch.Sig.run =
+        (fun (type b) (fa : (b, Router.Schema.schemak) Sch.Sig.app) ->
+          let effect_ : b Router.Schema.t = Router.Schema.prj fa in
+          let parts : parts = collect_effect effect_ in
+          (Pc.inj parts : (b, Pc.t) Sch.Sig.app))
+    }
+
+  and collect_effect : type a. a Router.Schema.t -> parts = function
+    | Query schema ->
+      of_parameters (To_parameter.convert Spec.Location.Query schema)
+    | Header schema ->
+      of_parameters (To_parameter.convert Spec.Location.Header schema)
+    | Cookie schema ->
+      of_parameters (To_parameter.convert Spec.Location.Cookie schema)
+    | Body { media_types; schema } ->
+      { empty with body = Some (media_types, schema_to_openapi_schema schema) }
+    | Extract _ -> empty
+    | Secured { name; scheme; _ } ->
+      { empty with
+        security = [ [ name ] ]
+      ; schemes = [ name, scheme ]
+      ; unauthorized = [ scheme ]
+      }
+    | Refine { source; _ } -> collect source
+    | Memo { source; _ } -> collect source
+    | Fail _ -> { empty with never = true }
+    | Alt { left; right } -> join (collect left) (collect right)
+
+  let operation_security = function
+    | [ [] ] -> None
+    | security -> Some (List.map (List.map (fun name -> name, [])) security)
+
+  let www_authenticate challenges ~required =
+    Spec.Header.
+      { description = Some (String.concat ~sep:" or " (unique challenges))
+      ; required = Some required
+      ; deprecated = None
+      ; style = None
+      ; explode = None
+      ; schema =
+          Some
+            (wrap_schema
+               (Spec.Json_schema.of_base
+                  { Json_schema.empty with
+                    type_ = Json_schema.Json_type.string
+                  }))
+      }
+
+  (* The response the router sends when a scheme rejects the request. A declared
+     401 is kept. *)
+  let add_unauthorized schemes (operation : Spec.Operation.t) =
+    let responses = operation.responses in
+    if schemes = [] || List.mem_assoc "401" responses.responses
+    then operation
+    else
+      let challenges = List.filter_map Router.Security.challenge schemes in
+      let headers =
+        match challenges with
+        | [] -> []
+        | challenges ->
+          [ ( "WWW-Authenticate"
+            , Spec.Json_schema.Or_ref.Value
+                (www_authenticate
+                   challenges
+                   ~required:(List.length challenges = List.length schemes)) )
+          ]
+      in
+      let response =
+        Spec.Response.
+          { description = "Unauthorized"; headers; content = []; links = [] }
+      in
+      { operation with
+        responses =
+          { responses with
+            responses =
+              responses.responses
+              @ [ "401", Spec.Json_schema.Or_ref.Value response ]
+          }
+      }
+
+  let rec flatten prefix prefix_params gates routes =
+    List.concat_map
+      (fun route ->
+         match route with
+         | Router.Route { endpoint = Endpoint e; schema; _ } ->
+           if e.meta.include_in_schema
+           then begin
+             let path_str, path_params = path_to_string e.path in
+             let parts = collect (Router.with_gates (gates @ e.gates) schema) in
+             let parameters =
+               merge_duplicates
+                 (prefix_params @ path_params @ Diflist.to_list parts.parameters)
+             in
+             let response =
+               Option.map
+                 (fun (Router.Response_doc { status; schema }) ->
+                    status, schema_to_openapi_schema schema)
+                 e.response
+             in
+             [ ( prefix ^ path_str
+               , e.method_
+               , build_operation
+                   (List.map
+                      (fun p -> Spec.Json_schema.Or_ref.Value p)
+                      parameters)
+                   { body = parts.body
+                   ; body_required = not parts.body_optional
+                   ; response
+                   ; security = operation_security parts.security
+                   }
+                   e.meta
+                 |> add_unauthorized parts.unauthorized
+               , parts.schemes )
+             ]
+           end
+           else []
+         | Router.Scope
+             { prefix = scope_prefix
+             ; routes = children
+             ; gates = scope_gates
+             ; _
+             } ->
+           let scope_path, scope_params = path_to_string scope_prefix in
+           flatten
+             (prefix ^ scope_path)
+             (prefix_params @ scope_params)
+             (gates @ scope_gates)
+             children)
+      routes
+
+  let to_spec_scheme : Router.Security.scheme -> Spec.Security_scheme.t =
+   fun scheme ->
+    let base =
+      Spec.Security_scheme.
+        { type_ = Spec.Security_scheme_type.Http
+        ; description = None
+        ; name = None
+        ; in_ = None
+        ; scheme = None
+        ; bearer_format = None
+        ; flows = None
+        ; open_id_connect_url = None
+        }
+    in
+    match scheme with
+    | Basic _ -> { base with scheme = Some "basic" }
+    | Bearer { format } ->
+      { base with scheme = Some "bearer"; bearer_format = format }
+    | Api_key { name; in_ } ->
+      { base with
+        type_ = Spec.Security_scheme_type.Api_key
+      ; name = Some name
+      ; in_ =
+          Some
+            (match in_ with
+            | `Header -> Spec.Location.Header
+            | `Query -> Spec.Location.Query
+            | `Cookie -> Spec.Location.Cookie)
+      }
+
+  (* A security scheme name identifies one definition across the document *)
+  let components schemes =
+    let schemes =
+      unique (List.map (fun (name, s) -> name, to_spec_scheme s) schemes)
+    in
+    match schemes with
+    | [] -> None
+    | schemes ->
+      List.iter
+        (fun (name, scheme) ->
+           if
+             List.exists
+               (fun (other_name, other) ->
+                  String.equal name other_name && other <> scheme)
+               schemes
+           then
+             invalid_arg
+               (Printf.sprintf
+                  "Openapi: security scheme %S has conflicting definitions"
+                  name))
+        schemes;
+      Some
+        Spec.Component.
+          { schemas = []
+          ; responses = []
+          ; parameters = []
+          ; examples = []
+          ; request_bodies = []
+          ; headers = []
+          ; security_schemes =
+              List.map
+                (fun (name, scheme) ->
+                   name, Spec.Json_schema.Or_ref.Value scheme)
+                schemes
+          ; links = []
+          ; callbacks = []
+          ; path_items = []
+          }
+end
+
+let generate
+      ?(title = "API")
+      ?(version = "0.0.0")
+      ?description
+      ?(base_path = "")
+      routes
+  =
+  let entries = Of_router.flatten base_path [] [] routes in
+  let schemes = List.concat_map (fun (_, _, _, schemes) -> schemes) entries in
+  entries
+  |> List.map (fun (path, meth, operation, _) -> path, meth, operation)
+  |> assemble
+       ~components:(Of_router.components schemes)
+       ~title
+       ~version
+       ~description
 
 let generate_string ?title ?version ?description ?base_path routes =
   let spec = generate ?title ?version ?description ?base_path routes in

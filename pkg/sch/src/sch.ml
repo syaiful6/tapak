@@ -113,8 +113,10 @@ module Json = struct
       | _ -> Validation.Error [ error "Cannot coerce string to this type" ]
 
     let decode ?(lookup = mem_exact) =
-      let is_known =
-        if lookup == mem_ci then mem_is_known_ci else mem_is_known_exact
+      let is_known, known_key =
+        if lookup == mem_ci
+        then mem_is_known_ci, String.lowercase_ascii
+        else mem_is_known_exact, Fun.id
       in
       let rec go : type a. a t -> Jsont.json -> a Validation.t =
        fun codec json ->
@@ -184,12 +186,22 @@ module Json = struct
         | Object { members; unknown; _ } ->
           (match json with
           | Object (mems, _) ->
-            let known = Hashtbl.create 16 in
-            let nat = object_nat mems known in
-            let result = V.prj (Free.run validation_applicative nat members) in
             (match unknown with
-            | Skip -> result
+            | Skip ->
+              V.prj
+                (Free.run
+                   validation_applicative
+                   (object_nat mems ignore)
+                   members)
             | Error_on_unknown ->
+              let known = Hashtbl.create 16 in
+              let nat =
+                object_nat mems (fun name ->
+                  Hashtbl.replace known (known_key name) ())
+              in
+              let result =
+                V.prj (Free.run validation_applicative nat members)
+              in
               let unknown_keys =
                 List.filter (fun (name, _) -> not (is_known known name)) mems
               in
@@ -301,13 +313,13 @@ module Json = struct
                    (String.concat ", " (List.map fst many)))
             ]
       and object_nat : type a.
-        Jsont.object' -> (string, unit) Hashtbl.t -> (a fieldk, V.t) Sig.nat
+        Jsont.object' -> (string -> unit) -> (a fieldk, V.t) Sig.nat
         =
-       fun mems known ->
+       fun mems note_known ->
         { Sig.run =
             (fun (type b) (fa : (b, a fieldk) Sig.app) ->
               let field = Object.prj fa in
-              Hashtbl.replace known field.name ();
+              note_known field.name;
               V.inj
                 (match lookup field.name mems with
                 | Some v ->

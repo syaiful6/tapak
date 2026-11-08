@@ -609,7 +609,7 @@ let routes : Socket_endpoint.t -> Router.route list =
     }
   in
   config.context <- Context.add socket_state_key state config.context;
-  Router.[ get (s "websocket") |> request |> into (handler state config) ]
+  Router.[ get (s "websocket") |> handle_request (handler state config) ]
 
 let shutdown : Socket_endpoint.t -> Socket.t option -> unit =
  fun config msocket ->

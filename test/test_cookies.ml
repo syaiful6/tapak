@@ -111,9 +111,53 @@ let test_set_cookie_with_same_site_none_and_secure_false () =
     "session_id=abc123; Secure; HttpOnly; SameSite=None"
     value
 
+let test_cookie_parse_matches_extract () =
+  let open Tapak.Cookies.Cookie in
+  let check header_values =
+    let headers =
+      Tapak.Headers.of_list (List.map (fun v -> "cookie", v) header_values)
+    in
+    Alcotest.(check (list (pair string string)))
+      (String.concat " | " header_values)
+      (extract headers)
+      (parse headers)
+  in
+  List.iter
+    check
+    [ []
+    ; [ "" ]
+    ; [ "a=1" ]
+    ; [ "a=1; b=2" ]
+    ; [ "a=1;b=2;" ]
+    ; [ "a" ]
+    ; [ "a=" ]
+    ; [ "=b" ]
+    ; [ "a=b=c" ]
+    ; [ " \t a=1 ; b=2 " ]
+    ; [ ";;" ]
+    ; [ "  ;  " ]
+    ; [ "$Version=1; a=1; $Path=/" ]
+    ; [ "a=1"; "b=2" ]
+    ; [ "a=1"; ""; "a=2; c" ]
+    ];
+  let state = Random.State.make [| 42 |] in
+  let tokens = [| "a"; "bc"; "="; ";"; " "; "\t"; "$"; "%20"; "\""; "," |] in
+  for _ = 1 to 2000 do
+    let value () =
+      String.concat
+        ""
+        (List.init (Random.State.int state 8) (fun _ ->
+           tokens.(Random.State.int state (Array.length tokens))))
+    in
+    check (List.init (1 + Random.State.int state 2) (fun _ -> value ()))
+  done
+
 let tests =
   [ ( "Cookies"
-    , [ "Set-Cookie header generation", `Quick, test_set_cookie
+    , [ ( "Cookie.parse matches extract"
+        , `Quick
+        , test_cookie_parse_matches_extract )
+      ; "Set-Cookie header generation", `Quick, test_set_cookie
       ; "Set-Cookie with expiration", `Quick, test_set_cookie_with_expires
       ; "Set-Cookie with path", `Quick, test_set_cookie_with_path
       ; "Set-Cookie with domain", `Quick, test_set_cookie_with_domain

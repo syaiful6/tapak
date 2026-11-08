@@ -1,3 +1,22 @@
+(** Type-safe routing.
+
+    A route combines an {!endpoint} (method, path, and documentation) with a
+    {!schemaf}, which describes the values to read from the request. The schema
+    returns the handler; path captures are passed as its final arguments:
+
+    {[
+      get (s "users" / int64)
+      |> summary "Get a user"
+      >>
+      let+ page = query page_schema
+      and+ _ = secured (bearer verify) in
+      fun id -> show_user page id
+    ]}
+
+    Routes are also used to generate the OpenAPI document. *)
+
+(** {1 Errors} *)
+
 exception Not_found
 exception Bad_request of string
 exception Validation_failed of (string * string) list
@@ -8,19 +27,9 @@ exception Extraction_failed of extractor_error
 
 type 'a extractor = Request.t -> ('a, extractor_error) result
 
-type media_type =
-  | Json
-  | Urlencoded
-  | Multipart
+val validation_error_to_json : (string * string) list -> Jsont.json
 
-type metadata =
-  { operation_id : string option
-  ; summary : string option
-  ; description : string option
-  ; tags : string list
-  ; body_description : string option
-  ; include_in_schema : bool
-  }
+(** {1 Paths} *)
 
 type (_, _) path =
   | Nil : ('a, 'a) path
@@ -50,66 +59,15 @@ type (_, _) path =
       -> ('a, 'b) path
   | Splat : ('a, 'b) path -> (string list -> 'a, 'b) path
 
-type (_, _) schema =
-  | Method : Http.Method.t * ('a, 'b) path -> ('a, 'b) schema
-  | Query :
-      { schema : 'query Sch.t
-      ; rest : ('a, 'b) schema
-      }
-      -> ('query -> 'a, 'b) schema
-  | Header :
-      { schema : 'header Sch.t
-      ; rest : ('a, 'b) schema
-      }
-      -> ('header -> 'a, 'b) schema
-  | Cookie :
-      { schema : 'cookie Sch.t
-      ; rest : ('a, 'b) schema
-      }
-      -> ('cookie -> 'a, 'b) schema
-  | Response_model :
-      { schema : 'resp Sch.t
-      ; status : Http.Status.t
-      ; rest : ('a, 'resp) schema
-      }
-      -> ('a, Response.t) schema
-  | Body :
-      { input_type : media_type
-      ; schema : 'validated Sch.t
-      ; rest : ('a, 'b) schema
-      }
-      -> ('validated -> 'a, 'b) schema
-  | Extract :
-      { extractor : 'g extractor
-      ; rest : ('a, 'b) schema
-      }
-      -> ('g -> 'a, 'b) schema
-  | Meta :
-      { meta : metadata
-      ; rest : ('a, 'b) schema
-      }
-      -> ('a, 'b) schema
-
-type route =
-  | Route :
-      { schema : ('a, Response.t) schema
-      ; handler : 'a
-      ; middlewares : Middleware.t list
-      }
-      -> route
-  | Scope :
-      { prefix : ('a, 'a) path
-      ; routes : route list
-      ; middlewares : Middleware.t list
-      }
-      -> route
-
 val int : (int -> 'a, 'a) path
 val int32 : (int32 -> 'a, 'a) path
 val int64 : (int64 -> 'a, 'a) path
 val str : (string -> 'a, 'a) path
 val bool : (bool -> 'a, 'a) path
 val splat : (string list -> 'a, 'a) path
+val slug : (string -> 'a, 'a) path
+val s : string -> ('a, 'a) path
+val ( / ) : ('a, 'c) path -> ('c, 'b) path -> ('a, 'b) path
 
 val custom :
    parse:(off:int -> len:int -> string -> 'param option)
@@ -128,75 +86,272 @@ val enum :
   -> unit
   -> ('param -> 'a, 'a) path
 
-val slug : (string -> 'a, 'a) path
-val s : string -> ('a, 'a) path
-val ( / ) : ('a, 'c) path -> ('c, 'b) path -> ('a, 'b) path
-val get : ('a, 'b) path -> ('a, 'b) schema
-val post : ('a, 'b) path -> ('a, 'b) schema
-val put : ('a, 'b) path -> ('a, 'b) schema
-val patch : ('a, 'b) path -> ('a, 'b) schema
-val delete : ('a, 'b) path -> ('a, 'b) schema
-val head : ('a, 'b) path -> ('a, 'b) schema
-val any : ('a, 'b) path -> ('a, 'b) schema
-val body : media_type -> 'a Sch.t -> ('b, 'c) schema -> ('a -> 'b, 'c) schema
-val query : 'query Sch.t -> ('a, 'b) schema -> ('query -> 'a, 'b) schema
-val header : 'a Sch.t -> ('b, 'c) schema -> ('a -> 'b, 'c) schema
-val cookie : 'a Sch.t -> ('b, 'c) schema -> ('a -> 'b, 'c) schema
-val extract : 'g extractor -> ('a, 'b) schema -> ('g -> 'a, 'b) schema
-val request : ('a, 'b) schema -> (Request.t -> 'a, 'b) schema
-val unit : ('a, 'b) schema -> (unit -> 'a, 'b) schema
+val p : string -> ('a, 'b) path -> ('a, 'b) path
+(** [p name path] names a capture in the generated OpenAPI document. *)
+
+val ann : string * string -> ('a, 'b) path -> ('a, 'b) path
+(** [ann (name, description) path] is {!p} with a description. *)
+
+val sprintf : ('a, string) path -> 'a
+(** [sprintf path] builds a URL from the same path value a route matches. *)
+
+(** {1 Security} *)
+
+module Security : sig
+  type scheme =
+    | Basic of { realm : string }
+    | Bearer of { format : string option }
+    | Api_key of
+        { name : string
+        ; in_ : Security_api_key.location
+        }
+
+  type reason =
+    | Missing
+    | Malformed
+    | Invalid
+
+  type extractor_error += Unauthorized of scheme * reason
+
+  type 'a t
+  (** A security value contains both its parser and its OpenAPI description. *)
+
+  val scheme : 'a t -> scheme
+
+  val challenge : scheme -> string option
+  (** The [WWW-Authenticate] value for a 401 response, if the scheme has one. *)
+end
+
+(** Verification functions identify the caller. [None] produces a 401 response.
+    Use {!refine} with a separate error to reject an identified caller. *)
+
+val basic :
+   ?realm:string
+  -> (username:string -> password:string -> 'a option)
+  -> 'a Security.t
+
+val bearer : ?format:string -> (string -> 'a option) -> 'a Security.t
+
+val api_key :
+   in_:Security_api_key.location
+  -> string
+  -> (string -> 'a option)
+  -> 'a Security.t
+
+(** {1 Schemas} *)
+
+type media_type =
+  | Json
+  | Urlencoded
+  | Multipart
+
+module Schema : sig
+  type schemak
+  type 'a schemaf = (schemak, 'a) Sch.Free.t
+
+  type _ t =
+    | Query : 'query Sch.t -> 'query t
+    | Header : 'header Sch.t -> 'header t
+    | Cookie : 'cookie Sch.t -> 'cookie t
+    | Body :
+        { media_types : media_type list
+        ; schema : 'v Sch.t
+        }
+        -> 'v t
+    | Extract : 'a extractor -> 'a t
+    | Secured :
+        { name : string
+        ; scheme : Security.scheme
+        ; extractor : 'a extractor
+        }
+        -> 'a t
+    | Refine :
+        { source : 'a schemaf
+        ; check : 'a -> ('b, extractor_error) result
+        }
+        -> 'b t
+    | Alt :
+        { left : 'a schemaf
+        ; right : 'a schemaf
+        }
+        -> 'a t
+    | Fail : extractor_error -> 'a t
+    | Memo :
+        { key : 'a Context.key
+        ; source : 'a schemaf
+        }
+        -> 'a t
+
+  val prj : ('a, schemak) Sch.Sig.app -> 'a t
+end
+
+type 'a schemaf = 'a Schema.schemaf
+
+val pure : 'a -> 'a schemaf
+val map : ('a -> 'b) -> 'a schemaf -> 'b schemaf
+val void : 'a schemaf -> unit schemaf
+val ( <*> ) : ('a -> 'b) schemaf -> 'a schemaf -> 'b schemaf
+val ( let+ ) : 'a schemaf -> ('a -> 'b) -> 'b schemaf
+val ( and+ ) : 'a schemaf -> 'b schemaf -> ('a * 'b) schemaf
+val query : 'a Sch.t -> 'a schemaf
+val header : 'a Sch.t -> 'a schemaf
+val cookie : 'a Sch.t -> 'a schemaf
+val body : media_type -> 'a Sch.t -> 'a schemaf
+
+val body_of : media_type list -> 'a Sch.t -> 'a schemaf
+(** Like {!body}, with the request's content type picking the decoder.
+
+    @raise Invalid_argument if the list is empty. *)
+
+val extract : 'a extractor -> 'a schemaf
+val request : Request.t schemaf
+
+val secured : ?name:string -> 'a Security.t -> 'a schemaf
+(** [name] identifies the scheme in the OpenAPI document. *)
+
+val refine : ('a -> ('b, extractor_error) result) -> 'a schemaf -> 'b schemaf
+val fail : extractor_error -> 'a schemaf
+
+val memo : 'a schemaf -> 'a schemaf
+(** Runs the source at most once per request. Each call creates its own cache
+    entry, so sharing means reusing the value. *)
+
+val ( <|> ) : 'a schemaf -> 'a schemaf -> 'a schemaf
+(** [left <|> right] runs [right] if [left] fails validation or extraction.
+    Other exceptions propagate. If both branches fail, [right]'s error is
+    raised. Effects from [left] are not rolled back.
+
+    A body stream can't be re-read, so a body isn't retryable. To accept several
+    body shapes, use a union in a single {!Sch.t}.
+
+    @raise Invalid_argument if both branches read the body. *)
+
+(** {1 Endpoints} *)
+
+type metadata =
+  { operation_id : string option
+  ; summary : string option
+  ; description : string option
+  ; tags : string list
+  ; body_description : string option
+  ; include_in_schema : bool
+  }
+
+type response_doc =
+  | Response_doc :
+      { status : Http.Status.t
+      ; schema : 'resp Sch.t
+      }
+      -> response_doc
+
+type ('f, 'res) endpoint =
+  | Endpoint :
+      { method_ : Http.Method.t
+      ; path : ('f, 'r) path
+      ; finish : 'r -> 'res
+      ; gates : unit schemaf list
+      ; response : response_doc option
+      ; meta : metadata
+      }
+      -> ('f, 'res) endpoint
+
+val get : ('f, 'r) path -> ('f, 'r) endpoint
+val head : ('f, 'r) path -> ('f, 'r) endpoint
+val post : ('f, 'r) path -> ('f, 'r) endpoint
+val put : ('f, 'r) path -> ('f, 'r) endpoint
+val patch : ('f, 'r) path -> ('f, 'r) endpoint
+val delete : ('f, 'r) path -> ('f, 'r) endpoint
+val any : ('f, 'r) path -> ('f, 'r) endpoint
+
+val gate : 'a schemaf -> ('f, 'res) endpoint -> ('f, 'res) endpoint
+(** Runs [source] before the route's schema and drops its value. *)
 
 val response_model :
    status:Http.Status.t
   -> schema:'resp Sch.t
-  -> ('a, 'resp) schema
-  -> ('a, Response.t) schema
+  -> ('f, 'resp) endpoint
+  -> ('f, Response.t) endpoint
 
-val into : 'a -> ('a, Response.t) schema -> route
-val recover : (Request.t -> exn -> Response.t option) -> route -> route
-val operation_id : string -> ('a, 'b) schema -> ('a, 'b) schema
-val summary : string -> ('a, 'b) schema -> ('a, 'b) schema
-val description : string -> ('a, 'b) schema -> ('a, 'b) schema
-val tags : string list -> ('a, 'b) schema -> ('a, 'b) schema
-val tag : string -> ('a, 'b) schema -> ('a, 'b) schema
-val include_in_schema : bool -> ('a, 'b) schema -> ('a, 'b) schema
-val p : string -> ('a, 'b) path -> ('a, 'b) path
-val ann : string * string -> ('a, 'b) path -> ('a, 'b) path
-val sprintf : ('a, string) path -> 'a
-val get_method : ('a, 'b) schema -> Http.Method.t
+val operation_id : string -> ('f, 'res) endpoint -> ('f, 'res) endpoint
+val summary : string -> ('f, 'res) endpoint -> ('f, 'res) endpoint
+val description : string -> ('f, 'res) endpoint -> ('f, 'res) endpoint
+val tags : string list -> ('f, 'res) endpoint -> ('f, 'res) endpoint
+val tag : string -> ('f, 'res) endpoint -> ('f, 'res) endpoint
+val include_in_schema : bool -> ('f, 'res) endpoint -> ('f, 'res) endpoint
+
+(** {1 Routes} *)
+
+type route =
+  | Route :
+      { endpoint : ('f, Response.t) endpoint
+      ; schema : 'f schemaf
+      ; middlewares : Middleware.t list
+      }
+      -> route
+  | Scope :
+      { prefix : ('a, 'a) path
+      ; routes : route list
+      ; gates : unit schemaf list
+      ; middlewares : Middleware.t list
+      }
+      -> route
+
+val handle : 'f schemaf -> ('f, Response.t) endpoint -> route
+
+val ( >> ) : ('f, Response.t) endpoint -> 'f schemaf -> route
+(** [endpoint >> schema] is [handle schema endpoint]. *)
+
+val handle_request : (Request.t -> 'f) -> ('f, Response.t) endpoint -> route
+(** Routes the request to a plain handler, called once per request. *)
 
 val scope :
    ?middlewares:Middleware.t list
+  -> ?gates:unit schemaf list
   -> ('a, 'a) path
   -> route list
   -> route
 
-module type Resource = sig
-  type id
+val recover : (Request.t -> exn -> Response.t option) -> route -> route
 
-  val id_path : unit -> (id -> 'a, 'a) path
-  val index : Handler.t
-  val new_ : Handler.t
-  val create : Handler.t
-  val get : Request.t -> id -> Response.t
-  val edit : Request.t -> id -> Response.t
-  val update : Request.t -> id -> Response.t
-  val delete : Request.t -> id -> Response.t
-end
+val with_gates : unit schemaf list -> 'a schemaf -> 'a schemaf
+(** The schema a route runs: [gates] in order, then [schema]. *)
 
-val resource :
-   ?middlewares:Middleware.t list
-  -> ('a, 'a) path
-  -> (module Resource)
-  -> route
+(** {1 Dispatch}
 
-val validation_error_to_json : (string * string) list -> Jsont.json
+    The router chooses one route. If a capture fails to parse, it returns 404
+    instead of trying another route. Router construction therefore rejects
+    overlapping routes that would be unreachable or ambiguous in the OpenAPI
+    document. {!any} overlaps every method. Conflicts include:
 
-val match' : route list -> Request.t -> Response.t option
-(** [match' routes req] matches the request against the given routes and returns the
-    response if a match is found. If no match is found, returns [None]. *)
+    - two routes with the same method and path shape, such as [/u/int] and
+      [/u/slug];
+    - a method and {!any} on the same shape with different parsers. With the
+      same parsers they're fine, and the method's route wins;
+    - a capture and a splat at one position, such as [/x/int/y] and [/x/splat];
+    - segments after a splat, whatever the method.
 
-val of_list : ?not_found:Handler.t -> route list -> Handler.t
-(** [of_list ~not_found routes] creates a handler that dispatches to the given
-    routes. If no route matches, the [not_found] handler is called instead of
-    raising an exception. Default [not_found] returns a 404 "Not Found" response. *)
+    Literals may coexist with captures and splats. Different methods may parse
+    the same path differently. Parsers are compared by physical identity, so two
+    {!custom} calls count as different parsers unless they reuse the same value. *)
+
+val match' :
+   ?unauthorized:(Request.t -> Security.scheme -> Security.reason -> Response.t)
+  -> route list
+  -> Request.t
+  -> Response.t option
+(** [match' routes req] is the response of the matching route, if there is one.
+
+    @raise Invalid_argument when applied to conflicting [routes]. *)
+
+val of_list :
+   ?not_found:Handler.t
+  -> ?unauthorized:
+       (Request.t -> Security.scheme -> Security.reason -> Response.t)
+  -> route list
+  -> Handler.t
+(** [of_list routes] dispatches requests to [routes]. [not_found] handles
+    unmatched requests and defaults to 404. [unauthorized] handles failures from
+    {!secured} schemas and defaults to 401. The router adds the scheme's
+    [WWW-Authenticate] challenge unless the response already contains one.
+
+    @raise Invalid_argument if [routes] conflict. *)
