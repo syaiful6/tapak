@@ -332,7 +332,24 @@ val with_gates : unit schemaf list -> 'a schemaf -> 'a schemaf
 
     Literals may coexist with captures and splats. Different methods may parse
     the same path differently. Parsers are compared by physical identity, so two
-    {!custom} calls count as different parsers unless they reuse the same value. *)
+    {!custom} calls count as different parsers unless they reuse the same value.
+
+    A literal is tried before a capture, and a capture before a splat. When a
+    branch has no route for the request method, the next branch is tried, so
+    [POST /users/new] can reach [post (s "users" / str)] beside
+    [get (s "users" / s "new")].
+
+    When the path is known but no route accepts the method:
+
+    - [HEAD] runs the [GET] route (or {!any}) and drops the body;
+    - [OPTIONS] answers 204 with an [Allow] header;
+    - any other method gets 405 with an [Allow] header.
+
+    [Allow] lists the methods of every route the path reaches, plus [HEAD] when
+    [GET] is present and always [OPTIONS]. These responses don't run the
+    middlewares of any route, so a CORS middleware must wrap the router to see
+    preflight requests. A {!head} or {!any} route takes precedence over the
+    automatic handling. *)
 
 val match' :
    ?unauthorized:(Request.t -> Security.scheme -> Security.reason -> Response.t)
@@ -350,7 +367,8 @@ val of_list :
   -> route list
   -> Handler.t
 (** [of_list routes] dispatches requests to [routes]. [not_found] handles
-    unmatched requests and defaults to 404. [unauthorized] handles failures from
+    requests whose path matches no route and defaults to 404; a known path with
+    an unsupported method gets 405 instead. [unauthorized] handles failures from
     {!secured} schemas and defaults to 401. The router adds the scheme's
     [WWW-Authenticate] challenge unless the response already contains one.
 
