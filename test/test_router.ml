@@ -283,16 +283,19 @@ let test_recover_catches_gate_failure () =
     (Http.Status.to_int (Response.status response));
   check_body "recovered body" "denied" response
 
-let test_match_returns_none () =
+let test_match_none_or_405 () =
   let routes = [ get (s "a") >> pure (Response.of_string "a") ] in
   Alcotest.(check bool)
     "unknown path"
     true
     (Option.is_none (match' routes (make_request "/b")));
-  Alcotest.(check bool)
-    "wrong method"
-    true
-    (Option.is_none (match' routes (make_request ~meth:`POST "/a")))
+  match match' routes (make_request ~meth:`POST "/a") with
+  | Some response ->
+    Alcotest.(check int)
+      "wrong method"
+      405
+      (Http.Status.to_int (Response.status response))
+  | None -> Alcotest.fail "known path should return 405"
 
 (* Mirrors a real API: every route needs the guard, few care about the user *)
 let test_gated_scope_with_recover () =
@@ -1007,8 +1010,16 @@ let test_method_mismatch () =
   in
   let request = make_request ~meth:`GET "/users" in
   match match' [ route ] request with
-  | Some _ -> Alcotest.fail "GET should not match POST route"
-  | None -> ()
+  | Some response ->
+    Alcotest.(check int)
+      "known path returns method not allowed"
+      405
+      (Http.Status.to_int (Response.status response));
+    Alcotest.(check (option string))
+      "Allow header"
+      (Some "POST, OPTIONS")
+      (Response.header "Allow" response)
+  | None -> Alcotest.fail "known path should return 405"
 
 let test_sprintf_simple () =
   let pattern = s "users" in
@@ -2406,6 +2417,147 @@ let test_strict_header_schema_with_uppercase_field () =
     "validation_failed"
     (run_outcome routes (request [ "x-key", "k"; "x-other", "v" ]))
 
+let status_of response = Http.Status.to_int (Response.status response)
+
+let expect_response routes request =
+  match match' routes request with
+  | Some response -> response
+  | None -> Alcotest.fail "expected a response"
+
+let check_allow name expected response =
+  Alcotest.(check (option string))
+    name
+    expected
+    (Response.header "Allow" response)
+
+let test_head_falls_back_to_get () =
+  let routes =
+    [ get (s "a")
+      |> handle_request (fun _ ->
+        Response.of_string ~headers:(Headers.of_list [ "x-get", "1" ]) "body")
+    ]
+  in
+  let response = expect_response routes (make_request ~meth:`HEAD "/a") in
+  Alcotest.(check int) "status" 200 (status_of response);
+  check_body "body stripped" "" response;
+  Alcotest.(check (option string))
+    "GET headers kept"
+    (Some "1")
+    (Response.header "x-get" response)
+
+let test_explicit_head_wins () =
+  let routes =
+    [ get (s "a") |> handle_request (fun _ -> Response.of_string "get")
+    ; head (s "a")
+      |> handle_request (fun _ ->
+        Response.of_string ~headers:(Headers.of_list [ "x-head", "1" ]) "")
+    ]
+  in
+  let response = expect_response routes (make_request ~meth:`HEAD "/a") in
+  Alcotest.(check (option string))
+    "HEAD handler ran"
+    (Some "1")
+    (Response.header "x-head" response)
+
+let test_head_on_any_strips_body () =
+  let routes =
+    [ any (s "a") |> handle_request (fun _ -> Response.of_string "x") ]
+  in
+  let response = expect_response routes (make_request ~meth:`HEAD "/a") in
+  Alcotest.(check int) "status" 200 (status_of response);
+  check_body "body stripped" "" response
+
+let test_automatic_options () =
+  let routes =
+    [ get (s "a") |> handle_request (fun _ -> Response.of_string "get")
+    ; delete (s "a") |> handle_request (fun _ -> Response.of_string "del")
+    ]
+  in
+  let response = expect_response routes (make_request ~meth:`OPTIONS "/a") in
+  Alcotest.(check int) "status" 204 (status_of response);
+  check_body "empty body" "" response;
+  check_allow "Allow" (Some "GET, HEAD, DELETE, OPTIONS") response
+
+let test_any_handles_options () =
+  let routes =
+    [ any (s "a") |> handle_request (fun _ -> Response.of_string "any") ]
+  in
+  let response = expect_response routes (make_request ~meth:`OPTIONS "/a") in
+  Alcotest.(check int) "status" 200 (status_of response);
+  check_body "any handler ran" "any" response
+
+let test_options_unknown_path () =
+  let routes =
+    [ get (s "a") |> handle_request (fun _ -> Response.of_string "a") ]
+  in
+  Alcotest.(check bool)
+    "unknown path stays a miss"
+    true
+    (Option.is_none (match' routes (make_request ~meth:`OPTIONS "/b")))
+
+let test_wrong_method_tries_capture () =
+  let routes =
+    [ get (s "users" / s "new")
+      |> handle_request (fun _ -> Response.of_string "new")
+    ; post (s "users" / str)
+      |> handle_request (fun _ id -> Response.of_string ~status:`Created id)
+    ]
+  in
+  let response =
+    expect_response routes (make_request ~meth:`POST "/users/new")
+  in
+  Alcotest.(check int) "capture route ran" 201 (status_of response);
+  check_body "captured" "new" response
+
+let test_wrong_method_tries_splat () =
+  let routes =
+    [ get (s "spa" / s "health")
+      |> handle_request (fun _ -> Response.of_string "ok")
+    ; any (s "spa" / splat)
+      |> handle_request (fun _ _ -> Response.of_string "spa")
+    ]
+  in
+  let response =
+    expect_response routes (make_request ~meth:`POST "/spa/health")
+  in
+  check_body "splat route ran" "spa" response
+
+let test_allow_unions_branches () =
+  let routes =
+    [ get (s "users" / s "new")
+      |> handle_request (fun _ -> Response.of_string "new")
+    ; put (s "users" / str)
+      |> handle_request (fun _ _ -> Response.of_string "put")
+    ]
+  in
+  let response =
+    expect_response routes (make_request ~meth:`DELETE "/users/new")
+  in
+  Alcotest.(check int) "status" 405 (status_of response);
+  check_allow "Allow" (Some "GET, HEAD, PUT, OPTIONS") response;
+  let response =
+    expect_response routes (make_request ~meth:`DELETE "/users/42")
+  in
+  check_allow "capture only" (Some "PUT, OPTIONS") response
+
+let test_405_bypasses_route_middlewares () =
+  let ran = ref false in
+  let mw : Middleware.t =
+   fun next req ->
+    ran := true;
+    next req
+  in
+  let routes =
+    [ scope
+        ~middlewares:[ mw ]
+        (s "api")
+        [ get (s "a") |> handle_request (fun _ -> Response.of_string "a") ]
+    ]
+  in
+  let response = expect_response routes (make_request ~meth:`POST "/api/a") in
+  Alcotest.(check int) "status" 405 (status_of response);
+  Alcotest.(check bool) "route middleware not run" false !ran
+
 let tests =
   [ "Simple route", `Quick, test_simple_route
   ; "Int64 parameter", `Quick, test_int64_param
@@ -2413,6 +2565,18 @@ let tests =
   ; "No match", `Quick, test_no_match
   ; "POST method", `Quick, test_post_method
   ; "Method mismatch", `Quick, test_method_mismatch
+  ; "HEAD falls back to GET", `Quick, test_head_falls_back_to_get
+  ; "Explicit HEAD wins", `Quick, test_explicit_head_wins
+  ; "HEAD on any strips body", `Quick, test_head_on_any_strips_body
+  ; "Automatic OPTIONS", `Quick, test_automatic_options
+  ; "any handles OPTIONS", `Quick, test_any_handles_options
+  ; "OPTIONS on unknown path", `Quick, test_options_unknown_path
+  ; "Wrong method tries capture", `Quick, test_wrong_method_tries_capture
+  ; "Wrong method tries splat", `Quick, test_wrong_method_tries_splat
+  ; "Allow unions branches", `Quick, test_allow_unions_branches
+  ; ( "405 bypasses route middlewares"
+    , `Quick
+    , test_405_bypasses_route_middlewares )
   ; "sprintf simple", `Quick, test_sprintf_simple
   ; "sprintf int64", `Quick, test_sprintf_int64
   ; "sprintf multiple", `Quick, test_sprintf_multiple
@@ -2493,7 +2657,7 @@ let tests =
     , test_body_request_and_response_model )
   ; "Sprintf shares path", `Quick, test_sprintf_shares_path
   ; "Recover catches gate failure", `Quick, test_recover_catches_gate_failure
-  ; "match' returns None", `Quick, test_match_returns_none
+  ; "match' returns None or 405", `Quick, test_match_none_or_405
   ; "Gated scope with recover", `Quick, test_gated_scope_with_recover
   ; "<|> uses first success", `Quick, test_alt_uses_first_success
   ; "<|> raises right error", `Quick, test_alt_raises_right_error

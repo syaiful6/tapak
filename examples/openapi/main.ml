@@ -297,7 +297,6 @@ let app env =
                (module Middleware.Request_logger)
                (Middleware.Request_logger.args ~now ~trusted_proxies:[] ())
            ; error_handler
-           ; Middleware.head
            ])
 
 let () =

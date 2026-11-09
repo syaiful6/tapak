@@ -1081,6 +1081,17 @@ module Trie = struct
     check_captures_beside_splats trie;
     trie
 
+  let select_route method_ handlers =
+    match Method_map.find_opt method_ handlers with
+    | Some _ as route -> route
+    | None ->
+      let get =
+        if method_ = `HEAD then Method_map.find_opt `GET handlers else None
+      in
+      (match get with
+      | Some _ -> get
+      | None -> Method_map.find_opt any_method handlers)
+
   let rec match_trie cursor method_ trie =
     let first_some option fallback =
       match option with Some _ -> option | None -> fallback ()
@@ -1092,10 +1103,7 @@ module Trie = struct
       | None -> None
     in
     match Path_cursor.next cursor with
-    | None ->
-      first_some (Method_map.find_opt method_ trie.handlers) (fun () ->
-        (* Fall back to "any" method handler *)
-        first_some (Method_map.find_opt any_method trie.handlers) try_splat)
+    | None -> first_some (select_route method_ trie.handlers) try_splat
     | Some (span, rest_cursor) ->
       let try_capture () =
         match trie.capture with
@@ -1110,12 +1118,71 @@ module Trie = struct
         first_some (match_trie rest_cursor method_ child) try_capture
       | None -> try_capture ())
 
+  let rec collect_methods cursor trie acc =
+    let from_splat acc =
+      match trie.splat with
+      | Some splat_child ->
+        collect_methods (Path_cursor.create "") splat_child acc
+      | None -> acc
+    in
+    match Path_cursor.next cursor with
+    | None ->
+      Method_map.fold (fun m _ acc -> Method_map.add m () acc) trie.handlers acc
+      |> from_splat
+    | Some (span, rest_cursor) ->
+      let off = Span.off span in
+      let len = Span.len span in
+      let acc =
+        match find_by_span ~path:rest_cursor.path ~off ~len trie.literals with
+        | Some child -> collect_methods rest_cursor child acc
+        | None -> acc
+      in
+      let acc =
+        match trie.capture with
+        | Some capt_child -> collect_methods rest_cursor capt_child acc
+        | None -> acc
+      in
+      from_splat acc
+
+  let allow_header methods =
+    let methods = Method_map.remove any_method methods in
+    let methods =
+      if Method_map.mem `GET methods
+      then Method_map.add `HEAD () methods
+      else methods
+    in
+    Method_map.add `OPTIONS () methods
+    |> Method_map.bindings
+    |> List.map (fun (m, ()) -> Http.Method.to_string m)
+    |> String.concat ", "
+
+  let no_route target method_ trie =
+    let methods =
+      collect_methods (Path_cursor.create target) trie Method_map.empty
+    in
+    if Method_map.is_empty methods then raise Not_found;
+    let allow = allow_header methods in
+    let response =
+      if method_ = `OPTIONS
+      then Response.make ~status:`No_content Body.empty
+      else Response.of_string ~status:`Method_not_allowed "Method Not Allowed"
+    in
+    Response.add_header_unless_exists "Allow" allow response
+
   let router' ~unauthorized trie request =
     let target = Request.target request in
-    match
-      match_trie (Path_cursor.create target) (Request.meth request) trie
-    with
-    | Some (Flat_route { path; finish; run; middlewares; prefix_len; _ }) ->
+    let method_ = Request.meth request in
+    match match_trie (Path_cursor.create target) method_ trie with
+    | Some
+        (Flat_route
+           { method_ = route_method
+           ; path
+           ; finish
+           ; run
+           ; middlewares
+           ; prefix_len
+           ; _
+           }) ->
       let cursor = Path_cursor.create target |> Path_cursor.skip prefix_len in
       let service request =
         match match_path path cursor with
@@ -1123,10 +1190,15 @@ module Trie = struct
         | None -> raise Not_found
       in
       (* Outside the route's middlewares, so [recover] gets the first chance *)
-      (try Middleware.apply_all middlewares service request with
-      | Extraction_failed (Security.Unauthorized (scheme, reason)) ->
-        Security.with_challenge scheme (unauthorized request scheme reason))
-    | None -> raise Not_found
+      let response =
+        try Middleware.apply_all middlewares service request with
+        | Extraction_failed (Security.Unauthorized (scheme, reason)) ->
+          Security.with_challenge scheme (unauthorized request scheme reason)
+      in
+      if method_ = `HEAD && route_method <> `HEAD
+      then Response.with_ ~body:Body.empty response
+      else response
+    | None -> no_route target method_ trie
 
   let router ~unauthorized routes =
     let trie = compile routes in

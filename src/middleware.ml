@@ -23,5 +23,3 @@ end
 
 module Request_logger = Middleware_logger
 module CORS = Middleware_cors
-
-let head = Middleware_head.m
