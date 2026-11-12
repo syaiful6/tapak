@@ -54,9 +54,17 @@ let reader_of_flow
       (flow : _ Eio.Flow.source)
   =
   let buf_size = Bytes.Slice.check_length slice_length in
-  let cstruct = Cstruct.create buf_size in
-  let bytes = Stdlib.Bytes.create buf_size in
+  let buffers = ref None in
+  let get_buffers () =
+    match !buffers with
+    | Some b -> b
+    | None ->
+      let b = Cstruct.create buf_size, Stdlib.Bytes.create buf_size in
+      buffers := Some b;
+      b
+  in
   let read () =
+    let cstruct, bytes = get_buffers () in
     match Eio.Flow.single_read flow cstruct with
     | 0 -> Bytes.Slice.eod
     | count ->
@@ -70,8 +78,7 @@ let reader_of_stream stream =
   let read () =
     match Eio.Stream.take stream with
     | Some str ->
-      (* we use unsafe here, safe, since that how Bytes.Reader expects the
-         buffer to be used, and we won't modify it *)
+      (* [Bytes.Reader] accepts this shared buffer, and we do not modify it. *)
       let buf = Bytes.unsafe_of_string str in
       Bytes.Slice.of_bytes buf
     | None -> Bytes.Slice.eod
@@ -105,8 +112,7 @@ let chunked_writer : ?write_footer:bool -> unit -> Bytes.Writer.filter =
       if write_footer then Bytes.Writer.write_string w "0\r\n\r\n";
       if eod then Bytes.Writer.write_eod w)
     else begin
-      (* bytesrw guarantees that the slice written here is non empty, so we can
-         just write it without checking chunk_size <> 0 *)
+      (* bytesrw guarantees a non-empty slice here. *)
       let chunk_size = Bytes.Slice.length slice in
       let chunk_header = Printf.sprintf "%x\r\n" chunk_size in
       Bytes.Writer.write_string w chunk_header;
