@@ -2210,6 +2210,67 @@ let constraint_tests =
   ; "decode through schema", `Quick, test_constraint_decode_through_schema
   ]
 
+(* Field order: every interpreter must follow declaration order *)
+type ordered =
+  { a : int
+  ; b : string
+  ; c : bool
+  ; d : int
+  }
+
+let ordered_schema =
+  Sch.Object.(
+    define
+    @@ let+ a = mem "a" Sch.int ~enc:(fun r -> r.a)
+       and+ b = mem "b" Sch.string ~enc:(fun r -> r.b)
+       and+ c = mem "c" Sch.bool ~enc:(fun r -> r.c)
+       and+ d = mem ~default:0 "d" Sch.int ~enc:(fun r -> r.d) in
+       { a; b; c; d })
+
+let ordered_value = { a = 1; b = "x"; c = true; d = 4 }
+
+let test_order_encode_string () =
+  Alcotest.(check string)
+    "writer emits fields in declaration order"
+    {|{"a":1,"b":"x","c":true,"d":4}|}
+    (Sch.Json.encode_string ordered_schema ordered_value)
+
+let test_order_encode_tree () =
+  match Sch.Json.encode ordered_schema ordered_value with
+  | Jsont.Object (members, _) ->
+    Alcotest.(check (list string))
+      "tree encoder emits fields in declaration order"
+      [ "a"; "b"; "c"; "d" ]
+      (List.map (fun ((name, _), _) -> name) members)
+  | _ -> Alcotest.fail "expected an object"
+
+let test_order_json_schema () =
+  let schema = Sch.to_json_schema ordered_schema in
+  Alcotest.(check (list string))
+    "properties in declaration order"
+    [ "a"; "b"; "c"; "d" ]
+    (List.map fst (Option.value ~default:[] schema.Json_schema.properties));
+  Alcotest.(check (list string))
+    "required in declaration order"
+    [ "a"; "b"; "c" ]
+    (Option.value ~default:[] schema.Json_schema.required)
+
+let test_order_decode_errors () =
+  match decode_str_result ordered_schema {|{"a":"no","c":1}|} with
+  | Ok _ -> Alcotest.fail "expected errors"
+  | Error errors ->
+    Alcotest.(check (list string))
+      "errors in declaration order"
+      [ "a"; "b"; "c" ]
+      (List.map fst errors)
+
+let order_tests =
+  [ "encode_string", `Quick, test_order_encode_string
+  ; "encode tree", `Quick, test_order_encode_tree
+  ; "json schema", `Quick, test_order_json_schema
+  ; "decode errors", `Quick, test_order_decode_errors
+  ]
+
 let () =
   Alcotest.run
     "Sch"
@@ -2222,4 +2283,5 @@ let () =
     ; "Format", format_tests
     ; "Constraint", constraint_tests
     ; "Tagless_union", tagless_union_tests
+    ; "Order", order_tests
     ]

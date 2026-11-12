@@ -710,7 +710,7 @@ module Json = struct
       let fc_applicative : Fc.t Sig.applicative =
         { pure = (fun _ -> Fc.inj Diflist.empty)
         ; map = (fun _f va -> Fc.inj (Fc.prj va))
-        ; apply = (fun vf va -> Fc.inj (Diflist.concat (Fc.prj va) (Fc.prj vf)))
+        ; apply = (fun vf va -> Fc.inj (Diflist.concat (Fc.prj vf) (Fc.prj va)))
         }
 
       let rec to_json : type a. a codec -> a -> Jsont.json =
@@ -830,8 +830,8 @@ module To_json_schema = struct
   let empty = { properties = Diflist.empty; required = Diflist.empty }
 
   let combine a b =
-    { properties = Diflist.concat b.properties a.properties
-    ; required = Diflist.concat b.required a.required
+    { properties = Diflist.concat a.properties b.properties
+    ; required = Diflist.concat a.required b.required
     }
 
   module Fc = Sig.Make (struct

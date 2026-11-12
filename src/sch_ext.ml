@@ -74,7 +74,7 @@ module Declared = struct
   let applicative : Names.t Sch.Sig.applicative =
     { pure = (fun _ -> Names.inj [])
     ; map = (fun _ names -> Names.inj (Names.prj names))
-    ; apply = (fun f a -> Names.inj (Names.prj a @ Names.prj f))
+    ; apply = (fun f a -> Names.inj (Names.prj f @ Names.prj a))
     }
 
   let field_name : type o. (o Sch.fieldk, Names.t) Sch.Sig.nat =

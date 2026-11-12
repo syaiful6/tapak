@@ -1,27 +1,11 @@
-type (_, _) aseq =
-  | ANil : ('f, unit) aseq
-  | ACons : ('a, 'f) Sch_sig.app * ('f, 'u) aseq -> ('f, 'a * 'u) aseq
+(** Free applicative functor over an effect ['f].
 
-type ('f, 'y, 'z) continue = { cont : 'x. ('x -> 'y) -> ('f, 'x) aseq -> 'z }
+    [apply f x] passes every effect in [f] to the natural transformation before
+    those in [x], then gives [app.apply] the two results in the same order.
+    Applicatives that accumulate values should therefore append [x]'s values to
+    [f]'s. *)
 
-val reduce_aseq :
-   'f Sch_sig.applicative
-  -> ('f, 'u) aseq
-  -> ('u, 'f) Sch_sig.app
-
-val hoist_aseq : ('f, 'g) Sch_sig.nat -> ('f, 'a) aseq -> ('g, 'a) aseq
-
-val rebase_aseq :
-   ('f, 'u) aseq
-  -> ('f, 'y, 'z) continue
-  -> ('v -> 'u -> 'y)
-  -> ('f, 'v) aseq
-  -> 'z
-
-type ('f, 'a) t =
-  { fold :
-      'u 'y 'z. ('f, 'y, 'z) continue -> ('u -> 'a -> 'y) -> ('f, 'u) aseq -> 'z
-  }
+type ('f, 'a) t
 
 val pure : 'a -> ('f, 'a) t
 val map : ('a -> 'b) -> ('f, 'a) t -> ('f, 'b) t
@@ -35,6 +19,9 @@ val run :
   -> ('f, 'g) Sch_sig.nat
   -> ('f, 'a) t
   -> ('a, 'g) Sch_sig.app
+(** [run app nat free] interprets [free] in one pass. It is not tail recursive;
+    stack depth matches the nesting depth of [free], usually the number of
+    fields. *)
 
 module Syntax : sig
   val ( <*> ) : ('a, 'b -> 'c) t -> ('a, 'b) t -> ('a, 'c) t
