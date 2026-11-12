@@ -1,377 +1,118 @@
 open Tapak
+open Bench_routes
 
-let create_mock_request ~meth ~path =
+let create_mock_request ?(headers = Headers.empty) ~meth ~path () =
   Request.make
     ~version:`HTTP_1_1
     ~meth
+    ~headers
     ~body:(Bytesrw.Bytes.Reader.empty ())
     path
 
-let ok body = Response.of_string ~status:`OK body
+let iterations = ref 1_000_000
+let samples = ref 5
+let metrics_only = ref false
+let only = ref None
 
-(* Google+ API - 13 routes *)
-let gplus_api =
-  let open Router in
-  [ get (s "people" / str) >> pure (fun user_id -> ok user_id)
-  ; get (s "people") |> handle_request (fun _ -> ok "people")
-  ; get (s "activities" / str / s "people" / str)
-    >> pure (fun activity_id collection -> ok (activity_id ^ collection))
-  ; get (s "people" / str / s "people" / str)
-    >> pure (fun user_id collection -> ok (user_id ^ collection))
-  ; get (s "people" / str / s "openIdConnect")
-    >> pure (fun user_id -> ok user_id)
-  ; get (s "people" / str / s "activities" / str)
-    >> pure (fun user_id collection -> ok (user_id ^ collection))
-  ; get (s "activities" / str) >> pure (fun activity_id -> ok activity_id)
-  ; get (s "activities") |> handle_request (fun _ -> ok "activities")
-  ; get (s "activities" / str / s "comments")
-    >> pure (fun activity_id -> ok activity_id)
-  ; get (s "comments" / str) >> pure (fun comment_id -> ok comment_id)
-  ; post (s "people" / str / s "moments" / str)
-    >> pure (fun user_id collection -> ok (user_id ^ collection))
-  ; get (s "people" / str / s "moments" / str)
-    >> pure (fun user_id collection -> ok (user_id ^ collection))
-  ; delete (s "moments" / str) >> pure (fun id -> ok id)
-  ]
+let parse_args () =
+  let usage =
+    "tapak-route-bench [--iterations N] [--samples K] [--only NAME] \
+     [--metrics-only]"
+  in
+  Arg.parse
+    [ ( "--iterations"
+      , Arg.Set_int iterations
+      , "N Requests per sample (default: 1000000)" )
+    ; ( "--samples"
+      , Arg.Set_int samples
+      , "K Timed samples per benchmark; the median is reported (default: 5)" )
+    ; ( "--only"
+      , Arg.String (fun name -> only := Some name)
+      , "NAME Run a single metrics benchmark (implies --metrics-only); use \
+         with perf stat to get cycles/request" )
+    ; ( "--metrics-only"
+      , Arg.Set metrics_only
+      , " Skip the legacy multi-second route benchmark suite" )
+    ]
+    (fun arg -> raise (Arg.Bad ("unexpected argument: " ^ arg)))
+    usage;
+  if !iterations <= 0 then raise (Arg.Bad "--iterations must be positive");
+  if !samples <= 0 then raise (Arg.Bad "--samples must be positive");
+  if Option.is_some !only then metrics_only := true
 
-(* GitHub API - 203 routes *)
-let github_api =
-  let open Router in
-  [ get (s "authorizations") |> handle_request (fun _ -> ok "authorizations")
-  ; get (s "authorizations" / str) >> pure (fun id -> ok id)
-  ; post (s "authorizations") |> handle_request (fun _ -> ok "create")
-  ; delete (s "authorizations" / str) >> pure (fun id -> ok id)
-  ; get (s "applications" / str / s "tokens" / str)
-    >> pure (fun client_id token -> ok (client_id ^ token))
-  ; delete (s "applications" / str / s "tokens")
-    >> pure (fun client_id -> ok client_id)
-  ; delete (s "applications" / str / s "tokens" / str)
-    >> pure (fun client_id token -> ok (client_id ^ token))
-  ; get (s "events") |> handle_request (fun _ -> ok "events")
-  ; get (s "repos" / str / str / s "events")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "networks" / str / str / s "events")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "orgs" / str / s "events") >> pure (fun org -> ok org)
-  ; get (s "users" / str / s "received_events") >> pure (fun user -> ok user)
-  ; get (s "users" / str / s "received_events" / s "public")
-    >> pure (fun user -> ok user)
-  ; get (s "users" / str / s "events") >> pure (fun user -> ok user)
-  ; get (s "users" / str / s "events" / s "public")
-    >> pure (fun user -> ok user)
-  ; get (s "users" / str / s "events" / s "orgs" / str)
-    >> pure (fun user org -> ok (user ^ org))
-  ; get (s "feeds") |> handle_request (fun _ -> ok "feeds")
-  ; get (s "notifications") |> handle_request (fun _ -> ok "notifications")
-  ; get (s "repos" / str / str / s "notifications")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; put (s "notifications") |> handle_request (fun _ -> ok "put")
-  ; put (s "repos" / str / str / s "notifications")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "notifications" / s "threads" / str) >> pure (fun id -> ok id)
-  ; get (s "notifications" / s "threads" / str / s "subscription")
-    >> pure (fun id -> ok id)
-  ; put (s "notifications" / s "threads" / str / s "subscription")
-    >> pure (fun id -> ok id)
-  ; delete (s "notifications" / s "threads" / str / s "subscription")
-    >> pure (fun id -> ok id)
-  ; get (s "repos" / str / str / s "stargazers")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "users" / str / s "starred") >> pure (fun user -> ok user)
-  ; get (s "user" / s "starred") |> handle_request (fun _ -> ok "starred")
-  ; get (s "user" / s "starred" / str / str)
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; put (s "user" / s "starred" / str / str)
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; delete (s "user" / s "starred" / str / str)
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "repos" / str / str / s "subscribers")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "users" / str / s "subscriptions") >> pure (fun user -> ok user)
-  ; get (s "user" / s "subscriptions")
-    |> handle_request (fun _ -> ok "subscriptions")
-  ; get (s "repos" / str / str / s "subscription")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; put (s "repos" / str / str / s "subscription")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; delete (s "repos" / str / str / s "subscription")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "user" / s "subscriptions" / str / str)
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; put (s "user" / s "subscriptions" / str / str)
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; delete (s "user" / s "subscriptions" / str / str)
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "users" / str / s "gists") >> pure (fun user -> ok user)
-  ; get (s "gists") |> handle_request (fun _ -> ok "gists")
-  ; get (s "gists" / str) >> pure (fun id -> ok id)
-  ; post (s "gists") |> handle_request (fun _ -> ok "create")
-  ; put (s "gists" / str / s "star") >> pure (fun id -> ok id)
-  ; delete (s "gists" / str / s "star") >> pure (fun id -> ok id)
-  ; get (s "gists" / str / s "star") >> pure (fun id -> ok id)
-  ; post (s "gists" / str / s "forks") >> pure (fun id -> ok id)
-  ; delete (s "gists" / str) >> pure (fun id -> ok id)
-  ; get (s "repos" / str / str / s "git" / s "blobs" / str)
-    >> pure (fun owner repo sha -> ok (owner ^ repo ^ sha))
-  ; post (s "repos" / str / str / s "git" / s "blobs")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "repos" / str / str / s "git" / s "commits" / str)
-    >> pure (fun owner repo sha -> ok (owner ^ repo ^ sha))
-  ; post (s "repos" / str / str / s "git" / s "commits")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "repos" / str / str / s "git" / s "refs")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; post (s "repos" / str / str / s "git" / s "refs")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "repos" / str / str / s "git" / s "tags" / str)
-    >> pure (fun owner repo sha -> ok (owner ^ repo ^ sha))
-  ; post (s "repos" / str / str / s "git" / s "tags")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "repos" / str / str / s "git" / s "trees" / str)
-    >> pure (fun owner repo sha -> ok (owner ^ repo ^ sha))
-  ; post (s "repos" / str / str / s "git" / s "trees")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "issues") |> handle_request (fun _ -> ok "issues")
-  ; get (s "user" / s "issues") |> handle_request (fun _ -> ok "user-issues")
-  ; get (s "orgs" / str / s "issues") >> pure (fun org -> ok org)
-  ; get (s "repos" / str / str / s "issues")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "repos" / str / str / s "issues" / str)
-    >> pure (fun owner repo number -> ok (owner ^ repo ^ number))
-  ; post (s "repos" / str / str / s "issues")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "repos" / str / str / s "assignees")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "repos" / str / str / s "assignees" / str)
-    >> pure (fun owner repo assignee -> ok (owner ^ repo ^ assignee))
-  ; get (s "repos" / str / str / s "issues" / str / s "comments")
-    >> pure (fun owner repo number -> ok (owner ^ repo ^ number))
-  ; post (s "repos" / str / str / s "issues" / str / s "comments")
-    >> pure (fun owner repo number -> ok (owner ^ repo ^ number))
-  ; get (s "repos" / str / str / s "issues" / str / s "events")
-    >> pure (fun owner repo number -> ok (owner ^ repo ^ number))
-  ; get (s "repos" / str / str / s "labels")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "repos" / str / str / s "labels" / str)
-    >> pure (fun owner repo name -> ok (owner ^ repo ^ name))
-  ; post (s "repos" / str / str / s "labels")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; delete (s "repos" / str / str / s "labels" / str)
-    >> pure (fun owner repo name -> ok (owner ^ repo ^ name))
-  ; get (s "repos" / str / str / s "issues" / str / s "labels")
-    >> pure (fun owner repo number -> ok (owner ^ repo ^ number))
-  ; post (s "repos" / str / str / s "issues" / str / s "labels")
-    >> pure (fun owner repo number -> ok (owner ^ repo ^ number))
-  ; delete (s "repos" / str / str / s "issues" / str / s "labels" / str)
-    >> pure (fun owner repo number name -> ok (owner ^ repo ^ number ^ name))
-  ; put (s "repos" / str / str / s "issues" / str / s "labels")
-    >> pure (fun owner repo number -> ok (owner ^ repo ^ number))
-  ; delete (s "repos" / str / str / s "issues" / str / s "labels")
-    >> pure (fun owner repo number -> ok (owner ^ repo ^ number))
-  ; get (s "repos" / str / str / s "milestones" / str / s "labels")
-    >> pure (fun owner repo number -> ok (owner ^ repo ^ number))
-  ; get (s "repos" / str / str / s "milestones")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "repos" / str / str / s "milestones" / str)
-    >> pure (fun owner repo number -> ok (owner ^ repo ^ number))
-  ; post (s "repos" / str / str / s "milestones")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; delete (s "repos" / str / str / s "milestones" / str)
-    >> pure (fun owner repo number -> ok (owner ^ repo ^ number))
-  ; get (s "emojis") |> handle_request (fun _ -> ok "emojis")
-  ; get (s "gitignore" / s "templates")
-    |> handle_request (fun _ -> ok "templates")
-  ; get (s "gitignore" / s "templates" / str) >> pure (fun name -> ok name)
-  ; post (s "markdown") |> handle_request (fun _ -> ok "markdown")
-  ; post (s "markdown" / s "raw") |> handle_request (fun _ -> ok "raw")
-  ; get (s "meta") |> handle_request (fun _ -> ok "meta")
-  ; get (s "rate_limit") |> handle_request (fun _ -> ok "rate_limit")
-  ; get (s "users" / str / s "orgs") >> pure (fun user -> ok user)
-  ; get (s "user" / s "orgs") |> handle_request (fun _ -> ok "orgs")
-  ; get (s "orgs" / str) >> pure (fun org -> ok org)
-  ; get (s "orgs" / str / s "members") >> pure (fun org -> ok org)
-  ; get (s "orgs" / str / s "members" / str)
-    >> pure (fun org user -> ok (org ^ user))
-  ; delete (s "orgs" / str / s "members" / str)
-    >> pure (fun org user -> ok (org ^ user))
-  ; get (s "orgs" / str / s "public_members") >> pure (fun org -> ok org)
-  ; get (s "orgs" / str / s "public_members" / str)
-    >> pure (fun org user -> ok (org ^ user))
-  ; put (s "orgs" / str / s "public_members" / str)
-    >> pure (fun org user -> ok (org ^ user))
-  ; delete (s "orgs" / str / s "public_members" / str)
-    >> pure (fun org user -> ok (org ^ user))
-  ; get (s "orgs" / str / s "teams") >> pure (fun org -> ok org)
-  ; get (s "teams" / str) >> pure (fun id -> ok id)
-  ; post (s "orgs" / str / s "teams") >> pure (fun org -> ok org)
-  ; delete (s "teams" / str) >> pure (fun id -> ok id)
-  ; get (s "teams" / str / s "members") >> pure (fun id -> ok id)
-  ; get (s "teams" / str / s "members" / str)
-    >> pure (fun id user -> ok (id ^ user))
-  ; put (s "teams" / str / s "members" / str)
-    >> pure (fun id user -> ok (id ^ user))
-  ; delete (s "teams" / str / s "members" / str)
-    >> pure (fun id user -> ok (id ^ user))
-  ; get (s "teams" / str / s "repos") >> pure (fun id -> ok id)
-  ; get (s "teams" / str / s "repos" / str / str)
-    >> pure (fun id owner repo -> ok (id ^ owner ^ repo))
-  ; put (s "teams" / str / s "repos" / str / str)
-    >> pure (fun id owner repo -> ok (id ^ owner ^ repo))
-  ; delete (s "teams" / str / s "repos" / str / str)
-    >> pure (fun id owner repo -> ok (id ^ owner ^ repo))
-  ; get (s "user" / s "teams") |> handle_request (fun _ -> ok "teams")
-  ; get (s "repos" / str / str / s "pulls")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "repos" / str / str / s "pulls" / str)
-    >> pure (fun owner repo number -> ok (owner ^ repo ^ number))
-  ; post (s "repos" / str / str / s "pulls")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "repos" / str / str / s "pulls" / str / s "commits")
-    >> pure (fun owner repo number -> ok (owner ^ repo ^ number))
-  ; get (s "repos" / str / str / s "pulls" / str / s "files")
-    >> pure (fun owner repo number -> ok (owner ^ repo ^ number))
-  ; get (s "repos" / str / str / s "pulls" / str / s "merge")
-    >> pure (fun owner repo number -> ok (owner ^ repo ^ number))
-  ; put (s "repos" / str / str / s "pulls" / str / s "merge")
-    >> pure (fun owner repo number -> ok (owner ^ repo ^ number))
-  ; get (s "repos" / str / str / s "pulls" / str / s "comments")
-    >> pure (fun owner repo number -> ok (owner ^ repo ^ number))
-  ; put (s "repos" / str / str / s "pulls" / str / s "comments")
-    >> pure (fun owner repo number -> ok (owner ^ repo ^ number))
-  ; get (s "user" / s "repos") |> handle_request (fun _ -> ok "repos")
-  ; get (s "users" / str / s "repos") >> pure (fun user -> ok user)
-  ; get (s "orgs" / str / s "repos") >> pure (fun org -> ok org)
-  ; get (s "repositories") |> handle_request (fun _ -> ok "repositories")
-  ; post (s "user" / s "repos") |> handle_request (fun _ -> ok "create")
-  ; post (s "orgs" / str / s "repos") >> pure (fun org -> ok org)
-  ; get (s "repos" / str / str) >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "repos" / str / str / s "contributors")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "repos" / str / str / s "languages")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "repos" / str / str / s "teams")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "repos" / str / str / s "tags")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "repos" / str / str / s "branches")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "repos" / str / str / s "branches" / str)
-    >> pure (fun owner repo branch -> ok (owner ^ repo ^ branch))
-  ; delete (s "repos" / str / str) >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "repos" / str / str / s "collaborators")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "repos" / str / str / s "collaborators" / str)
-    >> pure (fun owner repo user -> ok (owner ^ repo ^ user))
-  ; put (s "repos" / str / str / s "collaborators" / str)
-    >> pure (fun owner repo user -> ok (owner ^ repo ^ user))
-  ; delete (s "repos" / str / str / s "collaborators" / str)
-    >> pure (fun owner repo user -> ok (owner ^ repo ^ user))
-  ; get (s "repos" / str / str / s "comments")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "repos" / str / str / s "commits" / str / s "comments")
-    >> pure (fun owner repo sha -> ok (owner ^ repo ^ sha))
-  ; post (s "repos" / str / str / s "commits" / str / s "comments")
-    >> pure (fun owner repo sha -> ok (owner ^ repo ^ sha))
-  ; get (s "repos" / str / str / s "comments" / str)
-    >> pure (fun owner repo id -> ok (owner ^ repo ^ id))
-  ; delete (s "repos" / str / str / s "comments" / str)
-    >> pure (fun owner repo id -> ok (owner ^ repo ^ id))
-  ; get (s "repos" / str / str / s "commits")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "repos" / str / str / s "commits" / str)
-    >> pure (fun owner repo sha -> ok (owner ^ repo ^ sha))
-  ; get (s "repos" / str / str / s "readme")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "repos" / str / str / s "keys")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "repos" / str / str / s "keys" / str)
-    >> pure (fun owner repo id -> ok (owner ^ repo ^ id))
-  ; post (s "repos" / str / str / s "keys")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; delete (s "repos" / str / str / s "keys" / str)
-    >> pure (fun owner repo id -> ok (owner ^ repo ^ id))
-  ; get (s "repos" / str / str / s "downloads")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "repos" / str / str / s "downloads" / str)
-    >> pure (fun owner repo id -> ok (owner ^ repo ^ id))
-  ; delete (s "repos" / str / str / s "downloads" / str)
-    >> pure (fun owner repo id -> ok (owner ^ repo ^ id))
-  ; get (s "repos" / str / str / s "forks")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; post (s "repos" / str / str / s "forks")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "repos" / str / str / s "hooks")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "repos" / str / str / s "hooks" / str)
-    >> pure (fun owner repo id -> ok (owner ^ repo ^ id))
-  ; post (s "repos" / str / str / s "hooks")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; post (s "repos" / str / str / s "hooks" / str / s "tests")
-    >> pure (fun owner repo id -> ok (owner ^ repo ^ id))
-  ; delete (s "repos" / str / str / s "hooks" / str)
-    >> pure (fun owner repo id -> ok (owner ^ repo ^ id))
-  ; post (s "repos" / str / str / s "merges")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "repos" / str / str / s "releases")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "repos" / str / str / s "releases" / str)
-    >> pure (fun owner repo id -> ok (owner ^ repo ^ id))
-  ; post (s "repos" / str / str / s "releases")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; delete (s "repos" / str / str / s "releases" / str)
-    >> pure (fun owner repo id -> ok (owner ^ repo ^ id))
-  ; get (s "repos" / str / str / s "releases" / str / s "assets")
-    >> pure (fun owner repo id -> ok (owner ^ repo ^ id))
-  ; get (s "repos" / str / str / s "stats" / s "contributors")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "repos" / str / str / s "stats" / s "commit_activity")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "repos" / str / str / s "stats" / s "code_frequency")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "repos" / str / str / s "stats" / s "participation")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "repos" / str / str / s "stats" / s "punch_card")
-    >> pure (fun owner repo -> ok (owner ^ repo))
-  ; get (s "repos" / str / str / s "statuses" / str)
-    >> pure (fun owner repo ref_ -> ok (owner ^ repo ^ ref_))
-  ; post (s "repos" / str / str / s "statuses" / str)
-    >> pure (fun owner repo ref_ -> ok (owner ^ repo ^ ref_))
-  ; get (s "search" / s "repositories")
-    |> handle_request (fun _ -> ok "search-repos")
-  ; get (s "search" / s "code") |> handle_request (fun _ -> ok "search-code")
-  ; get (s "search" / s "issues")
-    |> handle_request (fun _ -> ok "search-issues")
-  ; get (s "search" / s "users") |> handle_request (fun _ -> ok "search-users")
-  ; get (s "legacy" / s "issues" / s "search" / str / str / str / str)
-    >> pure (fun owner repo state keyword ->
-      ok (owner ^ repo ^ state ^ keyword))
-  ; get (s "legacy" / s "repos" / s "search" / str)
-    >> pure (fun keyword -> ok keyword)
-  ; get (s "legacy" / s "user" / s "search" / str)
-    >> pure (fun keyword -> ok keyword)
-  ; get (s "legacy" / s "user" / s "email" / str)
-    >> pure (fun email -> ok email)
-  ; get (s "users" / str) >> pure (fun user -> ok user)
-  ; get (s "user") |> handle_request (fun _ -> ok "user")
-  ; get (s "users") |> handle_request (fun _ -> ok "users")
-  ; get (s "user" / s "emails") |> handle_request (fun _ -> ok "emails")
-  ; post (s "user" / s "emails") |> handle_request (fun _ -> ok "create")
-  ; delete (s "user" / s "emails") |> handle_request (fun _ -> ok "delete")
-  ; get (s "users" / str / s "followers") >> pure (fun user -> ok user)
-  ; get (s "user" / s "followers") |> handle_request (fun _ -> ok "followers")
-  ; get (s "users" / str / s "following") >> pure (fun user -> ok user)
-  ; get (s "user" / s "following") |> handle_request (fun _ -> ok "following")
-  ; get (s "user" / s "following" / str) >> pure (fun user -> ok user)
-  ; get (s "users" / str / s "following" / str)
-    >> pure (fun user target -> ok (user ^ target))
-  ; put (s "user" / s "following" / str) >> pure (fun user -> ok user)
-  ; delete (s "user" / s "following" / str) >> pure (fun user -> ok user)
-  ; get (s "users" / str / s "keys") >> pure (fun user -> ok user)
-  ; get (s "user" / s "keys") |> handle_request (fun _ -> ok "keys")
-  ; get (s "user" / s "keys" / str) >> pure (fun id -> ok id)
-  ; post (s "user" / s "keys") |> handle_request (fun _ -> ok "create")
-  ; delete (s "user" / s "keys" / str) >> pure (fun id -> ok id)
-  ]
+let run_n n f x =
+  for _ = 1 to n do
+    f x
+  done
+
+type sample =
+  { ns : float (* nanoseconds per request *)
+  ; bytes : float (* bytes allocated per request *)
+  }
+
+let measure f x =
+  Gc.full_major ();
+  let before = Benchmark.make 0L in
+  run_n !iterations f x;
+  let r = Benchmark.sub (Benchmark.make (Int64.of_int !iterations)) before in
+  let requests = float !iterations in
+  (* [major_words] already includes [promoted_words]; subtract them so words
+     that survive a minor GC are not counted twice. [Benchmark] reports these
+     fields in bytes. *)
+  let allocated = r.minor_words +. r.major_words -. r.promoted_words in
+  { ns = r.wall *. 1e9 /. requests; bytes = allocated /. requests }
+
+let median_sample samples =
+  let sorted = List.sort (fun a b -> Float.compare a.ns b.ns) samples in
+  List.nth sorted (List.length sorted / 2)
+
+(* Benchmarks that ran in this process, for computing deltas. *)
+let results : (string, sample) Hashtbl.t = Hashtbl.create 16
+
+let benchmark_request ?baseline ~name f x =
+  if match !only with None -> true | Some n -> String.equal n name
+  then begin
+    (* Warm up caches and branch predictors before timing. *)
+    run_n (max 10_000 (!iterations / 10)) f x;
+    let all = List.init !samples (fun _ -> measure f x) in
+    let m = median_sample all in
+    let lo = List.fold_left (fun acc s -> Float.min acc s.ns) infinity all in
+    let hi = List.fold_left (fun acc s -> Float.max acc s.ns) 0. all in
+    Hashtbl.replace results name m;
+    let delta =
+      match Option.bind baseline (Hashtbl.find_opt results) with
+      | Some b ->
+        Printf.sprintf
+          "  %+9.1f ns  %+9.1f B"
+          (m.ns -. b.ns)
+          (m.bytes -. b.bytes)
+      | None -> ""
+    in
+    Printf.printf
+      "%-24s %10.1f ns  [%8.1f..%8.1f]  %10.1f B  %12.0f req/s%s\n%!"
+      name
+      m.ns
+      lo
+      hi
+      m.bytes
+      (1e9 /. m.ns)
+      delta
+  end
+
+let print_metrics_header () =
+  Printf.printf
+    "%-24s %13s  %20s  %12s  %18s  %s\n"
+    "benchmark"
+    "median"
+    "min..max (ns)"
+    "alloc"
+    "throughput"
+    "vs input/baseline";
+  Printf.printf
+    "(in-process router dispatch; req/s = 1e9 / median ns; %d samples x %d \
+     requests)\n"
+    !samples
+    !iterations
 
 (* Test requests matching the Go benchmark *)
 let github_requests =
@@ -404,19 +145,94 @@ let bench_single_route (router, req) =
 let bench_all_routes (router, requests) =
   List.iter
     (fun (meth, path) ->
-       let req = create_mock_request ~meth ~path in
+       let req = create_mock_request ~meth ~path () in
        let _resp = router req in
        ())
     requests
 
 let () =
+  parse_args ();
+  print_metrics_header ();
+  let gplus_router = Router.of_list gplus_api in
+  let github_router = Router.of_list github_api in
+  let input_router = Router.of_list input_api in
+  (* A realistic header count, so header lookup is not trivially cheap. *)
+  let input_headers =
+    Headers.of_list
+      [ "host", "api.example.com"
+      ; "user-agent", "Mozilla/5.0 (X11; Linux x86_64) Gecko/20100101"
+      ; "accept", "application/json"
+      ; "accept-encoding", "gzip, deflate, br"
+      ; "accept-language", "en-US,en;q=0.9"
+      ; "connection", "keep-alive"
+      ; "x-forwarded-for", "203.0.113.7"
+      ; "x-api-key", "secret-key"
+      ; "x-request-id", "request-123"
+      ; "cookie", "session=abcdef0123456789; theme=dark"
+      ]
+  in
+  let input_request prefix =
+    create_mock_request
+      ~headers:input_headers
+      ~meth:`GET
+      ~path:("/" ^ prefix ^ "/users?q=alice&limit=25&offset=10")
+      ()
+  in
+  let check_ok name (router, req) =
+    match Response.status (router req) with
+    | `OK -> ()
+    | status ->
+      Printf.eprintf
+        "%s: expected 200 OK, got %s\n"
+        name
+        (Http.Status.to_string status);
+      exit 1
+  in
+  benchmark_request
+    ~name:"path/static"
+    bench_single_route
+    (gplus_router, create_mock_request ~meth:`GET ~path:"/people" ());
+  benchmark_request
+    ~name:"path/2-params"
+    bench_single_route
+    ( gplus_router
+    , create_mock_request ~meth:`GET ~path:"/people/me/activities/public" () );
+  benchmark_request
+    ~name:"path/203-route-trie"
+    bench_single_route
+    ( github_router
+    , create_mock_request
+        ~meth:`GET
+        ~path:"/repos/julienschmidt/httprouter/pulls/1/files"
+        () );
+  (* The delta column needs [input/baseline] to have run in this process, so it
+     is empty under --only; --only runs exactly one benchmark so that perf
+     counts nothing else. *)
+  let baseline = "input/baseline" in
+  List.iter
+    (fun prefix ->
+       let name = "input/" ^ prefix in
+       let x = input_router, input_request prefix in
+       check_ok name x;
+       benchmark_request ~baseline ~name bench_single_route x)
+    [ "baseline"; "query"; "headers"; "cookies"; "all" ];
+  Printf.printf
+    "\n\
+     CPU cycles/request: run one benchmark under perf and divide by the \
+     request count\n\
+     (samples x iterations, plus warm-up of max(10000, iterations/10)):\n\
+    \  perf stat -e cycles:u _build/default/bench/route_bench.exe --only \
+     input/query --iterations %d --samples 1\n\n"
+    !iterations;
+
+  if !metrics_only then exit 0;
+
+  (* Keep the original benchmark suite below for detailed route comparisons. *)
   let open Benchmark in
   Printf.printf " Google+ API (13 routes)\n";
 
-  let gplus_router = Router.of_list gplus_api in
-
   Printf.printf "--- GPlus Static (no params): GET /people ---\n";
-  let req = create_mock_request ~meth:`GET ~path:"/people" in
+  let req = create_mock_request ~meth:`GET ~path:"/people" () in
   let results =
     throughputN
       ~repeat:3
@@ -427,7 +243,7 @@ let () =
   Printf.printf "\n";
 
   Printf.printf "--- GPlus Param: GET /people/:userId ---\n";
-  let req = create_mock_request ~meth:`GET ~path:"/people/me" in
+  let req = create_mock_request ~meth:`GET ~path:"/people/me" () in
   let results =
     throughputN
       ~repeat:3
@@ -440,7 +256,7 @@ let () =
   Printf.printf
     "--- GPlus 2 Params: GET /people/:userId/activities/:collection ---\n";
   let req =
-    create_mock_request ~meth:`GET ~path:"/people/me/activities/public"
+    create_mock_request ~meth:`GET ~path:"/people/me/activities/public" ()
   in
   let results =
     throughputN
@@ -463,10 +279,8 @@ let () =
 
   Printf.printf " GitHub API (203 routes)\n";
 
-  let github_router = Router.of_list github_api in
-
   Printf.printf "--- GitHub Static (no params): GET /user ---\n";
-  let req = create_mock_request ~meth:`GET ~path:"/user" in
+  let req = create_mock_request ~meth:`GET ~path:"/user" () in
   let results =
     throughputN
       ~repeat:3
@@ -477,7 +291,7 @@ let () =
   Printf.printf "\n";
 
   Printf.printf "--- GitHub Param: GET /users/:user ---\n";
-  let req = create_mock_request ~meth:`GET ~path:"/users/julienschmidt" in
+  let req = create_mock_request ~meth:`GET ~path:"/users/julienschmidt" () in
   let results =
     throughputN
       ~repeat:3
@@ -489,7 +303,7 @@ let () =
 
   Printf.printf "--- GitHub 2 Params: GET /repos/:owner/:repo ---\n";
   let req =
-    create_mock_request ~meth:`GET ~path:"/repos/julienschmidt/httprouter"
+    create_mock_request ~meth:`GET ~path:"/repos/julienschmidt/httprouter" ()
   in
   let results =
     throughputN
@@ -507,6 +321,7 @@ let () =
     create_mock_request
       ~meth:`GET
       ~path:"/repos/julienschmidt/httprouter/pulls/1/files"
+      ()
   in
   let results =
     throughputN
