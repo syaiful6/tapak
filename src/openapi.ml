@@ -137,7 +137,7 @@ module To_parameter = struct
   let fc_applicative : Fc.t Sch.Sig.applicative =
     { pure = (fun _ -> Fc.inj Diflist.empty)
     ; map = (fun _f va -> Fc.inj (Fc.prj va))
-    ; apply = (fun vf va -> Fc.inj (Diflist.concat (Fc.prj va) (Fc.prj vf)))
+    ; apply = (fun vf va -> Fc.inj (Diflist.concat (Fc.prj vf) (Fc.prj va)))
     }
 
   let rec convert : type a. Spec.Location.t -> a Sch.t -> Spec.Parameter.t list =
@@ -464,7 +464,7 @@ module Of_router = struct
   let pc_applicative : Pc.t Sch.Sig.applicative =
     { pure = (fun _ -> Pc.inj empty)
     ; map = (fun _f va -> Pc.inj (Pc.prj va))
-    ; apply = (fun vf va -> Pc.inj (combine (Pc.prj va) (Pc.prj vf)))
+    ; apply = (fun vf va -> Pc.inj (combine (Pc.prj vf) (Pc.prj va)))
     }
 
   let of_parameters params =

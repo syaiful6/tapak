@@ -1,0 +1,9 @@
+(executable
+ (name free_bench)
+ (public_name sch-free-bench)
+ (package sch)
+ (enabled_if
+  (or
+   (= %{profile} dev)
+   (= %{profile} release)))
+ (libraries sch benchmark))

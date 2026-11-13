@@ -38,6 +38,7 @@
    (>= 2.0.0))
   ipaddr
   (alcotest :with-test)
+  (benchmark :with-test)
   (odoc :with-doc)))
 
 (package

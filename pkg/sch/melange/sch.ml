@@ -308,7 +308,7 @@ module Json = struct
     let fc_applicative : Fc.t Sig.applicative =
       { pure = (fun _ -> Fc.inj [])
       ; map = (fun _f va -> Fc.inj (Fc.prj va))
-      ; apply = (fun vf va -> Fc.inj (Fc.prj va @ Fc.prj vf))
+      ; apply = (fun vf va -> Fc.inj (Fc.prj vf @ Fc.prj va))
       }
 
     type 'a object_case =

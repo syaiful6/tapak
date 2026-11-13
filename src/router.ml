@@ -702,17 +702,16 @@ module Reader = struct
   external inj : 'a t -> ('a, k) Sch.Sig.app = "%identity"
   external prj : ('a, k) Sch.Sig.app -> 'a t = "%identity"
 
-  (* [Sch.Free.run] folds the tail of the effect sequence into the function side
-     of [apply] and the head into the argument side. Evaluating the argument
-     first is what runs effects in the order they were declared. *)
+  (* For [apply f a], [Sch.Free.run] puts the earlier effects in [f]. Evaluating
+     [f] first is what runs effects in the order they were declared. *)
   let applicative : k Sch.Sig.applicative =
     { pure = (fun a -> inj (fun _ -> a))
     ; map = (fun f a -> inj (fun env -> f (prj a env)))
     ; apply =
         (fun f a ->
           inj (fun env ->
-            let x = prj a env in
-            (prj f env) x))
+            let f = prj f env in
+            f (prj a env)))
     }
 
   let query_json env =

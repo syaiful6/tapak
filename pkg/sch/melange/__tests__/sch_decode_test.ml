@@ -159,9 +159,9 @@ let () =
       expect (decode_str_result schema invalid_json)
       |> toEqual
            (Result.error
-              [ "age", "Integer 25 exceeds maximum 20"
+              [ "name", "String length 2 is less than minimum 3"
               ; "email", "Invalid email address"
-              ; "name", "String length 2 is less than minimum 3"
+              ; "age", "Integer 25 exceeds maximum 20"
               ])));
 
   describe "date-time constraint" (fun () ->
