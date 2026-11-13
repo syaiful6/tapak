@@ -12,8 +12,6 @@
 
 (executable
  (name route_bench)
- (public_name tapak-route-bench)
- (package tapak)
  (enabled_if
   (or
    (= %{profile} dev)
@@ -23,8 +21,6 @@
 
 (executable
  (name server_bench)
- (public_name tapak-server-bench)
- (package tapak)
  (enabled_if
   (or
    (= %{profile} dev)
