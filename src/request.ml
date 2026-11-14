@@ -1,5 +1,19 @@
 open Imports
 
+module Log =
+  (val Logging.setup ~src:"tapak.request" ~doc:"Tapak Request module")
+
+type outcome =
+  [ `Completed
+  | `Failed of exn
+  ]
+
+type exchange_state =
+  | Pending of (outcome -> unit) list
+  | Finished of outcome
+
+type exchange = exchange_state Atomic.t
+
 type t =
   { headers : Http.Header.t
   ; meth : Http.Method.t
@@ -14,6 +28,8 @@ type t =
        distinction appear when the application behind reverse proxy, where the
        proxy handle SSL termination, but connection from proxy to application is
        not over SSL *)
+  ; exchange : exchange
+    (* Copies made with [with_] belong to the same exchange. *)
   }
 
 include Headers.Make (struct
@@ -79,6 +95,7 @@ let make
   ; version
   ; is_secure
   ; body
+  ; exchange = Atomic.make (Pending [])
   }
 
 let with_ ?meth ?target ?version ?headers ?body ?client_addr ?is_secure req =
@@ -89,7 +106,32 @@ let with_ ?meth ?target ?version ?headers ?body ?client_addr ?is_secure req =
   ; target = Option.value target ~default:req.target
   ; version = Option.value version ~default:req.version
   ; body = Option.value body ~default:req.body
+  ; exchange = req.exchange
   }
+
+let run_hook outcome hook =
+  try hook outcome with
+  | exn -> Log.err (fun m -> m "on_finished hook raised: %a" Fmt.exn exn)
+
+let rec on_finished t hook =
+  match Atomic.get t.exchange with
+  | Finished outcome -> run_hook outcome hook
+  | Pending hooks as current ->
+    if not (Atomic.compare_and_set t.exchange current (Pending (hook :: hooks)))
+    then on_finished t hook
+
+let rec finish t outcome =
+  match Atomic.get t.exchange with
+  | Finished _ -> ()
+  | Pending hooks as current ->
+    if Atomic.compare_and_set t.exchange current (Finished outcome)
+    then List.iter (run_hook outcome) hooks
+    else finish t outcome
+
+let finished t =
+  match Atomic.get t.exchange with
+  | Finished outcome -> Some outcome
+  | Pending _ -> None
 
 let pp_field field_name pp_v fmt v =
   Format.fprintf fmt "@[<1>%s:@ %a@]" field_name pp_v v

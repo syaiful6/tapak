@@ -1,5 +1,5 @@
 let () =
-  Eio_main.run @@ fun _env ->
+  Eio_main.run @@ fun env ->
   Alcotest.run
     "Tapak Tests"
     (List.flatten
@@ -15,4 +15,5 @@ let () =
        ; Test_cookies.tests
        ; Test_sch_ext.tests
        ; Test_header_parser.tests
+       ; Test_server.tests (Eio.Stdenv.net env)
        ])

@@ -79,6 +79,18 @@ let respond_string ~request ~response ~body =
        ~body
        ())
 
+(* Run the deferred response writer, then notify the request's completion hooks.
+   [failure] records a handler exception when [write] sends its 500 response. *)
+let finishing ?failure request write =
+  match write () with
+  | () ->
+    Request.finish
+      request
+      (match failure with Some exn -> `Failed exn | None -> `Completed)
+  | exception exn ->
+    Request.finish request (`Failed exn);
+    raise exn
+
 let make :
    ?conn_closed:(Cohttp_eio.Server.conn -> unit)
   -> Handler.t
@@ -87,14 +99,24 @@ let make :
  fun ?conn_closed handler ->
   let callback conn req body =
     let request = request_from_cohttp conn req body in
-    let response =
-      try handler request with
+    let response, failure =
+      try handler request, None with
       | exn ->
         Log.err (fun m -> m "Handler raised an exception: %a" Fmt.exn exn);
-        Response.plain ~status:`Internal_server_error "Internal Server Error"
+        ( Response.plain ~status:`Internal_server_error "Internal Server Error"
+        , Some exn )
+    in
+    let finishing write = finishing ?failure request write in
+    let respond_with = function
+      | `Response respond ->
+        `Response (fun w -> finishing (fun () -> respond w))
+      | `Expert (response, write) ->
+        `Expert (response, fun ic oc -> finishing (fun () -> write ic oc))
     in
     let body = Response.body response in
     let is_head = Request.meth request = `HEAD in
+    respond_with
+    @@
     match body with
     | `Empty -> respond_string ~request ~response ~body:""
     | `String s ->
