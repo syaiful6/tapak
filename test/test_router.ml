@@ -2232,6 +2232,36 @@ let test_schema_sees_request_from_middleware () =
     "5 7 new new"
     (dispatch routes (make_request "/m/5?limit=1"))
 
+let test_malformed_capture_skips_route_middleware () =
+  let tag next request =
+    log "middleware";
+    next request
+  in
+  let recover_all =
+    recover (fun _ _ ->
+      log "recover";
+      Some (Response.of_string "recovered"))
+  in
+  let routes =
+    [ scope
+        ~middlewares:[ tag ]
+        (s "m")
+        [ recover_all
+            (get int >> pure (fun id -> Response.of_string (string_of_int id)))
+        ]
+    ]
+  in
+  trace := [];
+  check_body "well-formed" "5" (dispatch routes (make_request "/m/5"));
+  check_trace "route middleware runs" [ "middleware" ];
+  trace := [];
+  Alcotest.(check int)
+    "malformed capture is a 404"
+    404
+    (Http.Status.to_int
+       (Response.status (dispatch routes (make_request "/m/abc"))));
+  check_trace "neither middleware nor recover runs" []
+
 let contains ~sub text =
   let n = String.length sub in
   let rec at i =
@@ -2723,6 +2753,9 @@ let tests =
   ; ( "Schema sees request from middleware"
     , `Quick
     , test_schema_sees_request_from_middleware )
+  ; ( "Malformed capture skips route middleware"
+    , `Quick
+    , test_malformed_capture_skips_route_middleware )
   ; ( "Same shape and method is rejected"
     , `Quick
     , test_same_shape_and_method_is_rejected )

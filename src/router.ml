@@ -198,7 +198,7 @@ module Security = struct
 
   type extractor_error += Unauthorized of scheme * reason
 
-  (* Keep parsing and OpenAPI documentation in the same value. *)
+  (* Store the extractor and its OpenAPI scheme together. *)
   type 'a t =
     { scheme : scheme
     ; extractor : 'a extractor
@@ -210,8 +210,8 @@ module Security = struct
     | Some v -> Ok v
     | None -> Error (Unauthorized (scheme, Invalid))
 
-  (* Verification identifies the caller. [None] produces a 401 response; use
-     [refine] with a separate error for authorization. *)
+  (* Verification identifies the caller. [None] returns 401. Use [refine] for
+     authorization checks. *)
   let basic ?(realm = "Restricted") verify =
     let scheme = Basic { realm } in
     { scheme
@@ -245,7 +245,7 @@ module Security = struct
           | Some key -> verified scheme (verify key))
     }
 
-  (* The WWW-Authenticate value for a 401 response, if the scheme has one *)
+  (* Return the scheme's WWW-Authenticate value, when defined. *)
   let challenge = function
     | Basic { realm } ->
       Some Security_basic.(string_of_challenge (Challenge.Basic realm))
@@ -255,7 +255,7 @@ module Security = struct
   let default_unauthorized _req _scheme _reason =
     Response.of_string ~status:`Unauthorized "Unauthorized"
 
-  (* A handler that sets its own WWW-Authenticate keeps it *)
+  (* Preserve a WWW-Authenticate header set by the handler. *)
   let with_challenge scheme response =
     match challenge scheme with
     | Some value ->
@@ -323,7 +323,7 @@ let query schema = lift (Schema.Query schema)
 let header schema = lift (Schema.Header schema)
 let cookie schema = lift (Schema.Cookie schema)
 
-(* The request's content type picks the decoder; [schema] is the same for all *)
+(* Select the decoder from Content-Type and use [schema] for every format. *)
 let body_of media_types schema =
   if media_types = []
   then invalid_arg "Router.body_of: expected at least one media type";
@@ -342,7 +342,7 @@ let secured ?name { Security.scheme; extractor } =
 
 let refine check source = lift (Schema.Refine { source; check })
 
-(* Each call creates its own cache entry, so sharing means reusing the value *)
+(* Each call creates a cache entry. Reuse the returned value to share it. *)
 let memo source =
   let key = Context.Key.create { Context.name = None; show = None } in
   lift (Schema.Memo { key; source })
@@ -506,123 +506,122 @@ let recover handler route =
     Scope
       { r with middlewares = r.middlewares @ [ recover_middleware handler ] }
 
-let[@inline] str_has_pct ~off ~len str =
-  let end_pos = off + len in
-  let rec loop i =
-    if i >= end_pos
-    then false
-    else if String.unsafe_get str i = '%'
-    then true
-    else loop (i + 1)
-  in
-  loop off
+(* Split a request target into path segments once per request. The int array [|
+   off0; len0; off1; len1; ... |] indexes the target. Drop the query and empty
+   segments, so [//a/] contains only [a]. Negate a segment length when it
+   contains ['%']; later stages can then decode it without another scan. *)
+module Tokens = struct
+  let path_end target =
+    let n = String.length target in
+    let rec go i =
+      if i >= n || String.unsafe_get target i = '?' then i else go (i + 1)
+    in
+    go 0
 
-let[@inline] span_equal_lit path span lit =
-  if str_has_pct ~off:(Span.off span) ~len:(Span.len span) path
-  then String.equal lit (Uri.pct_decode (String.sub path span.off span.len))
-  else Span.equal path span lit
+  let rec count_segments target stop i in_segment n =
+    if i >= stop
+    then if in_segment then n + 1 else n
+    else if String.unsafe_get target i = '/'
+    then
+      count_segments target stop (i + 1) false (if in_segment then n + 1 else n)
+    else count_segments target stop (i + 1) true n
 
-module Path_cursor = struct
-  type t =
-    { path : string
-    ; pos : int
-    ; len : int
-    }
+  let of_target target =
+    let stop = path_end target in
+    let toks = Array.make (2 * count_segments target stop 0 false 0) 0 in
+    let i = ref 0 in
+    let k = ref 0 in
+    while !i < stop do
+      if String.unsafe_get target !i = '/'
+      then incr i
+      else begin
+        let start = !i in
+        let pct = ref false in
+        while !i < stop && String.unsafe_get target !i <> '/' do
+          if String.unsafe_get target !i = '%' then pct := true;
+          incr i
+        done;
+        let len = !i - start in
+        Array.unsafe_set toks !k start;
+        Array.unsafe_set toks (!k + 1) (if !pct then -len else len);
+        k := !k + 2
+      end
+    done;
+    toks
 
-  let create path =
-    let total_len = String.length path in
-    let len = String.index_opt path '?' |> Option.value ~default:total_len in
-    let pos = if len > 0 && path.[0] = '/' then 1 else 0 in
-    { path; pos; len }
+  let[@inline] count toks = Array.length toks lsr 1
+  let[@inline] off toks i = Array.unsafe_get toks (2 * i)
+  let[@inline] raw_len toks i = Array.unsafe_get toks ((2 * i) + 1)
 
-  let[@inline] rec next t =
-    if t.pos >= t.len
-    then None
-    else
-      let rec find_end i =
-        if i >= t.len
-        then i
-        else if t.path.[i] = '/'
-        then i
-        else find_end (i + 1)
-      in
-      let end_pos = find_end t.pos in
-      if end_pos = t.pos
-      then next { t with pos = end_pos + 1 }
-      else
-        let span = Span.make ~off:t.pos ~len:(end_pos - t.pos) in
-        let next_pos = if end_pos < t.len then end_pos + 1 else end_pos in
-        Some (span, { t with pos = next_pos })
+  let decoded target toks i =
+    Uri.pct_decode (String.sub target (off toks i) (-raw_len toks i))
 
-  let rec to_list t =
-    match next t with
-    | None -> []
-    | Some (span, t') ->
-      let segment =
-        if str_has_pct ~off:(Span.off span) ~len:(Span.len span) t.path
-        then Uri.pct_decode (String.sub t.path span.off span.len)
-        else String.sub t.path span.off span.len
-      in
-      segment :: to_list t'
+  let segment target toks i =
+    let len = raw_len toks i in
+    if len < 0
+    then decoded target toks i
+    else String.sub target (off toks i) len
 
-  let rec skip n cursor =
-    if n <= 0
-    then cursor
-    else
-      match next cursor with
-      | None -> cursor
-      | Some (_, rest) -> skip (n - 1) rest
+  let rec segments_from target toks i =
+    if i >= count toks
+    then []
+    else segment target toks i :: segments_from target toks (i + 1)
+
+  let find_literal target toks i map =
+    let len = raw_len toks i in
+    if len < 0
+    then Path_map.find (decoded target toks i) map
+    else Path_map.find_span target ~off:(off toks i) ~len map
+
+  let parse parse target toks i =
+    let len = raw_len toks i in
+    if len < 0
+    then
+      let d = decoded target toks i in
+      parse ~off:0 ~len:(String.length d) d
+    else parse ~off:(off toks i) ~len target
 end
 
-(* Captures are parsed up front and handed back as a function, so a request with
-   a malformed capture is rejected before any gate runs. *)
-let rec match_path : type a b. (a, b) path -> Path_cursor.t -> (a -> b) option =
- fun pattern cursor ->
-  match pattern with
-  | Nil ->
-    (match Path_cursor.next cursor with
-    | None -> Some Fun.id
-    | Some _ -> None (* Reject trailing segments *))
-  | Literal ("", rest) ->
-    (* Empty literal doesn't consume anything, just continue *)
-    match_path rest cursor
-  | Literal (expected, rest) ->
-    (match Path_cursor.next cursor with
-    | Some (span, rest_cursor)
-      when span_equal_lit rest_cursor.path span expected ->
-      match_path rest rest_cursor
-    | _ -> None)
-  | Splat rest ->
-    let remaining = Path_cursor.to_list cursor in
-    Option.map
-      (fun k f -> k (f remaining))
-      (match_path rest (Path_cursor.create ""))
-  | Capture { parse; rest; _ } -> match_capture parse rest cursor
-  | Enum { parse; rest; _ } -> match_capture parse rest cursor
-  | Annotated { segment; _ } -> match_path segment cursor
+(* Build a capture reader once per route. After matching, each capture has a
+   fixed segment index, so the reader need not walk the path again. [i] is the
+   first segment after any scope prefix.
 
-and match_capture : type p a b.
-  (off:int -> len:int -> string -> p option)
+   For each request, the reader parses the captures and applies them to the
+   handler. A parse failure raises [Not_found] before gates or middleware
+   run. *)
+let rec stage : type a b. int -> (a, b) path -> string -> int array -> a -> b =
+ fun i -> function
+  | Nil -> fun _ _ -> Fun.id
+  | Literal ("", rest) -> stage i rest
+  | Literal (_, rest) -> stage (i + 1) rest
+  | Annotated { segment; _ } -> stage i segment
+  | Capture { parse; rest; _ } -> stage_capture i parse rest
+  | Enum { parse; rest; _ } -> stage_capture i parse rest
+  | Splat rest ->
+    (* [check_splat_is_last] rejects segments after a splat *)
+    let k = stage i rest in
+    fun target toks ->
+      let segments = Tokens.segments_from target toks i in
+      let apply_rest = k target toks in
+      fun f -> apply_rest (f segments)
+
+and stage_capture : type p a b.
+  int
+  -> (off:int -> len:int -> string -> p option)
   -> (a, b) path
-  -> Path_cursor.t
-  -> ((p -> a) -> b) option
+  -> string
+  -> int array
+  -> (p -> a)
+  -> b
   =
- fun parse rest cursor ->
-  match Path_cursor.next cursor with
-  | Some (span, rest_cursor) ->
-    let off = Span.off span in
-    let len = Span.len span in
-    let result =
-      if str_has_pct ~off ~len rest_cursor.path
-      then
-        let decoded = Uri.pct_decode (String.sub rest_cursor.path off len) in
-        parse ~off:0 ~len:(String.length decoded) decoded
-      else parse ~off ~len rest_cursor.path
-    in
-    (match result with
-    | Some v -> Option.map (fun k f -> k (f v)) (match_path rest rest_cursor)
-    | None -> None)
-  | None -> None
+ fun i parse rest ->
+  let k = stage (i + 1) rest in
+  fun target toks ->
+    match Tokens.parse parse target toks i with
+    | None -> raise_notrace Not_found
+    | Some v ->
+      let apply_rest = k target toks in
+      fun f -> apply_rest (f v)
 
 let expected_content_type : media_type -> string = function
   | Json -> "application/json"
@@ -641,7 +640,7 @@ let select_media_type :
   | None ->
     Error (Printf.sprintf "Missing Content-Type header, expected: %s" expected)
   | Some content_type ->
-    (* Extract media type, ignoring charset and other parameters *)
+    (* Ignore charset and other Content-Type parameters. *)
     let actual_media_type =
       match String.split_on_char ';' content_type with
       | media :: _ -> String.trim media
@@ -688,8 +687,7 @@ let evaluate_body_schema : type a.
 module Reader = struct
   type k
 
-  (* [query] and [cookies] hold what the effects decode from, so several effects
-     reading the same source parse it once. *)
+  (* Cache parsed query parameters and cookies across effects. *)
   type env =
     { request : Request.t
     ; mutable memo : Context.t
@@ -702,8 +700,8 @@ module Reader = struct
   external inj : 'a t -> ('a, k) Sch.Sig.app = "%identity"
   external prj : ('a, k) Sch.Sig.app -> 'a t = "%identity"
 
-  (* For [apply f a], [Sch.Free.run] puts the earlier effects in [f]. Evaluating
-     [f] first is what runs effects in the order they were declared. *)
+  (* In [apply f a], [Sch.Free.run] places earlier effects in [f]. Evaluate [f]
+     first to preserve declaration order. *)
   let applicative : k Sch.Sig.applicative =
     { pure = (fun a -> inj (fun _ -> a))
     ; map = (fun f a -> inj (fun env -> f (prj a env)))
@@ -824,7 +822,7 @@ module Trie = struct
   type segment =
     | Lit of string
     | Capt of
-        { parser : Obj.t (* Only compared physically, to tell parsers apart *)
+        { parser : Obj.t (* Physical equality distinguishes parsers. *)
         ; label : string
         }
     | Splat_key
@@ -832,19 +830,16 @@ module Trie = struct
   type flat_route =
     | Flat_route :
         { method_ : Http.Method.t
-        ; path : ('f, 'r) path
+        ; extract : string -> int array -> 'f -> 'r
         ; finish : 'r -> Response.t
         ; run : Request.t -> 'f
         ; segments : segment list
         ; middlewares : Middleware.t list
-        ; prefix_len : int
         }
         -> flat_route
 
   let flat_route_method (Flat_route { method_; _ }) = method_
   let flat_route_segments (Flat_route { segments; _ }) = segments
-
-  module String_map = Map.Make (String)
 
   module Method_map = Map.Make (struct
       type t = Http.Method.t
@@ -867,16 +862,8 @@ module Trie = struct
         | _ -> Int.compare (method_to_int a) (method_to_int b)
     end)
 
-  let find_by_span ~path ~off ~len map =
-    let segment =
-      if str_has_pct ~off ~len path
-      then Uri.pct_decode (String.sub path off len)
-      else String.sub path off len
-    in
-    String_map.find_opt segment map
-
   type t =
-    { literals : t String_map.t
+    { literals : t Path_map.t
     ; capture : t option
     ; splat : t option
     ; handlers : flat_route Method_map.t
@@ -908,12 +895,11 @@ module Trie = struct
       let segments = extract_path_segments e.path in
       [ Flat_route
           { method_ = e.method_
-          ; path = e.path
+          ; extract = stage prefix_len e.path
           ; finish = e.finish
           ; run = compile_route (with_gates (gates @ e.gates) schema)
           ; segments = prefix @ segments
           ; middlewares = middlewares @ route_mws
-          ; prefix_len
           }
       ]
     | Scope
@@ -937,7 +923,7 @@ module Trie = struct
     routes |> List.concat_map (flatten_route 0 [] [] [])
 
   let empty =
-    { literals = String_map.empty
+    { literals = Path_map.empty
     ; capture = None
     ; splat = None
     ; handlers = Method_map.empty
@@ -976,9 +962,9 @@ module Trie = struct
     | Splat_key, Splat_key -> true
     | (Lit _ | Capt _ | Splat_key), _ -> false
 
-  (* A failed capture does not try another route. Reject overlaps that would
-     leave a route unreachable or make its documentation ambiguous. A specific
-     method may coexist with [any] when both parse the path the same way. *)
+  (* Capture failures do not try another route. Reject overlaps that make a
+     route unreachable or its documentation ambiguous. A specific method may
+     coexist with [any] when both parse the path identically. *)
   let check_same_path route handlers =
     Method_map.iter
       (fun _ other ->
@@ -1009,10 +995,10 @@ module Trie = struct
       }
     | Lit s :: segs ->
       let child =
-        String_map.find_opt s node.literals |> Option.value ~default:empty
+        Path_map.find s node.literals |> Option.value ~default:empty
       in
       let updated_child = insert_route segs route child in
-      { node with literals = String_map.add s updated_child node.literals }
+      { node with literals = Path_map.insert s updated_child node.literals }
     | Capt _ :: segs ->
       let child = node.capture |> Option.value ~default:empty in
       let updated_child = insert_route segs route child in
@@ -1026,7 +1012,7 @@ module Trie = struct
     List.map snd (Method_map.bindings node.handlers)
     @ List.concat_map
         (fun (_, child) -> routes_under child)
-        (String_map.bindings node.literals)
+        (Path_map.bindings node.literals)
     @ List.concat_map
         routes_under
         (List.filter_map Fun.id [ node.capture; node.splat ])
@@ -1049,7 +1035,7 @@ module Trie = struct
              splat_routes)
         (routes_under capture)
     | _ -> ());
-    String_map.iter
+    Path_map.iter
       (fun _ child -> check_captures_beside_splats child)
       node.literals;
     Option.iter check_captures_beside_splats node.capture;
@@ -1091,57 +1077,58 @@ module Trie = struct
       | Some _ -> get
       | None -> Method_map.find_opt any_method handlers)
 
-  let rec match_trie cursor method_ trie =
-    let first_some option fallback =
-      match option with Some _ -> option | None -> fallback ()
-    in
-    let try_splat () =
-      match trie.splat with
-      | Some splat_child ->
-        match_trie (Path_cursor.create "") method_ splat_child
-      | None -> None
-    in
-    match Path_cursor.next cursor with
-    | None -> first_some (select_route method_ trie.handlers) try_splat
-    | Some (span, rest_cursor) ->
-      let try_capture () =
-        match trie.capture with
-        | Some capt_child ->
-          first_some (match_trie rest_cursor method_ capt_child) try_splat
-        | None -> try_splat ()
-      in
-      let off = Span.off span in
-      let len = Span.len span in
-      (match find_by_span ~path:rest_cursor.path ~off ~len trie.literals with
-      | Some child ->
-        first_some (match_trie rest_cursor method_ child) try_capture
-      | None -> try_capture ())
+  (* A splat consumes the remaining segments, including none. *)
+  let match_splat method_ trie =
+    match trie.splat with
+    | Some child -> select_route method_ child.handlers
+    | None -> None
 
-  let rec collect_methods cursor trie acc =
-    let from_splat acc =
+  (* Try literals, then the capture, then the splat. Recursion handles
+     backtracking; parse captures only after selecting a route. *)
+  let rec match_trie target toks i method_ trie =
+    if i >= Tokens.count toks
+    then
+      match select_route method_ trie.handlers with
+      | Some _ as route -> route
+      | None -> match_splat method_ trie
+    else
+      let literal =
+        match Tokens.find_literal target toks i trie.literals with
+        | Some child -> match_trie target toks (i + 1) method_ child
+        | None -> None
+      in
+      match literal with
+      | Some _ -> literal
+      | None ->
+        let capture =
+          match trie.capture with
+          | Some child -> match_trie target toks (i + 1) method_ child
+          | None -> None
+        in
+        (match capture with
+        | Some _ -> capture
+        | None -> match_splat method_ trie)
+
+  let add_methods handlers acc =
+    Method_map.fold (fun m _ acc -> Method_map.add m () acc) handlers acc
+
+  let rec collect_methods target toks i trie acc =
+    let acc =
       match trie.splat with
-      | Some splat_child ->
-        collect_methods (Path_cursor.create "") splat_child acc
+      | Some child -> add_methods child.handlers acc
       | None -> acc
     in
-    match Path_cursor.next cursor with
-    | None ->
-      Method_map.fold (fun m _ acc -> Method_map.add m () acc) trie.handlers acc
-      |> from_splat
-    | Some (span, rest_cursor) ->
-      let off = Span.off span in
-      let len = Span.len span in
+    if i >= Tokens.count toks
+    then add_methods trie.handlers acc
+    else
       let acc =
-        match find_by_span ~path:rest_cursor.path ~off ~len trie.literals with
-        | Some child -> collect_methods rest_cursor child acc
+        match Tokens.find_literal target toks i trie.literals with
+        | Some child -> collect_methods target toks (i + 1) child acc
         | None -> acc
       in
-      let acc =
-        match trie.capture with
-        | Some capt_child -> collect_methods rest_cursor capt_child acc
-        | None -> acc
-      in
-      from_splat acc
+      match trie.capture with
+      | Some child -> collect_methods target toks (i + 1) child acc
+      | None -> acc
 
   let allow_header methods =
     let methods = Method_map.remove any_method methods in
@@ -1155,10 +1142,8 @@ module Trie = struct
     |> List.map (fun (m, ()) -> Http.Method.to_string m)
     |> String.concat ", "
 
-  let no_route target method_ trie =
-    let methods =
-      collect_methods (Path_cursor.create target) trie Method_map.empty
-    in
+  let no_route target toks method_ trie =
+    let methods = collect_methods target toks 0 trie Method_map.empty in
     if Method_map.is_empty methods then raise Not_found;
     let allow = allow_header methods in
     let response =
@@ -1171,24 +1156,15 @@ module Trie = struct
   let router' ~unauthorized trie request =
     let target = Request.target request in
     let method_ = Request.meth request in
-    match match_trie (Path_cursor.create target) method_ trie with
+    let toks = Tokens.of_target target in
+    match match_trie target toks 0 method_ trie with
     | Some
         (Flat_route
-           { method_ = route_method
-           ; path
-           ; finish
-           ; run
-           ; middlewares
-           ; prefix_len
-           ; _
-           }) ->
-      let cursor = Path_cursor.create target |> Path_cursor.skip prefix_len in
-      let service request =
-        match match_path path cursor with
-        | Some apply_captures -> finish (apply_captures (run request))
-        | None -> raise Not_found
-      in
-      (* Outside the route's middlewares, so [recover] gets the first chance *)
+           { method_ = route_method; extract; finish; run; middlewares; _ }) ->
+      (* Treat a malformed capture as 404 before running gates or middleware. *)
+      let apply_captures = extract target toks in
+      let service request = finish (apply_captures (run request)) in
+      (* Catch outside route middleware so [recover] handles the error first. *)
       let response =
         try Middleware.apply_all middlewares service request with
         | Extraction_failed (Security.Unauthorized (scheme, reason)) ->
@@ -1197,7 +1173,7 @@ module Trie = struct
       if method_ = `HEAD && route_method <> `HEAD
       then Response.with_ ~body:Body.empty response
       else response
-    | None -> no_route target method_ trie
+    | None -> no_route target toks method_ trie
 
   let router ~unauthorized routes =
     let trie = compile routes in
