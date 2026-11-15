@@ -844,8 +844,6 @@ module Trie = struct
   let flat_route_method (Flat_route { method_; _ }) = method_
   let flat_route_segments (Flat_route { segments; _ }) = segments
 
-  module String_map = Map.Make (String)
-
   module Method_map = Map.Make (struct
       type t = Http.Method.t
 
@@ -868,15 +866,12 @@ module Trie = struct
     end)
 
   let find_by_span ~path ~off ~len map =
-    let segment =
-      if str_has_pct ~off ~len path
-      then Uri.pct_decode (String.sub path off len)
-      else String.sub path off len
-    in
-    String_map.find_opt segment map
+    if str_has_pct ~off ~len path
+    then Path_map.find (Uri.pct_decode (String.sub path off len)) map
+    else Path_map.find_span path ~off ~len map
 
   type t =
-    { literals : t String_map.t
+    { literals : t Path_map.t
     ; capture : t option
     ; splat : t option
     ; handlers : flat_route Method_map.t
@@ -937,7 +932,7 @@ module Trie = struct
     routes |> List.concat_map (flatten_route 0 [] [] [])
 
   let empty =
-    { literals = String_map.empty
+    { literals = Path_map.empty
     ; capture = None
     ; splat = None
     ; handlers = Method_map.empty
@@ -1009,10 +1004,10 @@ module Trie = struct
       }
     | Lit s :: segs ->
       let child =
-        String_map.find_opt s node.literals |> Option.value ~default:empty
+        Path_map.find s node.literals |> Option.value ~default:empty
       in
       let updated_child = insert_route segs route child in
-      { node with literals = String_map.add s updated_child node.literals }
+      { node with literals = Path_map.insert s updated_child node.literals }
     | Capt _ :: segs ->
       let child = node.capture |> Option.value ~default:empty in
       let updated_child = insert_route segs route child in
@@ -1026,7 +1021,7 @@ module Trie = struct
     List.map snd (Method_map.bindings node.handlers)
     @ List.concat_map
         (fun (_, child) -> routes_under child)
-        (String_map.bindings node.literals)
+        (Path_map.bindings node.literals)
     @ List.concat_map
         routes_under
         (List.filter_map Fun.id [ node.capture; node.splat ])
@@ -1049,7 +1044,7 @@ module Trie = struct
              splat_routes)
         (routes_under capture)
     | _ -> ());
-    String_map.iter
+    Path_map.iter
       (fun _ child -> check_captures_beside_splats child)
       node.literals;
     Option.iter check_captures_beside_splats node.capture;
